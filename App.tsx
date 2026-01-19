@@ -6,13 +6,14 @@ import {
   XCircle, Clock, Search, ChevronRight, Menu, X,
   History, PieChart, Image as ImageIcon, Globe, DollarSign,
   Edit2, Trash2, Eye, ShieldCheck, ChevronLeft, Cpu, Activity,
-  MapPin, Calendar, FileText, User, Sparkles
+  MapPin, Calendar, FileText, User, Sparkles, TrendingDown,
+  Timer
 } from 'lucide-react';
 import { 
   SportType, AuctionType, AuctionStatus, 
   AuctionConfig, Player, Team, Bid 
 } from './types';
-import { INITIAL_CONFIG, SPORT_DEFAULTS } from './constants';
+import { INITIAL_CONFIG, SPORT_DEFAULTS, MOCK_PLAYERS, MOCK_TEAMS } from './constants';
 
 // --- Atomic Command Components ---
 
@@ -95,7 +96,6 @@ const SoldCelebration: React.FC<{ player: Player; team: Team; price: number; onC
                  {player.imageUrl ? <img src={player.imageUrl} className="w-full h-full object-cover" /> : <Users size={100} className="text-[#3d2f2b] m-14" />}
                  <div className="absolute inset-0 shimmer-gold opacity-50"></div>
                </div>
-               {/* Random Sparkles */}
                {[...Array(12)].map((_, i) => (
                  <div 
                    key={i} 
@@ -131,8 +131,8 @@ const SoldCelebration: React.FC<{ player: Player; team: Team; price: number; onC
 const App: React.FC = () => {
   const [status, setStatus] = useState<AuctionStatus>(AuctionStatus.SETUP);
   const [config, setConfig] = useState<AuctionConfig>(INITIAL_CONFIG);
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [teams, setTeams] = useState<Team[]>([]);
+  const [players, setPlayers] = useState<Player[]>(MOCK_PLAYERS);
+  const [teams, setTeams] = useState<Team[]>(MOCK_TEAMS);
   const [history, setHistory] = useState<Bid[]>([]);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'players' | 'teams' | 'room' | 'history'>('dashboard');
 
@@ -180,7 +180,14 @@ const App: React.FC = () => {
 
   const placeBid = (teamId: string, amount: number) => {
     const team = teams.find(t => t.id === teamId);
-    if (!team || amount > team.remainingBudget || (amount <= currentBid && currentBidderId !== null)) return;
+    if (!team) return;
+    if (amount > team.remainingBudget) {
+      alert("Insufficient Funds: Franchise budget limit reached.");
+      return;
+    }
+    if (amount <= currentBid && currentBidderId !== null) {
+      return; // Do nothing if bid is lower than current
+    }
     setCurrentBid(amount);
     setCurrentBidderId(teamId);
     setTimer(30);
@@ -196,7 +203,6 @@ const App: React.FC = () => {
     if (sold && currentBidderId) {
       const buyingTeam = teams.find(t => t.id === currentBidderId);
       if (buyingTeam) {
-        // Trigger Celebration
         setSoldAnimationData({ player, team: buyingTeam, price: currentBid });
       }
 
@@ -303,7 +309,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen bg-[#0d0a09] flex flex-col items-center p-8 overflow-hidden relative">
+    <div className="h-screen bg-[#0d0a09] flex flex-col items-center p-4 lg:p-8 overflow-hidden relative">
       {/* Celebration Trigger */}
       {soldAnimationData && (
         <SoldCelebration 
@@ -318,7 +324,7 @@ const App: React.FC = () => {
       <div className="fixed top-8 left-10 z-[60]">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 gold-gradient rounded-2xl flex items-center justify-center text-[#0d0a09] font-black text-xl shadow-2xl animate-orbit">O</div>
-          <div>
+          <div className="hidden sm:block">
             <h2 className="text-xl font-display font-black tracking-widest gold-text uppercase leading-none">OmniAuction</h2>
             <p className="text-[10px] font-bold text-[#b4a697] uppercase tracking-[0.3em] mt-1">{config.sport} Protocol</p>
           </div>
@@ -334,36 +340,36 @@ const App: React.FC = () => {
       </div>
 
       {/* Main Command Workspace */}
-      <div className="w-full max-w-[1400px] h-full flex flex-col pt-24 pb-32">
-        <div className="flex-1 overflow-y-auto custom-scrollbar px-4 animate-in fade-in duration-700">
+      <div className="w-full max-w-[1500px] h-full flex flex-col pt-20 pb-28">
+        <div className="flex-1 overflow-y-auto custom-scrollbar px-2 lg:px-4 animate-in fade-in duration-700">
           
           {activeTab === 'dashboard' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <StatCard label="Draft Pool" value={players.length} icon={<Users />} />
               <StatCard label="Franchises" value={teams.length} icon={<Trophy />} />
               <StatCard label="Market Capital" value={`$${(players.reduce((acc, p) => acc + (p.soldPrice || 0), 0) / 1000000).toFixed(2)}M`} icon={<TrendingUp />} />
               <StatCard label="Session Status" value={`${players.length > 0 ? Math.round((players.filter(p => p.status === 'SOLD').length / players.length) * 100) : 0}%`} icon={<Activity />} />
               
-              <CommandCard title="Market Liquidity" className="lg:col-span-3 h-[400px]">
+              <CommandCard title="Market Liquidity" className="lg:col-span-3 h-[350px]">
                 <div className="h-full flex flex-col items-center justify-center border border-[#3d2f2b] rounded-3xl bg-[#0d0a09]/50 opacity-40">
                   <PieChart size={64} className="text-[#c5a059] mb-4" />
                   <span className="text-[10px] uppercase font-black tracking-[0.3em]">Real-time analytics engine processing...</span>
                 </div>
               </CommandCard>
 
-              <CommandCard title="Constraints" className="lg:col-span-1 h-[400px]">
+              <CommandCard title="Constraints" className="lg:col-span-1 h-[350px]">
                 <div className="space-y-6">
-                  <div className="p-5 bg-[#0d0a09]/60 rounded-2xl border border-[#3d2f2b]">
+                  <div className="p-4 bg-[#0d0a09]/60 rounded-2xl border border-[#3d2f2b]">
                     <p className="text-[10px] uppercase font-black tracking-widest text-[#b4a697] mb-2">Squad Range</p>
-                    <p className="text-2xl font-display font-black text-[#f5f5dc]">{config.squadSize.min} — {config.squadSize.max}</p>
+                    <p className="text-xl font-display font-black text-[#f5f5dc]">{config.squadSize.min} — {config.squadSize.max}</p>
                   </div>
-                  <div className="p-5 bg-[#0d0a09]/60 rounded-2xl border border-[#3d2f2b]">
+                  <div className="p-4 bg-[#0d0a09]/60 rounded-2xl border border-[#3d2f2b]">
                     <p className="text-[10px] uppercase font-black tracking-widest text-[#b4a697] mb-2">Foreign Cap</p>
-                    <p className="text-2xl font-display font-black text-[#f5f5dc]">{config.rules.overseasLimit || 'Unlimited'}</p>
+                    <p className="text-xl font-display font-black text-[#f5f5dc]">{config.rules.overseasLimit || 'Unlimited'}</p>
                   </div>
-                  <div className="flex flex-wrap gap-2 pt-2">
+                  <div className="flex flex-wrap gap-2 pt-1">
                     {config.roles.map(r => (
-                      <span key={r.id} className="text-[9px] font-black uppercase px-3 py-1 bg-[#c5a059]/10 border border-[#c5a059]/20 rounded-full text-[#c5a059]">{r.name}</span>
+                      <span key={r.id} className="text-[8px] font-black uppercase px-2 py-1 bg-[#c5a059]/10 border border-[#c5a059]/20 rounded-full text-[#c5a059]">{r.name}</span>
                     ))}
                   </div>
                 </div>
@@ -373,58 +379,52 @@ const App: React.FC = () => {
 
           {activeTab === 'players' && (
             <CommandCard title="Talent Registry" className="w-full min-h-full">
-              <div className="flex justify-between mb-10">
-                <div className="relative w-96">
+              <div className="flex flex-col sm:flex-row justify-between mb-8 gap-4">
+                <div className="relative w-full sm:w-96">
                   <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-[#b4a697]" size={20} />
                   <input type="text" placeholder="Scan registry..." className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-full pl-14 pr-6 py-4 text-[#f5f5dc] focus:ring-1 ring-[#c5a059] outline-none" />
                 </div>
-                <button onClick={() => { setEditingPlayerId(null); setNewPlayer({ name: '', roleId: config.roles[0]?.id, basePrice: 0, isOverseas: false, imageUrl: '', age: 25, nationality: '', bio: '', stats: '' }); setIsPlayerModalOpen(true); }} className="px-8 py-4 gold-gradient text-[#0d0a09] rounded-full font-black uppercase tracking-widest text-xs flex items-center gap-2 shadow-2xl">
-                  <Plus size={18} /> Register Talent
+                <button onClick={() => { setEditingPlayerId(null); setNewPlayer({ name: '', roleId: config.roles[0]?.id, basePrice: 0, isOverseas: false, imageUrl: '', age: 25, nationality: '', bio: '', stats: '' }); setIsPlayerModalOpen(true); }} className="px-6 py-4 gold-gradient text-[#0d0a09] rounded-full font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 shadow-2xl">
+                  <Plus size={16} /> Register Talent
                 </button>
               </div>
 
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto custom-scrollbar">
                 <table className="w-full text-left">
                   <thead className="text-[10px] font-black uppercase tracking-[0.2em] text-[#b4a697] border-b border-[#3d2f2b]">
                     <tr>
-                      <th className="pb-6">Individual</th>
-                      <th className="pb-6">Bio</th>
-                      <th className="pb-6">Role</th>
-                      <th className="pb-6">Evaluation</th>
-                      <th className="pb-6">Status</th>
-                      <th className="pb-6">Franchise</th>
-                      <th className="pb-6 text-right">Ops</th>
+                      <th className="pb-4">Individual</th>
+                      <th className="pb-4 hidden lg:table-cell">Bio</th>
+                      <th className="pb-4">Role</th>
+                      <th className="pb-4">Evaluation</th>
+                      <th className="pb-4">Status</th>
+                      <th className="pb-4 text-right">Ops</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#3d2f2b]/30">
                     {players.map(p => (
                       <tr key={p.id} className="group hover:bg-[#c5a059]/5 transition-all">
-                        <td className="py-6">
+                        <td className="py-4">
                           <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 bg-[#3d2f2b] rounded-2xl overflow-hidden border border-[#c5a059]/10">
-                              {p.imageUrl ? <img src={p.imageUrl} className="w-full h-full object-cover" /> : <Users size={20} className="text-[#b4a697] m-3" />}
+                            <div className="w-10 h-10 bg-[#3d2f2b] rounded-xl overflow-hidden border border-[#c5a059]/10">
+                              {p.imageUrl ? <img src={p.imageUrl} className="w-full h-full object-cover" /> : <Users size={16} className="text-[#b4a697] m-3" />}
                             </div>
                             <div>
-                              <p className="text-[#f5f5dc] font-bold text-lg leading-tight">{p.name}</p>
-                              <div className="flex items-center gap-2 mt-1">
-                                {p.isOverseas && <p className="text-[9px] text-[#c5a059] uppercase font-black tracking-widest">Intl</p>}
-                                <p className="text-[9px] text-[#b4a697] uppercase font-bold tracking-widest">{p.nationality || 'Unknown'}</p>
-                                <p className="text-[9px] text-[#b4a697] uppercase font-bold tracking-widest">Age: {p.age || '—'}</p>
-                              </div>
+                              <p className="text-[#f5f5dc] font-bold text-base leading-tight">{p.name}</p>
+                              <p className="text-[8px] text-[#c5a059] uppercase font-black tracking-widest mt-0.5">{p.nationality} {p.isOverseas ? '• INTL' : ''}</p>
                             </div>
                           </div>
                         </td>
-                        <td className="py-6 max-w-xs truncate text-xs text-[#b4a697] italic">{p.bio || 'No profile bio provided.'}</td>
-                        <td className="py-6"><span className="text-[10px] font-black uppercase bg-[#3d2f2b] px-3 py-1 rounded text-[#b4a697]">{config.roles.find(r => r.id === p.roleId)?.name}</span></td>
-                        <td className="py-6 font-mono text-lg font-bold text-[#f5f5dc]">${p.basePrice.toLocaleString()}</td>
-                        <td className="py-6">
-                          <span className={`text-[9px] font-black uppercase px-3 py-1 rounded border ${p.status === 'SOLD' ? 'text-[#8b9d77] border-[#8b9d77]/20 bg-[#8b9d77]/5' : p.status === 'UNSOLD' ? 'text-[#a65d50] border-[#a65d50]/20 bg-[#a65d50]/5' : 'text-[#c5a059] border-[#c5a059]/20 bg-[#c5a059]/5'}`}>{p.status}</span>
+                        <td className="py-4 max-w-xs truncate text-[11px] text-[#b4a697] italic hidden lg:table-cell">{p.bio || 'No profile bio provided.'}</td>
+                        <td className="py-4"><span className="text-[9px] font-black uppercase bg-[#3d2f2b] px-2 py-0.5 rounded text-[#b4a697]">{config.roles.find(r => r.id === p.roleId)?.name}</span></td>
+                        <td className="py-4 font-mono text-base font-bold text-[#f5f5dc]">${p.basePrice.toLocaleString()}</td>
+                        <td className="py-4">
+                          <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border ${p.status === 'SOLD' ? 'text-[#8b9d77] border-[#8b9d77]/20 bg-[#8b9d77]/5' : p.status === 'UNSOLD' ? 'text-[#a65d50] border-[#a65d50]/20 bg-[#a65d50]/5' : 'text-[#c5a059] border-[#c5a059]/20 bg-[#c5a059]/5'}`}>{p.status}</span>
                         </td>
-                        <td className="py-6 font-medium text-[#c5a059]">{p.teamId ? teams.find(t => t.id === p.teamId)?.name : '—'}</td>
-                        <td className="py-6 text-right">
-                          <div className="flex items-center justify-end gap-3 opacity-0 group-hover:opacity-100 transition-all">
-                            <button onClick={() => handleEditPlayer(p)} className="p-2.5 bg-[#1a1410] border border-[#3d2f2b] hover:border-[#c5a059] rounded-xl text-[#c5a059]"><Edit2 size={16} /></button>
-                            <button onClick={() => handleDeletePlayer(p.id)} className="p-2.5 bg-[#1a1410] border border-[#3d2f2b] hover:border-[#a65d50] rounded-xl text-[#a65d50]"><Trash2 size={16} /></button>
+                        <td className="py-4 text-right">
+                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                            <button onClick={() => handleEditPlayer(p)} className="p-2 bg-[#1a1410] border border-[#3d2f2b] hover:border-[#c5a059] rounded-lg text-[#c5a059]"><Edit2 size={14} /></button>
+                            <button onClick={() => handleDeletePlayer(p.id)} className="p-2 bg-[#1a1410] border border-[#3d2f2b] hover:border-[#a65d50] rounded-lg text-[#a65d50]"><Trash2 size={14} /></button>
                           </div>
                         </td>
                       </tr>
@@ -436,148 +436,158 @@ const App: React.FC = () => {
           )}
 
           {activeTab === 'teams' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
               {teams.map(t => (
-                <CommandCard key={t.id} title={t.name} icon={<ShieldCheck size={18} />} actions={
+                <CommandCard key={t.id} title={t.name} icon={<ShieldCheck size={16} />} actions={
                   <>
-                    <button onClick={() => handleEditTeam(t)} className="p-2 text-[#b4a697] hover:text-[#c5a059]"><Edit2 size={14} /></button>
-                    <button onClick={() => handleDeleteTeam(t.id)} className="p-2 text-[#b4a697] hover:text-[#a65d50]"><Trash2 size={14} /></button>
+                    <button onClick={() => handleEditTeam(t)} className="p-2 text-[#b4a697] hover:text-[#c5a059]"><Edit2 size={12} /></button>
+                    <button onClick={() => handleDeleteTeam(t.id)} className="p-2 text-[#b4a697] hover:text-[#a65d50]"><Trash2 size={12} /></button>
                   </>
                 }>
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-5">
-                      <div className="w-20 h-20 bg-[#0d0a09] border border-[#c5a059]/10 rounded-[2rem] flex items-center justify-center p-3">
-                        {t.logo ? <img src={t.logo} className="w-full h-full object-contain" /> : <Trophy size={40} className="text-[#3d2f2b]" />}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 bg-[#0d0a09] border border-[#c5a059]/10 rounded-2xl flex items-center justify-center p-2">
+                        {t.logo ? <img src={t.logo} className="w-full h-full object-contain" /> : <Trophy size={28} className="text-[#3d2f2b]" />}
                       </div>
                       <div>
-                        <p className="text-[9px] uppercase font-black tracking-[0.2em] text-[#c5a059]">{t.homeCity || 'Neutral Venue'}</p>
-                        <p className="text-2xl font-display font-black text-[#f5f5dc] leading-tight mt-1">{t.name}</p>
-                        <p className="text-[9px] uppercase font-bold text-[#b4a697] tracking-widest">Est. {t.foundationYear || '—'}</p>
+                        <p className="text-[8px] uppercase font-black tracking-[0.2em] text-[#c5a059]">{t.homeCity || 'Neutral Venue'}</p>
+                        <p className="text-xl font-display font-black text-[#f5f5dc] leading-tight mt-0.5">{t.name}</p>
+                        <p className="text-[8px] uppercase font-bold text-[#b4a697] tracking-widest">Est. {t.foundationYear || '—'}</p>
                       </div>
                     </div>
-                    <div className="space-y-3">
-                      <div className="flex justify-between text-[10px] uppercase font-black tracking-widest text-[#b4a697]">Liquidity Level</div>
-                      <div className="text-3xl font-mono font-black text-[#f5f5dc]">${t.remainingBudget.toLocaleString()}</div>
-                      <div className="w-full h-2.5 bg-[#0d0a09] rounded-full overflow-hidden border border-[#3d2f2b]">
-                        <div className="h-full gold-gradient shadow-[0_0_15px_#c5a059]/30" style={{ width: `${(t.remainingBudget/t.budget)*100}%` }}></div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-[9px] uppercase font-black tracking-widest text-[#b4a697]">Remaining Liquidity</div>
+                      <div className="text-2xl font-mono font-black text-[#f5f5dc]">${t.remainingBudget.toLocaleString()}</div>
+                      <div className="w-full h-2 bg-[#0d0a09] rounded-full overflow-hidden border border-[#3d2f2b]">
+                        <div className="h-full gold-gradient" style={{ width: `${(t.remainingBudget/t.budget)*100}%` }}></div>
                       </div>
                     </div>
-                    <button onClick={() => { setViewingSquadTeamId(t.id); setIsSquadModalOpen(true); }} className="w-full py-4 border border-[#c5a059]/20 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-[#c5a059]/10 hover:border-[#c5a059] transition-all">Review Roster</button>
+                    <button onClick={() => { setViewingSquadTeamId(t.id); setIsSquadModalOpen(true); }} className="w-full py-3 border border-[#c5a059]/20 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] hover:bg-[#c5a059]/10 transition-all">Review Roster</button>
                   </div>
                 </CommandCard>
               ))}
-              <div onClick={() => { setEditingTeamId(null); setNewTeam({ name: '', owner: '', budget: config.totalBudget, logo: '', homeCity: '', foundationYear: 2024 }); setIsTeamModalOpen(true); }} className="border-2 border-dashed border-[#3d2f2b] rounded-[2rem] flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-[#c5a059]/50 transition-all group p-10">
-                <div className="w-16 h-16 bg-[#1a1410] rounded-full flex items-center justify-center text-[#3d2f2b] group-hover:text-[#c5a059] transition-all"><Plus size={32} /></div>
-                <span className="text-xs uppercase font-black tracking-[0.3em] text-[#3d2f2b] group-hover:text-[#b4a697]">Establish New Franchise</span>
+              <div onClick={() => { setEditingTeamId(null); setNewTeam({ name: '', owner: '', budget: config.totalBudget, logo: '', homeCity: '', foundationYear: 2024 }); setIsTeamModalOpen(true); }} className="border-2 border-dashed border-[#3d2f2b] rounded-[2rem] flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-[#c5a059]/50 transition-all group p-8">
+                <div className="w-12 h-12 bg-[#1a1410] rounded-full flex items-center justify-center text-[#3d2f2b] group-hover:text-[#c5a059] transition-all"><Plus size={24} /></div>
+                <span className="text-[10px] uppercase font-black tracking-[0.3em] text-[#3d2f2b] group-hover:text-[#b4a697]">New Franchise</span>
               </div>
             </div>
           )}
 
           {activeTab === 'room' && (
-            <div className="h-full max-w-6xl mx-auto">
+            <div className="h-full w-full max-w-[1400px] mx-auto overflow-hidden flex flex-col">
               {currentPlayerIdx !== null ? (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 h-full">
-                  <div className="lg:col-span-8 flex flex-col gap-10">
-                    <div className="bg-[#1a1410] border border-[#c5a059]/30 rounded-[3.5rem] overflow-hidden shadow-[0_0_120px_rgba(0,0,0,0.6)] relative group">
-                      <div className="absolute top-10 right-10 z-20 flex items-center gap-4 bg-black/60 px-8 py-4 rounded-3xl border border-[#c5a059]/30 backdrop-blur-2xl">
-                        <Clock className={timer < 10 ? 'text-[#a65d50] animate-pulse' : 'text-[#c5a059]'} />
-                        <span className={`text-4xl font-mono font-black ${timer < 10 ? 'text-[#a65d50]' : 'text-[#f5f5dc]'}`}>00:{timer < 10 ? `0${timer}` : timer}</span>
-                      </div>
-                      
-                      <div className="h-[500px] flex items-center justify-center bg-[radial-gradient(circle_at_center,_#3d2f2b_0%,_#1a1410_100%)] relative">
-                        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-30"></div>
-                        <div className="text-center space-y-8 animate-in zoom-in-95 duration-700">
-                          <div className="w-64 h-64 bg-[#0d0a09] border-4 border-[#c5a059]/30 rounded-[4rem] mx-auto shadow-2xl overflow-hidden p-2 relative">
-                             {players[currentPlayerIdx].imageUrl ? <img src={players[currentPlayerIdx].imageUrl} className="w-full h-full object-cover rounded-[3.5rem]" /> : <Users size={100} className="text-[#3d2f2b] m-14" />}
-                             <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full">
+                  {/* Left Section: Information & Context */}
+                  <div className="lg:col-span-3 flex flex-col gap-4 order-2 lg:order-1">
+                    <CommandCard title="Individual Intelligence" className="flex-1">
+                      <div className="space-y-4">
+                        <div className="p-4 bg-[#0d0a09]/60 rounded-2xl border border-[#3d2f2b]">
+                          <p className="text-[9px] uppercase font-black text-[#c5a059] tracking-widest mb-1">Performance Stats</p>
+                          <p className="text-[11px] text-[#f5f5dc] italic leading-relaxed">{players[currentPlayerIdx].stats || 'Analyzing field data...'}</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="p-3 bg-[#0d0a09]/60 rounded-xl border border-[#3d2f2b] text-center">
+                            <p className="text-[8px] uppercase font-black text-[#5c4742]">Age</p>
+                            <p className="text-lg font-mono font-bold text-[#f5f5dc]">{players[currentPlayerIdx].age}</p>
                           </div>
-                          <div>
-                            <h2 className="text-6xl font-display font-black uppercase text-[#f5f5dc] tracking-tighter drop-shadow-xl">{players[currentPlayerIdx].name}</h2>
-                            <p className="text-lg text-[#b4a697] uppercase tracking-widest mt-2">{players[currentPlayerIdx].nationality} • Age {players[currentPlayerIdx].age}</p>
-                          </div>
-                          <div className="flex justify-center gap-4">
-                            <span className="bg-[#c5a059]/10 border border-[#c5a059]/20 text-[#c5a059] px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest">{config.roles.find(r => r.id === players[currentPlayerIdx!].roleId)?.name}</span>
-                            {players[currentPlayerIdx].isOverseas && <span className="bg-[#a65d50]/10 border border-[#a65d50]/20 text-[#a65d50] px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest">INTL Draft</span>}
-                          </div>
-                          {/* Quick Stats HUD */}
-                          <div className="grid grid-cols-3 gap-6 pt-4">
-                            <div className="text-center">
-                              <p className="text-[9px] uppercase font-black text-[#5c4742]">Integrity</p>
-                              <p className="text-lg font-mono font-bold text-[#f5f5dc]">94%</p>
-                            </div>
-                            <div className="text-center border-x border-[#3d2f2b]">
-                              <p className="text-[9px] uppercase font-black text-[#5c4742]">Potential</p>
-                              <p className="text-lg font-mono font-bold text-[#c5a059]">Elite</p>
-                            </div>
-                            <div className="text-center">
-                              <p className="text-[9px] uppercase font-black text-[#5c4742]">Market demand</p>
-                              <p className="text-lg font-mono font-bold text-[#f5f5dc]">High</p>
-                            </div>
+                          <div className="p-3 bg-[#0d0a09]/60 rounded-xl border border-[#3d2f2b] text-center">
+                            <p className="text-[8px] uppercase font-black text-[#5c4742]">Role</p>
+                            <p className="text-xs uppercase font-bold text-[#c5a059] truncate">{config.roles.find(r => r.id === players[currentPlayerIdx!].roleId)?.name}</p>
                           </div>
                         </div>
-                      </div>
-
-                      <div className="p-16 grid grid-cols-2 bg-[#120d0b]/80 border-t border-[#3d2f2b]">
-                        <div>
-                          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[#b4a697] mb-2">Base Valuation</p>
-                          <p className="text-4xl font-mono font-bold text-[#b4a697]/40 italic">${players[currentPlayerIdx].basePrice.toLocaleString()}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[#c5a059] mb-2">Live Engagement</p>
-                          <p className="text-7xl font-mono font-black text-[#f5f5dc] drop-shadow-[0_0_20px_#c5a05922]">${currentBid.toLocaleString()}</p>
-                          <p className="text-xs uppercase font-black text-[#c5a059] mt-3 tracking-widest flex items-center justify-end gap-2">
-                             {currentBidderId ? (
-                               <>
-                                 <ShieldCheck size={16} />
-                                 {teams.find(t => t.id === currentBidderId)?.name}
-                               </>
-                             ) : 'Awaiting Bids'}
-                          </p>
+                        <div className="p-4 bg-[#0d0a09]/60 rounded-2xl border border-[#3d2f2b]">
+                          <p className="text-[9px] uppercase font-black text-[#b4a697] tracking-widest mb-2">Base Valuation</p>
+                          <p className="text-2xl font-mono font-bold text-[#b4a697]/50">${players[currentPlayerIdx].basePrice.toLocaleString()}</p>
                         </div>
                       </div>
-                    </div>
-
-                    <div className="flex gap-8">
-                      <button onClick={() => finalizePlayer(true)} disabled={!currentBidderId} className={`flex-1 py-8 rounded-[2.5rem] font-black uppercase tracking-[0.3em] transition-all text-sm flex items-center justify-center gap-4 shadow-2xl ${currentBidderId ? 'bg-[#8b9d77] text-[#0d0a09] scale-[1.02] shadow-[#8b9d77]/20 hover:brightness-110' : 'bg-[#3d2f2b] text-[#5c4742] opacity-50'}`}>
-                        <Sparkles size={20} /> Finalize Acquisition
+                    </CommandCard>
+                    <div className="flex gap-4">
+                      <button onClick={() => finalizePlayer(true)} disabled={!currentBidderId} className={`flex-1 py-4 rounded-2xl font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-2 transition-all ${currentBidderId ? 'bg-[#8b9d77] text-[#0d0a09] shadow-lg shadow-[#8b9d77]/20' : 'bg-[#3d2f2b] text-[#5c4742] cursor-not-allowed opacity-50'}`}>
+                        <CheckCircle2 size={14} /> Sell
                       </button>
-                      <button onClick={() => finalizePlayer(false)} className="flex-1 py-8 rounded-[2.5rem] bg-[#a65d50] text-[#0d0a09] font-black uppercase tracking-[0.3em] transition-all text-sm flex items-center justify-center gap-4 shadow-2xl shadow-[#a65d50]/20 hover:brightness-110 scale-[1.02]">
-                        <XCircle /> Pass Selection
+                      <button onClick={() => finalizePlayer(false)} className="flex-1 py-4 rounded-2xl bg-[#a65d50] text-[#0d0a09] font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg shadow-[#a65d50]/20">
+                        <XCircle size={14} /> Unsold
                       </button>
                     </div>
                   </div>
 
-                  <div className="lg:col-span-4 space-y-8">
-                    <div className="flex items-center gap-3">
-                      <Gavel className="text-[#c5a059]" />
-                      <h3 className="text-sm font-black uppercase tracking-[0.4em] text-[#c5a059]">Bidding Array</h3>
+                  {/* Center Section: Focus Area */}
+                  <div className="lg:col-span-6 flex flex-col gap-6 order-1 lg:order-2 h-full justify-between">
+                    <div className="bg-[#1a1410] border border-[#c5a059]/30 rounded-[3rem] overflow-hidden shadow-2xl relative flex-1 flex flex-col">
+                      <div className="absolute top-6 left-6 z-20 flex items-center gap-3 bg-black/60 px-4 py-2 rounded-2xl border border-[#c5a059]/20 backdrop-blur-md">
+                        <Timer size={16} className={timer < 10 ? 'text-[#a65d50] animate-pulse' : 'text-[#c5a059]'} />
+                        <span className={`text-xl font-mono font-black ${timer < 10 ? 'text-[#a65d50]' : 'text-[#f5f5dc]'}`}>00:{timer < 10 ? `0${timer}` : timer}</span>
+                      </div>
+                      
+                      <div className="flex-1 flex flex-col items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_#211a17_0%,_#1a1410_100%)]">
+                        <div className="w-44 h-44 bg-[#0d0a09] border-4 border-[#c5a059]/20 rounded-[3rem] shadow-2xl overflow-hidden p-2 relative mb-6">
+                           {players[currentPlayerIdx].imageUrl ? <img src={players[currentPlayerIdx].imageUrl} className="w-full h-full object-cover rounded-[2.5rem]" /> : <Users size={64} className="text-[#3d2f2b] m-10" />}
+                        </div>
+                        <div className="text-center">
+                          <h2 className="text-4xl font-display font-black uppercase text-[#f5f5dc] tracking-tighter leading-tight">{players[currentPlayerIdx].name}</h2>
+                          <p className="text-sm text-[#b4a697] uppercase tracking-[0.2em] font-medium mt-1">{players[currentPlayerIdx].nationality} {players[currentPlayerIdx].isOverseas ? '• Global Draft' : ''}</p>
+                        </div>
+                      </div>
+
+                      <div className="p-8 bg-[#120d0b] border-t border-[#3d2f2b] flex items-center justify-between">
+                         <div className="text-center flex-1">
+                            <p className="text-[9px] uppercase font-black tracking-widest text-[#c5a059] mb-1">Current Engagement</p>
+                            <p className="text-6xl font-mono font-black text-[#f5f5dc] leading-none drop-shadow-md">${currentBid.toLocaleString()}</p>
+                            <div className="mt-4 flex items-center justify-center gap-2">
+                               {currentBidderId ? (
+                                 <span className="text-[10px] uppercase font-black bg-[#c5a059]/10 border border-[#c5a059]/30 text-[#c5a059] px-3 py-1 rounded-full flex items-center gap-1">
+                                   <Trophy size={10} /> {teams.find(t => t.id === currentBidderId)?.name}
+                                 </span>
+                               ) : <span className="text-[10px] uppercase font-black text-[#5c4742] tracking-widest">Awaiting Initial Bid</span>}
+                            </div>
+                         </div>
+                      </div>
                     </div>
-                    <div className="space-y-4 overflow-y-auto max-h-[750px] pr-4 custom-scrollbar">
-                      {teams.map(t => (
-                        <button key={t.id} onClick={() => { const inc = currentBidderId ? 500000 : 0; placeBid(t.id, currentBid + inc); }}
-                          className={`w-full p-8 rounded-[2.5rem] border text-left transition-all relative overflow-hidden group ${currentBidderId === t.id ? 'bg-[#c5a059] border-white shadow-[0_0_40px_rgba(197,160,89,0.4)] scale-[1.03]' : 'bg-[#1a1410] border-[#3d2f2b] hover:border-[#c5a059]/50'}`}>
-                          <div className="flex justify-between items-start mb-4 relative z-10">
-                            <span className={`font-black uppercase tracking-widest text-lg ${currentBidderId === t.id ? 'text-[#0d0a09]' : 'text-[#f5f5dc]'}`}>{t.name}</span>
-                            <span className={`text-[10px] font-mono font-black px-2 py-1 rounded ${currentBidderId === t.id ? 'bg-[#0d0a09]/10 text-[#0d0a09]' : 'bg-[#0d0a09] text-[#c5a059]'}`}>Bal: ${(t.remainingBudget/1000000).toFixed(1)}M</span>
+                  </div>
+
+                  {/* Right Section: Bidding Array (Functional Controls) */}
+                  <div className="lg:col-span-3 flex flex-col order-3 lg:order-3 h-full">
+                    <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-[#c5a059] mb-4 flex items-center gap-2"><Gavel size={14}/> Active Bidders</h3>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-2 pb-4">
+                      {teams.map(t => {
+                        const nextBid = currentBidderId === null ? currentBid : currentBid + 500000;
+                        const canBid = nextBid <= t.remainingBudget;
+                        const isTopBidder = currentBidderId === t.id;
+
+                        return (
+                          <div key={t.id} className={`p-4 rounded-3xl border transition-all relative overflow-hidden flex flex-col gap-3 ${isTopBidder ? 'bg-[#c5a059] border-[#f5f5dc] shadow-xl z-10' : 'bg-[#1a1410] border-[#3d2f2b]'}`}>
+                             <div className="flex justify-between items-start">
+                                <span className={`font-black uppercase tracking-widest text-xs truncate max-w-[150px] ${isTopBidder ? 'text-[#0d0a09]' : 'text-[#f5f5dc]'}`}>{t.name}</span>
+                                <span className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded ${isTopBidder ? 'bg-[#0d0a09]/10 text-[#0d0a09]' : 'bg-black text-[#c5a059]'}`}>${(t.remainingBudget/1000000).toFixed(1)}M</span>
+                             </div>
+                             <button 
+                                disabled={!canBid || isTopBidder}
+                                onClick={() => placeBid(t.id, nextBid)}
+                                className={`w-full py-2 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-2 ${
+                                  isTopBidder ? 'bg-[#0d0a09] text-white animate-pulse shadow-inner' : 
+                                  canBid ? 'bg-[#211a17] text-[#c5a059] border border-[#c5a059]/20 hover:bg-[#c5a059] hover:text-[#0d0a09]' : 
+                                  'bg-[#3d2f2b] text-[#5c4742] cursor-not-allowed grayscale'
+                                }`}
+                             >
+                               {isTopBidder ? 'Winning Bid' : canBid ? `Bid $${(nextBid/1000).toFixed(0)}k` : 'Insufficient Capital'}
+                             </button>
                           </div>
-                          <div className={`text-[10px] uppercase font-black tracking-widest relative z-10 ${currentBidderId === t.id ? 'text-[#0d0a09]/60' : 'text-[#b4a697]'}`}>Target: <span className={`text-sm font-mono ml-2 ${currentBidderId === t.id ? 'text-[#0d0a09]' : 'text-white'}`}>${(currentBid + (currentBidderId ? 500000 : 0)).toLocaleString()}</span></div>
-                          {currentBidderId === t.id && <div className="absolute inset-0 bg-white/10 animate-pulse"></div>}
-                        </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
               ) : (
                 <div className="h-full flex flex-col items-center justify-center space-y-12">
-                   <div className="w-48 h-48 gold-gradient rounded-[4rem] flex items-center justify-center shadow-[0_0_80px_rgba(197,160,89,0.2)] animate-pulse relative">
-                      <Cpu size={80} className="text-[#0d0a09]" />
-                      <div className="absolute inset-0 bg-white/5 rounded-[4rem] animate-ping"></div>
+                   <div className="w-40 h-40 gold-gradient rounded-[3rem] flex items-center justify-center shadow-2xl relative">
+                      <Cpu size={64} className="text-[#0d0a09]" />
+                      <div className="absolute inset-0 bg-white/5 rounded-[3rem] animate-ping"></div>
                    </div>
-                   <div className="text-center space-y-6 max-w-xl">
-                      <h2 className="text-5xl font-display font-black uppercase text-[#f5f5dc] tracking-widest">Protocol Staged</h2>
-                      <p className="text-[#b4a697] font-light italic leading-relaxed uppercase text-sm tracking-widest">Awaiting introduction of draft individual into the live engagement room. Current pool occupancy: <span className="text-[#c5a059] font-black">{players.filter(p => p.status === 'PENDING').length}</span> units.</p>
-                      <button onClick={handleNextPlayer} className="group relative px-16 py-6 overflow-hidden gold-gradient text-[#0d0a09] font-black uppercase tracking-[0.4em] rounded-[2rem] shadow-2xl hover:brightness-110 transition-all">
-                        <span className="relative z-10">Start Selection Cycle</span>
+                   <div className="text-center space-y-6 max-w-xl px-4">
+                      <h2 className="text-4xl font-display font-black uppercase text-[#f5f5dc] tracking-widest">Protocol Staged</h2>
+                      <p className="text-[#b4a697] font-light italic leading-relaxed uppercase text-[10px] tracking-widest">Awaiting introduction of draft individual into the live engagement room. Current pool occupancy: <span className="text-[#c5a059] font-black">{players.filter(p => p.status === 'PENDING').length}</span> units.</p>
+                      <button onClick={handleNextPlayer} className="group relative px-12 py-5 overflow-hidden gold-gradient text-[#0d0a09] font-black uppercase tracking-[0.4em] rounded-full shadow-2xl hover:brightness-110 transition-all text-sm">
+                        <span className="relative z-10">Launch Selection Cycle</span>
                         <div className="absolute top-0 -left-[100%] w-full h-full bg-white/20 skew-x-12 group-hover:left-[100%] transition-all duration-1000"></div>
                       </button>
                    </div>
@@ -587,23 +597,23 @@ const App: React.FC = () => {
           )}
 
           {activeTab === 'history' && (
-            <div className="max-w-4xl mx-auto space-y-6">
+            <div className="max-w-4xl mx-auto space-y-4 pb-20">
               {history.slice().reverse().map(e => (
-                <div key={e.id} className="bg-[#1a1410] border border-[#3d2f2b] p-8 rounded-[2.5rem] flex justify-between items-center hover:border-[#c5a059]/30 transition-all shadow-xl">
-                  <div className="flex items-center gap-8">
-                    <div className="w-16 h-16 bg-[#8b9d77]/10 border border-[#8b9d77]/20 rounded-3xl flex items-center justify-center text-[#8b9d77]"><CheckCircle2 size={32} /></div>
+                <div key={e.id} className="bg-[#1a1410] border border-[#3d2f2b] p-6 rounded-[2rem] flex justify-between items-center hover:border-[#c5a059]/30 transition-all">
+                  <div className="flex items-center gap-6">
+                    <div className="w-12 h-12 bg-[#8b9d77]/10 border border-[#8b9d77]/20 rounded-2xl flex items-center justify-center text-[#8b9d77]"><CheckCircle2 size={24} /></div>
                     <div>
-                      <p className="text-2xl font-display font-black text-[#f5f5dc] uppercase tracking-tighter">{players.find(p => p.id === e.playerId)?.name}</p>
-                      <p className="text-[10px] font-black uppercase text-[#b4a697] tracking-widest mt-1">Bound to <span className="text-[#c5a059]">{teams.find(t => t.id === e.teamId)?.name}</span></p>
+                      <p className="text-xl font-display font-black text-[#f5f5dc] uppercase tracking-tighter">{players.find(p => p.id === e.playerId)?.name}</p>
+                      <p className="text-[9px] font-black uppercase text-[#b4a697] tracking-widest mt-0.5">Assigned to <span className="text-[#c5a059]">{teams.find(t => t.id === e.teamId)?.name}</span></p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-4xl font-mono font-black text-[#f5f5dc]">${e.amount.toLocaleString()}</p>
-                    <p className="text-[10px] font-bold text-[#3d2f2b] uppercase tracking-[0.4em] mt-2">{new Date(e.timestamp).toLocaleTimeString()}</p>
+                    <p className="text-3xl font-mono font-black text-[#f5f5dc]">${e.amount.toLocaleString()}</p>
+                    <p className="text-[9px] font-bold text-[#3d2f2b] uppercase tracking-[0.4em] mt-1">{new Date(e.timestamp).toLocaleTimeString()}</p>
                   </div>
                 </div>
               ))}
-              {history.length === 0 && <div className="py-40 text-center opacity-10 uppercase tracking-[1em] text-xs font-black">Archive Empty</div>}
+              {history.length === 0 && <div className="py-40 text-center opacity-10 uppercase tracking-[1em] text-xs font-black">Archives Offline</div>}
             </div>
           )}
 
@@ -611,20 +621,19 @@ const App: React.FC = () => {
       </div>
 
       {/* Floating Orbital Command Dock */}
-      <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100]">
-        <nav className="orbital-nav px-8 py-5 rounded-[2.5rem] flex items-center gap-4">
-          <OrbitalItem icon={<LayoutDashboard size={22} />} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-          <OrbitalItem icon={<Users size={22} />} active={activeTab === 'players'} onClick={() => setActiveTab('players')} />
-          <div className="w-px h-8 bg-[#3d2f2b] mx-2"></div>
-          <OrbitalItem icon={<Gavel size={22} />} active={activeTab === 'room'} onClick={() => setActiveTab('room')} />
-          <div className="w-px h-8 bg-[#3d2f2b] mx-2"></div>
-          <OrbitalItem icon={<Trophy size={22} />} active={activeTab === 'teams'} onClick={() => setActiveTab('teams')} />
-          <OrbitalItem icon={<History size={22} />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] w-full max-w-fit px-4">
+        <nav className="orbital-nav px-4 lg:px-8 py-3 lg:py-4 rounded-full flex items-center gap-2 lg:gap-4 overflow-x-auto no-scrollbar">
+          <OrbitalItem icon={<LayoutDashboard size={20} />} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+          <OrbitalItem icon={<Users size={20} />} active={activeTab === 'players'} onClick={() => setActiveTab('players')} />
+          <div className="w-px h-6 bg-[#3d2f2b] mx-1"></div>
+          <OrbitalItem icon={<Gavel size={20} />} active={activeTab === 'room'} onClick={() => setActiveTab('room')} />
+          <div className="w-px h-6 bg-[#3d2f2b] mx-1"></div>
+          <OrbitalItem icon={<Trophy size={20} />} active={activeTab === 'teams'} onClick={() => setActiveTab('teams')} />
+          <OrbitalItem icon={<History size={20} />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
         </nav>
       </div>
 
       {/* --- Global Modals --- */}
-      {/* (Previous Modals maintained with real-world info) */}
       <Modal isOpen={isPlayerModalOpen} onClose={() => { setIsPlayerModalOpen(false); setEditingPlayerId(null); }} title={editingPlayerId ? "Refine Talent Profile" : "Enroll Professional Talent"}>
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -661,23 +670,19 @@ const App: React.FC = () => {
               </div>
             </div>
           </div>
-          
           <div className="space-y-2">
             <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#c5a059] flex items-center gap-2"><FileText size={12}/> Brief Bio / Background</label>
-            <textarea className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059] h-24 resize-none" placeholder="Career highlights, previous teams, notable achievements..." value={newPlayer.bio} onChange={e => setNewPlayer({...newPlayer, bio: e.target.value})} />
+            <textarea className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059] h-20 resize-none" placeholder="Career highlights..." value={newPlayer.bio} onChange={e => setNewPlayer({...newPlayer, bio: e.target.value})} />
           </div>
-
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#c5a059] flex items-center gap-2"><Activity size={12}/> Performance Index (Stats)</label>
-            <input type="text" placeholder="e.g. 52 Goals, 14 Assists, 92% Completion" className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" value={newPlayer.stats} onChange={e => setNewPlayer({...newPlayer, stats: e.target.value})} />
+            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#c5a059] flex items-center gap-2"><Activity size={12}/> Performance Stats</label>
+            <input type="text" placeholder="e.g. 52 Goals, 14 Assists" className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" value={newPlayer.stats} onChange={e => setNewPlayer({...newPlayer, stats: e.target.value})} />
           </div>
-
-          <div className="flex justify-between p-6 bg-[#0d0a09] rounded-3xl border border-[#3d2f2b] items-center">
-            <div className="flex gap-4 items-center"><Globe className="text-[#c5a059]" /><span className="text-xs uppercase font-black tracking-widest">International Status</span></div>
-            <button onClick={() => setNewPlayer({...newPlayer, isOverseas: !newPlayer.isOverseas})} className={`w-14 h-8 rounded-full relative transition-all ${newPlayer.isOverseas ? 'bg-[#c5a059]' : 'bg-[#3d2f2b]'}`}><div className={`absolute top-1.5 w-5 h-5 bg-[#0d0a09] rounded-full transition-all ${newPlayer.isOverseas ? 'left-7' : 'left-1.5'}`}></div></button>
+          <div className="flex justify-between p-4 bg-[#0d0a09] rounded-2xl border border-[#3d2f2b] items-center">
+            <div className="flex gap-4 items-center"><Globe size={18} className="text-[#c5a059]" /><span className="text-xs uppercase font-black tracking-widest">International Status</span></div>
+            <button onClick={() => setNewPlayer({...newPlayer, isOverseas: !newPlayer.isOverseas})} className={`w-12 h-7 rounded-full relative transition-all ${newPlayer.isOverseas ? 'bg-[#c5a059]' : 'bg-[#3d2f2b]'}`}><div className={`absolute top-1 w-5 h-5 bg-[#0d0a09] rounded-full transition-all ${newPlayer.isOverseas ? 'left-6' : 'left-1'}`}></div></button>
           </div>
-          
-          <button onClick={() => { if(!newPlayer.name) return; if(editingPlayerId) setPlayers(players.map(p => p.id === editingPlayerId ? {...p, ...newPlayer} as Player : p)); else setPlayers([...players, {id: Math.random().toString(36).substr(2,9), name: newPlayer.name!, roleId: newPlayer.roleId || config.roles[0].id, basePrice: newPlayer.basePrice || 0, isOverseas: !!newPlayer.isOverseas, imageUrl: newPlayer.imageUrl, age: newPlayer.age, nationality: newPlayer.nationality, bio: newPlayer.bio, stats: newPlayer.stats, status: 'PENDING'}]); setIsPlayerModalOpen(false); setEditingPlayerId(null); }} className="w-full py-6 gold-gradient rounded-3xl text-[#0d0a09] font-black uppercase tracking-widest text-sm shadow-2xl">Execute Registry Entry</button>
+          <button onClick={() => { if(!newPlayer.name) return; if(editingPlayerId) setPlayers(players.map(p => p.id === editingPlayerId ? {...p, ...newPlayer} as Player : p)); else setPlayers([...players, {id: Math.random().toString(36).substr(2,9), name: newPlayer.name!, roleId: newPlayer.roleId || config.roles[0].id, basePrice: newPlayer.basePrice || 0, isOverseas: !!newPlayer.isOverseas, imageUrl: newPlayer.imageUrl, age: newPlayer.age, nationality: newPlayer.nationality, bio: newPlayer.bio, stats: newPlayer.stats, status: 'PENDING'}]); setIsPlayerModalOpen(false); setEditingPlayerId(null); }} className="w-full py-5 gold-gradient rounded-3xl text-[#0d0a09] font-black uppercase tracking-widest text-xs shadow-2xl">Validate Registry Entry</button>
         </div>
       </Modal>
 
@@ -693,49 +698,48 @@ const App: React.FC = () => {
               <input type="text" placeholder="e.g. United Spirits Ltd." className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" value={newTeam.owner} onChange={e => setNewTeam({...newTeam, owner: e.target.value})} />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-[#c5a059] flex items-center gap-2"><MapPin size={12}/> Primary Home Base (City)</label>
+              <label className="text-[10px] font-black uppercase tracking-widest text-[#c5a059] flex items-center gap-2"><MapPin size={12}/> Home City</label>
               <input type="text" placeholder="e.g. Bengaluru" className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" value={newTeam.homeCity} onChange={e => setNewTeam({...newTeam, homeCity: e.target.value})} />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-[#c5a059] flex items-center gap-2"><Calendar size={12}/> Foundation Cycle (Year)</label>
+              <label className="text-[10px] font-black uppercase tracking-widest text-[#c5a059] flex items-center gap-2"><Calendar size={12}/> Foundation Year</label>
               <input type="number" className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] font-mono outline-none focus:ring-1 ring-[#c5a059]" value={newTeam.foundationYear} onChange={e => setNewTeam({...newTeam, foundationYear: Number(e.target.value)})} />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-[#c5a059]">Market Capital Allocation</label>
+              <label className="text-[10px] font-black uppercase tracking-widest text-[#c5a059]">Capital Allocation</label>
               <div className="relative">
                 <DollarSign size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#c5a059]" />
                 <input type="number" className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl pl-10 pr-4 py-4 text-[#f5f5dc] font-mono outline-none focus:ring-1 ring-[#c5a059]" value={newTeam.budget} onChange={e => setNewTeam({...newTeam, budget: Number(e.target.value)})} />
               </div>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-[#c5a059]">Franchise Emblem URL</label>
+              <label className="text-[10px] font-black uppercase tracking-widest text-[#c5a059]">Emblem URL</label>
               <div className="relative">
                 <ImageIcon size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#b4a697]" />
                 <input type="text" placeholder="https://..." className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl pl-10 pr-4 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" value={newTeam.logo} onChange={e => setNewTeam({...newTeam, logo: e.target.value})} />
               </div>
             </div>
           </div>
-          <button onClick={() => { if(!newTeam.name) return; if(editingTeamId) { setTeams(teams.map(t => t.id === editingTeamId ? {...t, ...newTeam, remainingBudget: t.remainingBudget + ((newTeam.budget || t.budget) - t.budget)} as Team : t)); } else { const b = newTeam.budget || config.totalBudget; setTeams([...teams, {id: Math.random().toString(36).substr(2,9), name: newTeam.name!, budget: b, remainingBudget: b, logo: newTeam.logo, owner: newTeam.owner, homeCity: newTeam.homeCity, foundationYear: newTeam.foundationYear, players: []}]); } setIsTeamModalOpen(false); setEditingTeamId(null); }} className="w-full py-6 gold-gradient rounded-3xl text-[#0d0a09] font-black uppercase tracking-widest text-sm shadow-2xl">Validate Charter Signature</button>
+          <button onClick={() => { if(!newTeam.name) return; if(editingTeamId) { setTeams(teams.map(t => t.id === editingTeamId ? {...t, ...newTeam, remainingBudget: t.remainingBudget + ((newTeam.budget || t.budget) - t.budget)} as Team : t)); } else { const b = newTeam.budget || config.totalBudget; setTeams([...teams, {id: Math.random().toString(36).substr(2,9), name: newTeam.name!, budget: b, remainingBudget: b, logo: newTeam.logo, owner: newTeam.owner, homeCity: newTeam.homeCity, foundationYear: newTeam.foundationYear, players: []}]); } setIsTeamModalOpen(false); setEditingTeamId(null); }} className="w-full py-5 gold-gradient rounded-3xl text-[#0d0a09] font-black uppercase tracking-widest text-xs shadow-2xl">Validate Charter Signature</button>
         </div>
       </Modal>
 
       <Modal isOpen={isSquadModalOpen} onClose={() => setIsSquadModalOpen(false)} title={`Operational Roster: ${teams.find(t => t.id === viewingSquadTeamId)?.name}`}>
-        <div className="space-y-8">
+        <div className="space-y-6">
           <div className="divide-y divide-[#3d2f2b]">
             {viewingSquad.map(p => (
-              <div key={p.id} className="py-6 flex justify-between items-center group">
+              <div key={p.id} className="py-4 flex justify-between items-center group">
                 <div className="flex gap-4 items-center">
-                  <div className="w-12 h-12 rounded-2xl bg-[#0d0a09] border border-[#3d2f2b] overflow-hidden">{p.imageUrl ? <img src={p.imageUrl} className="w-full h-full object-cover" /> : <Users size={20} className="m-3 text-[#3d2f2b]" />}</div>
-                  <div><p className="text-white font-bold">{p.name}</p><p className="text-[9px] uppercase font-black text-[#c5a059]">{config.roles.find(r => r.id === p.roleId)?.name} • {p.nationality}</p></div>
+                  <div className="w-10 h-10 rounded-xl bg-[#0d0a09] border border-[#3d2f2b] overflow-hidden">{p.imageUrl ? <img src={p.imageUrl} className="w-full h-full object-cover" /> : <Users size={16} className="m-3 text-[#3d2f2b]" />}</div>
+                  <div><p className="text-white font-bold text-sm">{p.name}</p><p className="text-[8px] uppercase font-black text-[#c5a059]">{config.roles.find(r => r.id === p.roleId)?.name}</p></div>
                 </div>
                 <div className="text-right">
-                  <p className="font-mono text-[#f5f5dc] font-bold text-lg">${p.soldPrice?.toLocaleString()}</p>
-                  <p className="text-[8px] uppercase font-black text-[#5c4742]">Contract Index</p>
+                  <p className="font-mono text-[#f5f5dc] font-bold text-sm">${p.soldPrice?.toLocaleString()}</p>
                 </div>
               </div>
             ))}
           </div>
-          <div className="pt-8 border-t border-[#3d2f2b] flex justify-between items-center"><p className="text-[10px] font-black uppercase tracking-widest text-[#b4a697]">Total Portfolio Market Valuation</p><p className="text-3xl font-mono font-black text-[#c5a059]">${viewingSquad.reduce((acc, p) => acc + (p.soldPrice || 0), 0).toLocaleString()}</p></div>
+          <div className="pt-4 border-t border-[#3d2f2b] flex justify-between items-center"><p className="text-[10px] font-black uppercase tracking-widest text-[#b4a697]">Total Portfolio Value</p><p className="text-2xl font-mono font-black text-[#c5a059]">${viewingSquad.reduce((acc, p) => acc + (p.soldPrice || 0), 0).toLocaleString()}</p></div>
         </div>
       </Modal>
     </div>
@@ -745,17 +749,17 @@ const App: React.FC = () => {
 // --- Atomic Layout Units ---
 
 const OrbitalItem: React.FC<{ icon: React.ReactNode; active: boolean; onClick: () => void }> = ({ icon, active, onClick }) => (
-  <button onClick={onClick} className={`p-4 rounded-2xl transition-all duration-500 relative ${active ? 'bg-[#c5a059] text-[#0d0a09] shadow-[0_0_20px_rgba(197,160,89,0.5)]' : 'text-[#b4a697] hover:bg-[#c5a059]/10 hover:text-[#f5f5dc]'}`}>
+  <button onClick={onClick} className={`p-3 rounded-2xl transition-all duration-500 relative flex items-center justify-center ${active ? 'bg-[#c5a059] text-[#0d0a09] shadow-[0_0_20px_rgba(197,160,89,0.5)]' : 'text-[#b4a697] hover:bg-[#c5a059]/10 hover:text-[#f5f5dc]'}`}>
     {icon}
-    {active && <div className="absolute top-[-4px] left-1/2 -translate-x-1/2 w-1 h-1 bg-white rounded-full shadow-[0_0_5px_#fff]"></div>}
+    {active && <div className="absolute top-[-2px] left-1/2 -translate-x-1/2 w-1 h-1 bg-white rounded-full"></div>}
   </button>
 );
 
 const StatCard: React.FC<{ label: string; value: string | number; icon: React.ReactNode }> = ({ label, value, icon }) => (
-  <div className="bg-[#1a1410] border border-[#3d2f2b] rounded-[2.5rem] p-10 hover:border-[#c5a059]/30 transition-all group overflow-hidden relative">
-    <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-125 transition-all text-[#c5a059]">{icon}</div>
-    <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[#b4a697] mb-3">{label}</p>
-    <p className="text-5xl font-display font-black text-[#f5f5dc] tracking-tighter drop-shadow-lg">{value}</p>
+  <div className="bg-[#1a1410] border border-[#3d2f2b] rounded-[2rem] p-6 lg:p-8 hover:border-[#c5a059]/30 transition-all group overflow-hidden relative">
+    <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:scale-125 transition-all text-[#c5a059]">{icon}</div>
+    <p className="text-[9px] font-black uppercase tracking-[0.3em] text-[#b4a697] mb-2">{label}</p>
+    <p className="text-3xl lg:text-4xl font-display font-black text-[#f5f5dc] tracking-tighter drop-shadow-lg">{value}</p>
   </div>
 );
 

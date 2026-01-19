@@ -105,19 +105,30 @@
       .celebration-overlay {
         background: radial-gradient(circle, rgba(197, 160, 89, 0.1) 0%, rgba(13, 10, 9, 0.95) 100%);
       }
-    </style>
-    <script type="importmap">
-    {
-      "imports": {
-        "react/": "https://esm.sh/react@^19.2.3/",
-        "react": "https://esm.sh/react@^19.2.3",
-        "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-        "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
-        "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
+
+      .bidding-pulse {
+        box-shadow: 0 0 0 0 rgba(197, 160, 89, 0.7);
+        animation: pulse-gold 2s infinite;
       }
-    }
-    </script>
-  </head>
+
+      @keyframes pulse-gold {
+        0% { box-shadow: 0 0 0 0 rgba(197, 160, 89, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(197, 160, 89, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(197, 160, 89, 0); }
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
+  }
+}
+</script>
+</head>
   <body>
     <div class="noise"></div>
     <div id="root"></div>
