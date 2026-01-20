@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { BrowserRouter, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, Settings, Gavel, 
   TrendingUp, X, History, ArrowLeft, Activity,
@@ -21,7 +22,24 @@ import {
 
 // --- Core Application ---
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
+  const navigate = useNavigate();
+
+  // Map status to route paths (one-way navigation to avoid loops)
+  const statusToPath: Record<AuctionStatus, string> = {
+    [AuctionStatus.HOME]: '/',
+    [AuctionStatus.AUTH]: '/login',
+    [AuctionStatus.HOW_IT_WORKS]: '/how-it-works',
+    [AuctionStatus.SETUP]: '/setup',
+    [AuctionStatus.MATCHES]: '/matches',
+    [AuctionStatus.READY]: '/auction',
+    [AuctionStatus.LIVE]: '/auction',
+    [AuctionStatus.PAUSED]: '/auction',
+    [AuctionStatus.ENDED]: '/auction',
+    [AuctionStatus.SETTINGS]: '/settings',
+    [AuctionStatus.PLAYER_REGISTRATION]: '/player/register',
+    [AuctionStatus.PLAYER_DASHBOARD]: '/player/dashboard'
+  };
   // Load initial state from backend
   const loadInitialState = async () => {
     const savedState = await loadAppState();
@@ -135,6 +153,12 @@ const App: React.FC = () => {
 
     loadSavedData();
   }, []);
+
+  // One-way sync status to URL (prevents view loops)
+  useEffect(() => {
+    const path = statusToPath[status] || '/';
+    navigate(path, { replace: true });
+  }, [status, navigate]);
 
   // Save app state to JSON file whenever key state changes
   useEffect(() => {
@@ -813,5 +837,11 @@ const App: React.FC = () => {
     </div>
   );
 };
+
+const App: React.FC = () => (
+  <BrowserRouter>
+    <AppContent />
+  </BrowserRouter>
+);
 
 export default App;
