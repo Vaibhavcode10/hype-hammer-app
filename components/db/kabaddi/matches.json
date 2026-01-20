@@ -1,0 +1,23 @@
+[
+  {
+    "id": "match-kabaddi-1",
+    "name": "PKL 2024 Auction",
+    "createdAt": 1705536000000,
+    "sportType": "Kabaddi",
+    "config": {
+      "sport": "Kabaddi",
+      "type": "Open Auction",
+      "level": "Professional",
+      "squadSize": { "min": 15, "max": 20 },
+      "totalBudget": 50000000,
+      "roles": [
+        { "id": "raider", "name": "Raider" },
+        { "id": "defender", "name": "Defender" },
+        { "id": "ar", "name": "All-Rounder" }
+      ],
+      "rules": {}
+    },
+    "history": [],
+    "status": "SETUP"
+  }
+]

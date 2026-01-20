@@ -6,35 +6,58 @@ import {
 } from 'lucide-react';
 import { 
   AuctionStatus, 
-  AuctionConfig, Player, Team, Bid, SportData, MatchData, SportType, AuctionType
+  AuctionConfig, Player, Team, Bid, SportData, MatchData, SportType, AuctionType, UserRole
 } from './types';
-import { INITIAL_CONFIG, MOCK_PLAYERS, MOCK_TEAMS, SPORT_DEFAULTS, MOCK_SPORTS_DATA } from './constants';
+import { INITIAL_CONFIG, SPORT_DEFAULTS } from './constants';
 import { getAuctionInsights } from './services/geminiService';
+import { loadAppState, saveAppState, loadSportsData, saveSportsData, loadAllSportsFromDB } from './services/storageService';
 
 // Import Components
 import {
   HUDPill, OrbitalItem, SoldCelebration, SettingsSidebar,
   HomePage, AuthPage, HowItWorksPage, SetupPage, MatchesPage, SettingsPage, SettingsLayoutPage, DashboardPage, PlayersPage, TeamsPage, AuctionRoomPage, HistoryPage,
-  PlayerModal, TeamModal, SquadModal
+  PlayerModal, TeamModal, SquadModal, PlayerDashboardPage, PlayerRegistrationPage
 } from './components';
 
 // --- Core Application ---
 
 const App: React.FC = () => {
+  // Load initial state from backend
+  const loadInitialState = async () => {
+    const savedState = await loadAppState();
+    if (savedState) {
+      return {
+        status: savedState.status || AuctionStatus.HOME,
+        currentSport: savedState.currentSport || null,
+        currentMatchId: savedState.currentMatchId || null,
+        activeTab: savedState.activeTab || 'dashboard'
+      };
+    }
+    return {
+      status: AuctionStatus.HOME,
+      currentSport: null,
+      currentMatchId: null,
+      activeTab: 'dashboard' as const
+    };
+  };
+
+  // Initialize state with default values (will be loaded in useEffect)
   const [status, setStatus] = useState<AuctionStatus>(AuctionStatus.HOME);
   
   // User state
   const [currentUser, setCurrentUser] = useState({
     name: 'Guest User',
     email: 'guest@hypehammer.com',
-    avatar: undefined
+    avatar: undefined,
+    role: UserRole.AUCTIONEER,
+    playerId: undefined as string | undefined
   });
   
   // Settings sidebar state
   const [isSettingsSidebarOpen, setIsSettingsSidebarOpen] = useState(false);
   
-  // Multi-sport, multi-match state with pre-loaded mock data
-  const [allSports, setAllSports] = useState<SportData[]>(MOCK_SPORTS_DATA);
+  // Multi-sport, multi-match state
+  const [allSports, setAllSports] = useState<SportData[]>([]);
   const [currentSport, setCurrentSport] = useState<string | null>(null);
   const [currentMatchId, setCurrentMatchId] = useState<string | null>(null);
   
@@ -88,6 +111,56 @@ const App: React.FC = () => {
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [auctionRound, setAuctionRound] = useState(1);
 
+  // Load saved state on mount
+  useEffect(() => {
+    const loadSavedData = async () => {
+      try {
+        const savedState = await loadAppState();
+        
+        // Load sports data from db folder
+        const sportsFromDB = await loadAllSportsFromDB();
+        
+        if (savedState) {
+          setStatus(savedState.status as AuctionStatus);
+          setCurrentSport(savedState.currentSport);
+          setCurrentMatchId(savedState.currentMatchId);
+          setActiveTab(savedState.activeTab as any);
+        }
+
+        // Use DB data - always load from database
+        if (sportsFromDB && sportsFromDB.length > 0) {
+          setAllSports(sportsFromDB);
+          console.log('✅ Loaded sports from db folder:', sportsFromDB);
+        } else {
+          console.log('⚠️ No data in db folder yet. Create a match to add players.');
+          setAllSports([]);
+        }
+      } catch (error) {
+        console.error('❌ Error loading saved data:', error);
+        // Start with empty on error
+        setAllSports([]);
+      }
+    };
+
+    loadSavedData();
+  }, []);
+
+  // Save app state to JSON file whenever key state changes
+  useEffect(() => {
+    const stateToSave = {
+      status,
+      currentSport,
+      currentMatchId,
+      activeTab
+    };
+    saveAppState(stateToSave);
+  }, [status, currentSport, currentMatchId, activeTab]);
+
+  // Save sports data to JSON file whenever it changes
+  useEffect(() => {
+    saveSportsData(allSports);
+  }, [allSports]);
+
   // Multi-sport/match management functions
   const handleSelectSport = (sportType: SportType, customName?: string) => {
     const sportIdentifier = sportType === SportType.CUSTOM && customName ? customName : sportType;
@@ -115,7 +188,7 @@ const App: React.FC = () => {
     setStatus(AuctionStatus.MATCHES);
   };
 
-  const handleCreateMatch = (matchName: string) => {
+  const handleCreateMatch = (matchName: string, matchDate?: number, place?: string) => {
     if (!currentSport || !currentSportData) return;
 
     // Get sport-specific defaults
@@ -139,6 +212,8 @@ const App: React.FC = () => {
       id: `match_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       name: matchName,
       createdAt: Date.now(),
+      matchDate,
+      place,
       config: sportConfig,
       players: freshPlayers,
       teams: freshTeams,
@@ -155,6 +230,25 @@ const App: React.FC = () => {
     }));
 
     // Stay on Matches page - don't auto-navigate
+  };
+
+  const handleUpdateMatch = (matchId: string, matchName: string, matchDate?: number, place?: string) => {
+    if (!currentSportData) return;
+
+    setAllSports(prev => prev.map(sport => {
+      if (sport.sportType === currentSportData.sportType && 
+          sport.customSportName === currentSportData.customSportName) {
+        return {
+          ...sport,
+          matches: sport.matches.map(match => 
+            match.id === matchId
+              ? { ...match, name: matchName, matchDate, place }
+              : match
+          )
+        };
+      }
+      return sport;
+    }));
   };
 
   const handleSelectMatch = (matchId: string) => {
@@ -251,6 +345,46 @@ const App: React.FC = () => {
     setCurrentSport(null);
     setCurrentMatchId(null);
     setStatus(AuctionStatus.SETUP);
+  };
+
+  // Player registration handler
+  const handlePlayerRegister = (sportId: string, matchId: string, playerData: Partial<Player>) => {
+    const [sportType, customName] = sportId.split('-');
+    
+    const newPlayer: Player = {
+      id: `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      name: playerData.name!,
+      roleId: playerData.roleId!,
+      basePrice: playerData.basePrice!,
+      isOverseas: playerData.isOverseas || false,
+      status: 'PENDING',
+      imageUrl: playerData.imageUrl,
+      age: playerData.age,
+      nationality: playerData.nationality,
+      bio: playerData.bio,
+      stats: playerData.stats
+    };
+
+    // Add player to the selected match
+    setAllSports(prev => prev.map(sport => {
+      if (`${sport.sportType}-${sport.customSportName || ''}` === sportId) {
+        return {
+          ...sport,
+          matches: sport.matches.map(match => 
+            match.id === matchId
+              ? { ...match, players: [...match.players, newPlayer] }
+              : match
+          )
+        };
+      }
+      return sport;
+    }));
+
+    // Update current user with player ID
+    setCurrentUser(prev => ({ ...prev, playerId: newPlayer.id }));
+    
+    // Navigate to player dashboard
+    setStatus(AuctionStatus.PLAYER_DASHBOARD);
   };
 
   const handleLogout = () => {
@@ -420,6 +554,23 @@ const App: React.FC = () => {
     />;
   }
 
+  if (status === AuctionStatus.PLAYER_REGISTRATION) {
+    return <PlayerRegistrationPage 
+      allSports={allSports}
+      currentUser={currentUser}
+      onRegister={handlePlayerRegister}
+      onBack={() => setStatus(AuctionStatus.PLAYER_DASHBOARD)}
+    />;
+  }
+
+  if (status === AuctionStatus.PLAYER_DASHBOARD) {
+    return <PlayerDashboardPage 
+      currentUser={currentUser}
+      allSports={allSports}
+      onEditProfile={() => setStatus(AuctionStatus.PLAYER_REGISTRATION)}
+    />;
+  }
+
   if (status === AuctionStatus.HOW_IT_WORKS) {
     return <HowItWorksPage setStatus={setStatus} />;
   }
@@ -442,6 +593,7 @@ const App: React.FC = () => {
       sportData={currentSportData}
       setStatus={setStatus}
       onCreateMatch={handleCreateMatch}
+      onUpdateMatch={handleUpdateMatch}
       onSelectMatch={handleSelectMatch}
       onDeleteMatch={handleDeleteMatch}
       onBackToSetup={handleBackToSetup}

@@ -1,0 +1,62 @@
+[
+  {
+    "id": "p5",
+    "name": "Kylian Mbappé",
+    "roleId": "fwd",
+    "basePrice": 50000000,
+    "isOverseas": true,
+    "status": "PENDING",
+    "age": 25,
+    "nationality": "French",
+    "bio": "World Cup winner. Blistering pace and clinical finish.",
+    "stats": "250+ Career Goals, 3x Ligue 1 POTY",
+    "imageUrl": "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&q=80&w=400&h=400",
+    "sport": "Football",
+    "matchId": "match-football-1"
+  },
+  {
+    "id": "football-p1",
+    "name": "Erling Haaland",
+    "roleId": "fwd",
+    "basePrice": 60000000,
+    "isOverseas": true,
+    "status": "UNSOLD",
+    "age": 23,
+    "nationality": "Norwegian",
+    "bio": "Goal machine. Incredible striker with unmatched finishing.",
+    "stats": "52 Goals in 53 Games, Premier League Top Scorer",
+    "imageUrl": "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&q=80&w=400&h=400",
+    "sport": "Football",
+    "matchId": "match-football-1"
+  },
+  {
+    "id": "football-p2",
+    "name": "Bruno Fernandes",
+    "roleId": "mid",
+    "basePrice": 40000000,
+    "isOverseas": true,
+    "status": "UNSOLD",
+    "age": 29,
+    "nationality": "Portuguese",
+    "bio": "Playmaker extraordinaire. Sets up goals with precision passes.",
+    "stats": "25+ Assists, 15+ Goals per Season",
+    "imageUrl": "https://images.unsplash.com/photo-1606925797300-0b35e9d1794e?auto=format&fit=crop&q=80&w=400&h=400",
+    "sport": "Football",
+    "matchId": "match-football-1"
+  },
+  {
+    "id": "football-p3",
+    "name": "Vinicius Junior",
+    "roleId": "fwd",
+    "basePrice": 55000000,
+    "isOverseas": true,
+    "status": "UNSOLD",
+    "age": 23,
+    "nationality": "Brazilian",
+    "bio": "Lightning fast winger. Champions League winner.",
+    "stats": "120+ Career Goals, La Liga Champion",
+    "imageUrl": "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&q=80&w=400&h=400",
+    "sport": "Football",
+    "matchId": "match-football-1"
+  }
+]

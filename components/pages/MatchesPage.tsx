@@ -5,7 +5,8 @@ import { AuctionStatus, SportType, MatchData, SportData } from '../../types';
 interface MatchesPageProps {
   sportData: SportData;
   setStatus: (status: AuctionStatus) => void;
-  onCreateMatch: (matchName: string) => void;
+  onCreateMatch: (matchName: string, matchDate?: number, place?: string) => void;
+  onUpdateMatch: (matchId: string, matchName: string, matchDate?: number, place?: string) => void;
   onSelectMatch: (matchId: string) => void;
   onDeleteMatch: (matchId: string) => void;
   onBackToSetup: () => void;
@@ -15,18 +16,49 @@ export const MatchesPage: React.FC<MatchesPageProps> = ({
   sportData,
   setStatus,
   onCreateMatch,
+  onUpdateMatch,
   onSelectMatch,
   onDeleteMatch,
   onBackToSetup
 }) => {
   const [showNewMatchModal, setShowNewMatchModal] = useState(false);
+  const [showEditMatchModal, setShowEditMatchModal] = useState(false);
   const [newMatchName, setNewMatchName] = useState('');
+  const [newMatchDate, setNewMatchDate] = useState('');
+  const [newMatchPlace, setNewMatchPlace] = useState('');
+  const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
+  const [editMatchName, setEditMatchName] = useState('');
+  const [editMatchDate, setEditMatchDate] = useState('');
+  const [editMatchPlace, setEditMatchPlace] = useState('');
 
   const handleCreateMatch = () => {
     if (newMatchName.trim()) {
-      onCreateMatch(newMatchName.trim());
+      const matchDate = newMatchDate ? new Date(newMatchDate).getTime() : undefined;
+      onCreateMatch(newMatchName.trim(), matchDate, newMatchPlace.trim() || undefined);
       setNewMatchName('');
+      setNewMatchDate('');
+      setNewMatchPlace('');
       setShowNewMatchModal(false);
+    }
+  };
+
+  const handleEditMatch = (match: MatchData) => {
+    setEditingMatchId(match.id);
+    setEditMatchName(match.name);
+    setEditMatchDate(match.matchDate ? new Date(match.matchDate).toISOString().split('T')[0] : '');
+    setEditMatchPlace(match.place || '');
+    setShowEditMatchModal(true);
+  };
+
+  const handleUpdateMatch = () => {
+    if (editMatchName.trim() && editingMatchId) {
+      const matchDate = editMatchDate ? new Date(editMatchDate).getTime() : undefined;
+      onUpdateMatch(editingMatchId, editMatchName.trim(), matchDate, editMatchPlace.trim() || undefined);
+      setEditingMatchId(null);
+      setEditMatchName('');
+      setEditMatchDate('');
+      setEditMatchPlace('');
+      setShowEditMatchModal(false);
     }
   };
 
@@ -112,20 +144,35 @@ export const MatchesPage: React.FC<MatchesPageProps> = ({
                       {getMatchStatusLabel(match.status)}
                     </p>
                   </div>
-                  <button
-                    onClick={() => onDeleteMatch(match.id)}
-                    className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-400 transition-all p-2"
-                    title="Delete Match"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
+                  <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                    <button
+                      onClick={() => handleEditMatch(match)}
+                      className="text-[#c5a059] hover:text-[#d4af6a] transition-all p-2"
+                      title="Edit Match"
+                    >
+                      <Edit className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => onDeleteMatch(match.id)}
+                      className="text-red-500 hover:text-red-400 transition-all p-2"
+                      title="Delete Match"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-3 mb-6">
                   <div className="flex items-center gap-2 text-sm text-gray-400">
                     <Calendar className="w-4 h-4" />
-                    {new Date(match.createdAt).toLocaleDateString()}
+                    {match.matchDate ? new Date(match.matchDate).toLocaleDateString() : new Date(match.createdAt).toLocaleDateString()}
                   </div>
+                  {match.place && (
+                    <div className="flex items-center gap-2 text-sm text-gray-400">
+                      <Trophy className="w-4 h-4" />
+                      {match.place}
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 text-sm text-gray-400">
                     <Users className="w-4 h-4" />
                     {match.teams.length} Teams • {match.players.length} Players
@@ -155,9 +202,9 @@ export const MatchesPage: React.FC<MatchesPageProps> = ({
           <div className="bg-[#1a1410] border border-[#c5a059] rounded-xl p-8 max-w-md w-full">
             <h2 className="text-2xl font-bold mb-6 text-[#c5a059]">Create New Match</h2>
             
-            <div className="mb-6">
+            <div className="mb-4">
               <label className="block text-sm font-semibold mb-2 text-gray-300">
-                Match Name
+                Match Name <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -166,7 +213,31 @@ export const MatchesPage: React.FC<MatchesPageProps> = ({
                 placeholder="e.g., Premier League 2024, Season 1"
                 className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
                 autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && handleCreateMatch()}
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-semibold mb-2 text-gray-300">
+                Match Date
+              </label>
+              <input
+                type="date"
+                value={newMatchDate}
+                onChange={(e) => setNewMatchDate(e.target.value)}
+                className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+              />
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-semibold mb-2 text-gray-300">
+                Place/Venue
+              </label>
+              <input
+                type="text"
+                value={newMatchPlace}
+                onChange={(e) => setNewMatchPlace(e.target.value)}
+                placeholder="e.g., Wankhede Stadium, Mumbai"
+                className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
               />
             </div>
 
@@ -175,6 +246,8 @@ export const MatchesPage: React.FC<MatchesPageProps> = ({
                 onClick={() => {
                   setShowNewMatchModal(false);
                   setNewMatchName('');
+                  setNewMatchDate('');
+                  setNewMatchPlace('');
                 }}
                 className="flex-1 px-4 py-3 bg-[#2a2016] text-gray-300 rounded-lg font-semibold hover:bg-[#3a3026] transition-all"
               >
@@ -186,6 +259,76 @@ export const MatchesPage: React.FC<MatchesPageProps> = ({
                 className="flex-1 px-4 py-3 bg-[#c5a059] text-[#0d0a09] rounded-lg font-semibold hover:bg-[#d4af6a] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Match Modal */}
+      {showEditMatchModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1410] border border-[#c5a059] rounded-xl p-8 max-w-md w-full">
+            <h2 className="text-2xl font-bold mb-6 text-[#c5a059]">Edit Match</h2>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-semibold mb-2 text-gray-300">
+                Match Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={editMatchName}
+                onChange={(e) => setEditMatchName(e.target.value)}
+                placeholder="e.g., Premier League 2024, Season 1"
+                className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+                autoFocus
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-semibold mb-2 text-gray-300">
+                Match Date
+              </label>
+              <input
+                type="date"
+                value={editMatchDate}
+                onChange={(e) => setEditMatchDate(e.target.value)}
+                className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+              />
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-semibold mb-2 text-gray-300">
+                Place/Venue
+              </label>
+              <input
+                type="text"
+                value={editMatchPlace}
+                onChange={(e) => setEditMatchPlace(e.target.value)}
+                placeholder="e.g., Wankhede Stadium, Mumbai"
+                className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowEditMatchModal(false);
+                  setEditingMatchId(null);
+                  setEditMatchName('');
+                  setEditMatchDate('');
+                  setEditMatchPlace('');
+                }}
+                className="flex-1 px-4 py-3 bg-[#2a2016] text-gray-300 rounded-lg font-semibold hover:bg-[#3a3026] transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpdateMatch}
+                disabled={!editMatchName.trim()}
+                className="flex-1 px-4 py-3 bg-[#c5a059] text-[#0d0a09] rounded-lg font-semibold hover:bg-[#d4af6a] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Update
               </button>
             </div>
           </div>

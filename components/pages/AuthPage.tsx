@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Mail, Lock, Github, Chrome, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
-import { AuctionStatus } from '../../types';
+import { ArrowLeft, Mail, Lock, Github, Chrome, Eye, EyeOff, CheckCircle2, User, Gavel, Shield } from 'lucide-react';
+import { AuctionStatus, UserRole } from '../../types';
 
 interface AuthPageProps {
   setStatus: (status: AuctionStatus) => void;
-  onLogin?: (userData: { name: string; email: string; avatar?: string }) => void;
+  onLogin?: (userData: { name: string; email: string; avatar?: string; role: UserRole }) => void;
 }
 
 export const AuthPage: React.FC<AuthPageProps> = ({ setStatus, onLogin }) => {
@@ -14,6 +14,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ setStatus, onLogin }) => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
+  const [selectedRole, setSelectedRole] = useState<UserRole>(UserRole.AUCTIONEER);
   const [notification, setNotification] = useState<string | null>(null);
 
   const handleEmailAuth = (e: React.FormEvent) => {
@@ -35,7 +36,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ setStatus, onLogin }) => {
     const userData = {
       name: isLogin ? name || email.split('@')[0] : name,
       email: email,
-      avatar: undefined
+      avatar: undefined,
+      role: selectedRole
     };
     
     if (onLogin) {
@@ -45,7 +47,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ setStatus, onLogin }) => {
     setNotification(isLogin ? 'Login successful!' : 'Account created successfully!');
     setTimeout(() => {
       setNotification(null);
-      setStatus(AuctionStatus.SETUP);
+      // Route based on role
+      if (selectedRole === UserRole.PLAYER) {
+        setStatus(AuctionStatus.PLAYER_REGISTRATION);
+      } else {
+        setStatus(AuctionStatus.SETUP);
+      }
     }, 1500);
   };
 
@@ -54,7 +61,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ setStatus, onLogin }) => {
     const userData = {
       name: provider === 'google' ? 'Google User' : 'GitHub User',
       email: `user@${provider}.com`,
-      avatar: undefined
+      avatar: undefined,
+      role: selectedRole
     };
     
     if (onLogin) {
@@ -64,7 +72,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ setStatus, onLogin }) => {
     setNotification(`Connecting to ${provider === 'google' ? 'Google' : 'GitHub'}...`);
     setTimeout(() => {
       setNotification(null);
-      setStatus(AuctionStatus.SETUP);
+      // Route based on role
+      if (selectedRole === UserRole.PLAYER) {
+        setStatus(AuctionStatus.PLAYER_REGISTRATION);
+      } else {
+        setStatus(AuctionStatus.SETUP);
+      }
     }, 1500);
   };
 
@@ -142,6 +155,51 @@ export const AuthPage: React.FC<AuthPageProps> = ({ setStatus, onLogin }) => {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
             {/* Left Side - Email Form */}
             <form onSubmit={handleEmailAuth} className="space-y-4">
+            {/* Role Selection */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-[#c5a059] tracking-wider">
+                Select Your Role
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole(UserRole.AUCTIONEER)}
+                  className={`p-4 rounded-xl border-2 transition-all ${
+                    selectedRole === UserRole.AUCTIONEER
+                      ? 'border-[#c5a059] bg-[#c5a059]/20'
+                      : 'border-[#3d2f2b] bg-[#0d0a09] hover:border-[#c5a059]/50'
+                  }`}
+                >
+                  <Gavel className="w-6 h-6 mx-auto mb-2 text-[#c5a059]" />
+                  <p className="text-[9px] font-black uppercase text-center text-[#f5f5dc]">Auctioneer</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole(UserRole.PLAYER)}
+                  className={`p-4 rounded-xl border-2 transition-all ${
+                    selectedRole === UserRole.PLAYER
+                      ? 'border-[#c5a059] bg-[#c5a059]/20'
+                      : 'border-[#3d2f2b] bg-[#0d0a09] hover:border-[#c5a059]/50'
+                  }`}
+                >
+                  <User className="w-6 h-6 mx-auto mb-2 text-[#c5a059]" />
+                  <p className="text-[9px] font-black uppercase text-center text-[#f5f5dc]">Player</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole(UserRole.ADMIN)}
+                  className={`p-4 rounded-xl border-2 transition-all ${
+                    selectedRole === UserRole.ADMIN
+                      ? 'border-[#c5a059] bg-[#c5a059]/20'
+                      : 'border-[#3d2f2b] bg-[#0d0a09] hover:border-[#c5a059]/50'
+                  }`}
+                >
+                  <Shield className="w-6 h-6 mx-auto mb-2 text-[#c5a059]" />
+                  <p className="text-[9px] font-black uppercase text-center text-[#f5f5dc]">Admin</p>
+                </button>
+              </div>
+            </div>
+
             {!isLogin && (
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase text-[#c5a059] tracking-wider">

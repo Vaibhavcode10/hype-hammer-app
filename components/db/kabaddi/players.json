@@ -1,0 +1,44 @@
+[
+  {
+    "id": "kabaddi-p1",
+    "name": "Pardeep Narwal",
+    "roleId": "raider",
+    "basePrice": 2200000,
+    "isOverseas": false,
+    "status": "PENDING",
+    "age": 26,
+    "nationality": "Indian",
+    "bio": "Record holder for most raid points in a season",
+    "stats": "1500+ Raid Points, PKL Champion",
+    "sport": "Kabaddi",
+    "matchId": "match-kabaddi-1"
+  },
+  {
+    "id": "kabaddi-p2",
+    "name": "Pawan Sehrawat",
+    "roleId": "raider",
+    "basePrice": 2600000,
+    "isOverseas": false,
+    "status": "UNSOLD",
+    "age": 27,
+    "nationality": "Indian",
+    "bio": "High flying raider. Known for acrobatic moves.",
+    "stats": "1200+ Raid Points, MVP Winner",
+    "sport": "Kabaddi",
+    "matchId": "match-kabaddi-1"
+  },
+  {
+    "id": "kabaddi-p3",
+    "name": "Fazel Atrachali",
+    "roleId": "defender",
+    "basePrice": 1800000,
+    "isOverseas": true,
+    "status": "UNSOLD",
+    "age": 30,
+    "nationality": "Iranian",
+    "bio": "Best foreign defender. Wall in defense.",
+    "stats": "300+ Tackle Points, PKL Winner",
+    "sport": "Kabaddi",
+    "matchId": "match-kabaddi-1"
+  }
+]

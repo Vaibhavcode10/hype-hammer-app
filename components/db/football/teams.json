@@ -1,0 +1,26 @@
+[
+  {
+    "id": "football-t1",
+    "name": "Manchester City",
+    "budget": 200000000,
+    "remainingBudget": 200000000,
+    "players": [],
+    "owner": "City Football Group",
+    "homeCity": "Manchester",
+    "foundationYear": 1880,
+    "sport": "Football",
+    "matchId": "match-football-1"
+  },
+  {
+    "id": "football-t2",
+    "name": "Manchester United",
+    "budget": 180000000,
+    "remainingBudget": 180000000,
+    "players": [],
+    "owner": "Glazer Family",
+    "homeCity": "Manchester",
+    "foundationYear": 1878,
+    "sport": "Football",
+    "matchId": "match-football-1"
+  }
+]

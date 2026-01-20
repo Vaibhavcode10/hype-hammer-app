@@ -1,0 +1,30 @@
+{
+  "status": "HOME",
+  "currentSport": null,
+  "currentMatchId": null,
+  "activeTab": "dashboard",
+  "currentUser": null,
+  "matches": [
+    {
+      "id": "match-cricket-1",
+      "name": "IPL 2024 Auction",
+      "sportType": "Cricket",
+      "status": "SETUP",
+      "createdAt": 1705276800000
+    },
+    {
+      "id": "match-football-1",
+      "name": "Premier League 2024 Draft",
+      "sportType": "Football",
+      "status": "SETUP",
+      "createdAt": 1705708800000
+    },
+    {
+      "id": "match-kabaddi-1",
+      "name": "PKL 2024 Auction",
+      "sportType": "Kabaddi",
+      "status": "SETUP",
+      "createdAt": 1705536000000
+    }
+  ]
+}

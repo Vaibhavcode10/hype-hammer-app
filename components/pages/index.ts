@@ -10,3 +10,5 @@ export { PlayersPage } from './PlayersPage';
 export { TeamsPage } from './TeamsPage';
 export { AuctionRoomPage } from './AuctionRoomPage';
 export { HistoryPage } from './HistoryPage';
+export { PlayerDashboardPage } from './PlayerDashboardPage';
+export { PlayerRegistrationPage } from './PlayerRegistrationPage';

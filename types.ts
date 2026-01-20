@@ -12,6 +12,12 @@ export enum SportType {
   CUSTOM = 'Custom'
 }
 
+export enum UserRole {
+  AUCTIONEER = 'AUCTIONEER',
+  PLAYER = 'PLAYER',
+  ADMIN = 'ADMIN'
+}
+
 export enum AuctionType {
   OPEN = 'Open Auction',
   CLOSED = 'Closed Auction',
@@ -25,6 +31,8 @@ export enum AuctionStatus {
   SETUP = 'SETUP',
   MATCHES = 'MATCHES',
   SETTINGS = 'SETTINGS',
+  PLAYER_DASHBOARD = 'PLAYER_DASHBOARD',
+  PLAYER_REGISTRATION = 'PLAYER_REGISTRATION',
   READY = 'READY',
   LIVE = 'LIVE',
   PAUSED = 'PAUSED',
@@ -96,6 +104,8 @@ export interface MatchData {
   id: string;
   name: string;
   createdAt: number;
+  matchDate?: number; // Scheduled match date
+  place?: string; // Tournament location
   config: AuctionConfig;
   players: Player[];
   teams: Team[];
