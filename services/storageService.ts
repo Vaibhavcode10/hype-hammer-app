@@ -39,6 +39,8 @@ const sportDataMap: any = {
   }
 };
 
+console.log('📊 HypeHammer initialized with JSON data');
+
 // App State Management
 export async function loadAppState(): Promise<AppState | null> {
   return appStateData as AppState;
@@ -83,6 +85,13 @@ export async function saveSportMatches(sportName: string, matches: any[]): Promi
   return true;
 }
 
+// Map sport folder names to proper sport types
+const sportTypeMap: any = {
+  'cricket': 'Cricket',
+  'football': 'Football',
+  'kabaddi': 'Kabaddi'
+};
+
 // Load complete sport data (matches with players and teams)
 export async function loadCompleteSportData(sportName: string): Promise<any | null> {
   const safeSportName = sportName.toLowerCase().replace(/\s+/g, '-');
@@ -104,9 +113,10 @@ export async function loadCompleteSportData(sportName: string): Promise<any | nu
     };
   });
 
+  const properSportType = sportTypeMap[safeSportName] || sportName;
   return {
-    sportType: sportName,
-    customSportName: sportName,
+    sportType: properSportType,
+    customSportName: properSportType,
     matches: matchesWithData
   };
 }
@@ -127,6 +137,8 @@ export async function loadSportsData(): Promise<any[] | null> {
 }
 
 export async function saveSportsData(data: any[]): Promise<boolean> {
-  console.log('💾 Sports data saved (prototype mode):', data);
+  // In prototype mode with JSON files as fake DB
+  // Data is kept in React state, updates shown in console
+  console.log('💾 Sports data updated (saved in app state):', data);
   return true;
 }

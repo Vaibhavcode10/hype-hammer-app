@@ -4,7 +4,7 @@ import {
   TrendingUp, X, History, ArrowLeft, Activity,
   Users, Trophy
 } from 'lucide-react';
-import { 
+import {
   AuctionStatus, 
   AuctionConfig, Player, Team, Bid, SportData, MatchData, SportType, AuctionType, UserRole
 } from './types';
@@ -116,10 +116,8 @@ const App: React.FC = () => {
     const loadSavedData = async () => {
       try {
         const savedState = await loadAppState();
-        
-        // Load sports data from db folder
         const sportsFromDB = await loadAllSportsFromDB();
-        
+
         if (savedState) {
           setStatus(savedState.status as AuctionStatus);
           setCurrentSport(savedState.currentSport);
@@ -127,18 +125,11 @@ const App: React.FC = () => {
           setActiveTab(savedState.activeTab as any);
         }
 
-        // Use DB data - always load from database
         if (sportsFromDB && sportsFromDB.length > 0) {
           setAllSports(sportsFromDB);
-          console.log('✅ Loaded sports from db folder:', sportsFromDB);
-        } else {
-          console.log('⚠️ No data in db folder yet. Create a match to add players.');
-          setAllSports([]);
         }
       } catch (error) {
-        console.error('❌ Error loading saved data:', error);
-        // Start with empty on error
-        setAllSports([]);
+        console.error('Error loading data:', error);
       }
     };
 
@@ -160,6 +151,38 @@ const App: React.FC = () => {
   useEffect(() => {
     saveSportsData(allSports);
   }, [allSports]);
+
+  // Update allSports whenever current match's players/teams change
+  useEffect(() => {
+    if (!currentMatch || !currentSportData) return;
+
+    // Avoid infinite loops by only writing when something actually changed
+    setAllSports(prev => prev.map(sport => {
+      if (sport.sportType === currentSportData.sportType && 
+          sport.customSportName === currentSportData.customSportName) {
+        return {
+          ...sport,
+          matches: sport.matches.map(match => {
+            if (match.id !== currentMatch.id) return match;
+
+            const isSamePlayers = JSON.stringify(match.players) === JSON.stringify(players);
+            const isSameTeams = JSON.stringify(match.teams) === JSON.stringify(teams);
+            const isSameHistory = JSON.stringify(match.history) === JSON.stringify(history);
+
+            if (isSamePlayers && isSameTeams && isSameHistory) return match; // no-op
+
+            return {
+              ...match,
+              players,
+              teams,
+              history
+            };
+          })
+        };
+      }
+      return sport;
+    }));
+  }, [players, teams, history, currentMatch, currentSport]);
 
   // Multi-sport/match management functions
   const handleSelectSport = (sportType: SportType, customName?: string) => {
@@ -484,9 +507,19 @@ const App: React.FC = () => {
     if (sold && currentBidderId) {
       const buyingTeam = teams.find(t => t.id === currentBidderId);
       if (buyingTeam) setSoldAnimationData({ player, team: buyingTeam, price: currentBid });
-      updatedPlayers[currentPlayerIdx] = { ...player, status: 'SOLD', teamId: currentBidderId, soldPrice: currentBid };
+      
+      // Update player as SOLD
+      const soldPlayer = { ...player, status: 'SOLD', teamId: currentBidderId, soldPrice: currentBid };
+      updatedPlayers[currentPlayerIdx] = soldPlayer;
+      
+      // Update team with player
       const tIdx = updatedTeams.findIndex(t => t.id === currentBidderId);
-      updatedTeams[tIdx] = { ...updatedTeams[tIdx], remainingBudget: updatedTeams[tIdx].remainingBudget - currentBid, players: [...updatedTeams[tIdx].players, player.id] };
+      updatedTeams[tIdx] = { 
+        ...updatedTeams[tIdx], 
+        remainingBudget: updatedTeams[tIdx].remainingBudget - currentBid, 
+        players: [...updatedTeams[tIdx].players, player.id] 
+      };
+      
       setHistory(prev => [...prev, { id: Math.random().toString(36).substr(2, 9), playerId: player.id, teamId: currentBidderId!, amount: currentBid, timestamp: Date.now() }]);
     } else {
       updatedPlayers[currentPlayerIdx] = { ...player, status: 'UNSOLD' };
