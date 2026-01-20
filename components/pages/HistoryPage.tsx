@@ -23,7 +23,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
       actions={
         <button 
           onClick={exportHistoryAsJson} 
-          className="flex items-center gap-2 bg-[#c5a059]/10 text-[#c5a059] px-4 py-2 rounded-full text-[9px] font-black uppercase hover:bg-[#c5a059] hover:text-[#0d0a09] transition-all"
+          className="flex items-center gap-2 bg-blue-100 text-blue-600 px-4 py-2 rounded-full text-[9px] font-black uppercase hover:bg-blue-500 hover:text-white transition-all"
         >
           <Download size={14} /> Export Protocol
         </button>
@@ -31,7 +31,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     >
       <div className="overflow-x-auto">
         <table className="w-full text-left">
-          <thead className="text-[10px] font-black uppercase tracking-[0.2em] text-[#b4a697] border-b border-[#3d2f2b]">
+          <thead className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600 border-b border-2 border-slate-300">
             <tr>
               <th className="pb-4">Timestamp</th>
               <th className="pb-4">Asset</th>
@@ -41,17 +41,17 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
           </thead>
           <tbody className="divide-y divide-[#3d2f2b]/30">
             {history.map(b => (
-              <tr key={b.id} className="hover:bg-[#c5a059]/5 transition-all">
-                <td className="py-4 text-[10px] font-mono text-[#b4a697]">
+              <tr key={b.id} className="hover:bg-blue-500/5 transition-all">
+                <td className="py-4 text-[10px] font-mono text-slate-600">
                   {new Date(b.timestamp).toLocaleTimeString()}
                 </td>
-                <td className="py-4 font-bold text-[#f5f5dc]">
+                <td className="py-4 font-bold text-slate-900">
                   {players.find(p => p.id === b.playerId)?.name}
                 </td>
-                <td className="py-4 text-[#c5a059] font-black uppercase text-[10px] tracking-widest">
+                <td className="py-4 text-blue-600 font-black uppercase text-[10px] tracking-widest">
                   {teams.find(t => t.id === b.teamId)?.name}
                 </td>
-                <td className="py-4 text-right font-mono font-black text-[#f5f5dc]">
+                <td className="py-4 text-right font-mono font-black text-slate-900">
                   ${b.amount.toLocaleString()}
                 </td>
               </tr>

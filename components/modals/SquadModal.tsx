@@ -22,19 +22,19 @@ export const SquadModal: React.FC<SquadModalProps> = ({
       <div className="space-y-6">
         {viewingSquadTeamId && (
           <>
-            <div className="p-6 bg-[#0d0a09]/60 border border-[#c5a059]/20 rounded-[2rem]">
-              <h3 className="text-2xl font-display font-black text-[#f5f5dc] uppercase">
+            <div className="p-6 bg-white/60 border border-blue-500/20 rounded-[2rem]">
+              <h3 className="text-2xl font-display font-black text-slate-900 uppercase">
                 {teams.find(t => t.id === viewingSquadTeamId)?.name}
               </h3>
-              <p className="text-[10px] font-mono text-[#c5a059] uppercase tracking-widest">
+              <p className="text-[10px] font-mono text-blue-600 uppercase tracking-widest">
                 Available Capital: ${teams.find(t => t.id === viewingSquadTeamId)?.remainingBudget.toLocaleString()}
               </p>
             </div>
             <div className="space-y-3">
               {players.filter(p => p.teamId === viewingSquadTeamId).map(p => (
-                <div key={p.id} className="p-4 bg-[#1a1410] border border-[#3d2f2b] rounded-2xl flex justify-between items-center">
-                  <p className="font-bold text-[#f5f5dc]">{p.name}</p>
-                  <p className="font-mono text-[#c5a059]">${p.soldPrice?.toLocaleString()}</p>
+                <div key={p.id} className="p-4 bg-slate-50 border border-slate-300 rounded-2xl flex justify-between items-center">
+                  <p className="font-bold text-slate-900">{p.name}</p>
+                  <p className="font-mono text-blue-600">${p.soldPrice?.toLocaleString()}</p>
                 </div>
               ))}
               {players.filter(p => p.teamId === viewingSquadTeamId).length === 0 && (

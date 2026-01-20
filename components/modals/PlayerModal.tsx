@@ -56,29 +56,29 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
       <div className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#c5a059]">Name *</label>
+            <label className="text-[10px] font-black uppercase text-blue-600">Name *</label>
             <input 
               type="text" 
-              className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+              className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
               value={newPlayer.name} 
               onChange={e => setNewPlayer({...newPlayer, name: e.target.value})} 
               placeholder="Player Name" 
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#c5a059]">Base Price *</label>
+            <label className="text-[10px] font-black uppercase text-blue-600">Base Price *</label>
             <input 
               type="number" 
-              className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+              className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
               value={newPlayer.basePrice} 
               onChange={e => setNewPlayer({...newPlayer, basePrice: Number(e.target.value)})} 
               placeholder="1000000" 
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#c5a059]">Role *</label>
+            <label className="text-[10px] font-black uppercase text-blue-600">Role *</label>
             <select 
-              className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+              className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
               value={newPlayer.roleId} 
               onChange={e => setNewPlayer({...newPlayer, roleId: e.target.value})}
             >
@@ -86,20 +86,20 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
             </select>
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#c5a059]">Age</label>
+            <label className="text-[10px] font-black uppercase text-blue-600">Age</label>
             <input 
               type="number" 
-              className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+              className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
               value={newPlayer.age || ''} 
               onChange={e => setNewPlayer({...newPlayer, age: Number(e.target.value) || undefined})} 
               placeholder="25" 
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#c5a059]">Nationality</label>
+            <label className="text-[10px] font-black uppercase text-blue-600">Nationality</label>
             <input 
               type="text" 
-              className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+              className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
               value={newPlayer.nationality || ''} 
               onChange={e => setNewPlayer({...newPlayer, nationality: e.target.value})} 
               placeholder="India" 
@@ -109,36 +109,36 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
             <input 
               type="checkbox" 
               id="isOverseas" 
-              className="w-5 h-5 bg-[#0d0a09] border border-[#3d2f2b] rounded" 
+              className="w-5 h-5 bg-white border border-slate-300 rounded" 
               checked={newPlayer.isOverseas || false} 
               onChange={e => setNewPlayer({...newPlayer, isOverseas: e.target.checked})} 
             />
-            <label htmlFor="isOverseas" className="text-[10px] font-black uppercase text-[#c5a059] cursor-pointer">Overseas Player</label>
+            <label htmlFor="isOverseas" className="text-[10px] font-black uppercase text-blue-600 cursor-pointer">Overseas Player</label>
           </div>
         </div>
         <div className="space-y-2">
-          <label className="text-[10px] font-black uppercase text-[#c5a059]">Image URL</label>
+          <label className="text-[10px] font-black uppercase text-blue-600">Image URL</label>
           <input 
             type="text" 
-            className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+            className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
             value={newPlayer.imageUrl || ''} 
             onChange={e => setNewPlayer({...newPlayer, imageUrl: e.target.value})} 
             placeholder="https://example.com/player.jpg" 
           />
         </div>
         <div className="space-y-2">
-          <label className="text-[10px] font-black uppercase text-[#c5a059]">Bio</label>
+          <label className="text-[10px] font-black uppercase text-blue-600">Bio</label>
           <textarea 
-            className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059] min-h-[80px]" 
+            className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500 min-h-[80px]" 
             value={newPlayer.bio || ''} 
             onChange={e => setNewPlayer({...newPlayer, bio: e.target.value})} 
             placeholder="Player background and achievements..." 
           />
         </div>
         <div className="space-y-2">
-          <label className="text-[10px] font-black uppercase text-[#c5a059]">Stats Summary</label>
+          <label className="text-[10px] font-black uppercase text-blue-600">Stats Summary</label>
           <textarea 
-            className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059] min-h-[80px]" 
+            className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500 min-h-[80px]" 
             value={newPlayer.stats || ''} 
             onChange={e => setNewPlayer({...newPlayer, stats: e.target.value})} 
             placeholder="Key statistics and performance metrics..." 
@@ -146,7 +146,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({
         </div>
         <button 
           onClick={handleSave} 
-          className="w-full py-5 gold-gradient rounded-3xl text-[#0d0a09] font-black uppercase text-xs shadow-2xl hover:brightness-110 transition-all"
+          className="w-full py-5 gold-gradient rounded-3xl text-white font-black uppercase text-xs shadow-2xl hover:brightness-110 transition-all"
         >
           Validate Profile
         </button>

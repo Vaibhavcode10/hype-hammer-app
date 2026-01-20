@@ -1,176 +1,267 @@
-import React from 'react';
-import { User, Trophy, Calendar, DollarSign, Edit, CheckCircle, Clock } from 'lucide-react';
-import { Player, SportData } from '../../types';
+import React, { useState } from 'react';
+import { User, Trophy, Clock, DollarSign, Bell, LogOut, Menu, Activity, History, Award, Zap } from 'lucide-react';
+import { AuctionStatus, MatchData, UserRole } from '../../types';
 
 interface PlayerDashboardPageProps {
-  currentUser: {
-    name: string;
-    email: string;
-    playerId?: string;
-  };
-  allSports: SportData[];
-  onEditProfile: () => void;
+  setStatus: (status: AuctionStatus) => void;
+  currentMatch: MatchData;
+  currentUser: { name: string; email: string; role: UserRole; playerRole?: string; basePrice?: number };
 }
 
-export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({
-  currentUser,
-  allSports,
-  onEditProfile
-}) => {
-  // Find player profile across all sports
-  const findPlayerProfile = () => {
-    for (const sport of allSports) {
-      for (const match of sport.matches) {
-        const player = match.players.find(p => p.id === currentUser.playerId);
-        if (player) {
-          return { player, sport, match };
-        }
-      }
-    }
-    return null;
+export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
+  const [activeSection, setActiveSection] = useState<'profile' | 'status' | 'result' | 'history'>('profile');
+
+  // Mock player data
+  const playerData = {
+    photo: './logo.jpg',
+    role: currentUser.playerRole || 'All-rounder',
+    basePrice: currentUser.basePrice || 500000,
+    status: 'pending', // pending | live | sold | unsold
+    soldTo: null as string | null,
+    finalPrice: null as number | null,
   };
 
-  const playerData = findPlayerProfile();
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending': return 'bg-yellow-500';
+      case 'live': return 'bg-green-500 animate-pulse';
+      case 'sold': return 'bg-blue-500';
+      case 'unsold': return 'bg-gray-500';
+      default: return 'bg-gray-500';
+    }
+  };
 
-  if (!playerData) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-[#0d0a09] via-[#1a1410] to-[#0d0a09] text-white p-8 flex items-center justify-center">
-        <div className="text-center">
-          <User className="w-16 h-16 mx-auto mb-4 text-gray-600" />
-          <h3 className="text-xl font-semibold mb-2 text-gray-400">Profile Not Found</h3>
-          <p className="text-gray-500 mb-6">You haven't registered as a player yet</p>
-          <button
-            onClick={onEditProfile}
-            className="px-6 py-3 bg-[#c5a059] text-[#0d0a09] rounded-lg font-semibold hover:bg-[#d4af6a] transition-all"
-          >
-            Register Now
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const { player, sport, match } = playerData;
-  const statusColor = player.status === 'SOLD' ? 'text-green-500' : player.status === 'UNSOLD' ? 'text-red-500' : 'text-yellow-500';
-  const statusLabel = player.status === 'SOLD' ? 'Sold' : player.status === 'UNSOLD' ? 'Unsold' : 'Pending Auction';
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'pending': return 'Awaiting Turn';
+      case 'live': return 'Live Now';
+      case 'sold': return 'Sold';
+      case 'unsold': return 'Unsold';
+      default: return 'Unknown';
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0d0a09] via-[#1a1410] to-[#0d0a09] text-white p-8">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-4xl font-bold text-[#c5a059] mb-2">Player Dashboard</h1>
-            <p className="text-gray-400">Welcome back, {currentUser.name}</p>
-          </div>
-          <button
-            onClick={onEditProfile}
-            className="flex items-center gap-2 px-4 py-2 bg-[#2a2016] text-[#c5a059] border border-[#c5a059] rounded-lg font-semibold hover:bg-[#c5a059] hover:text-[#0d0a09] transition-all"
-          >
-            <Edit className="w-4 h-4" />
-            Edit Profile
-          </button>
-        </div>
-
-        {/* Player Profile Card */}
-        <div className="bg-[#1a1410] border border-[#2a2016] rounded-xl p-8 mb-6">
-          <div className="flex items-start gap-6">
-            <div className="w-24 h-24 rounded-xl bg-gradient-to-br from-[#c5a059] to-[#d4af6a] flex items-center justify-center overflow-hidden">
-              {player.imageUrl ? (
-                <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover" />
-              ) : (
-                <User size={48} className="text-[#0d0a09]" />
-              )}
+    <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50 overflow-hidden">
+      {/* Header with integrated navigation */}
+      <div className="fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-white/95 to-transparent backdrop-blur-xl border-b border-green-100">
+        <div className="flex items-center justify-between px-8 py-6">
+          {/* Left: Logo */}
+          <div className="flex items-center gap-4 w-1/4">
+            <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-green-400 shadow-2xl hover:scale-105 transition-transform cursor-pointer" onClick={() => setStatus(AuctionStatus.HOME)}>
+              <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
             </div>
+            <div>
+              <h1 className="text-2xl font-display font-black tracking-widest gold-text uppercase leading-none">Player</h1>
+              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.3em] mt-1">{currentUser.playerRole || 'Batsman'}</p>
+            </div>
+          </div>
+
+          {/* Center: Navigation Tabs */}
+          <div className="flex items-center justify-center gap-2 flex-1">
+            <div className="flex items-center gap-1 p-1.5 bg-white/80 backdrop-blur-lg rounded-full border-2 border-green-200 shadow-lg">
+              <button
+                onClick={() => setActiveSection('profile')}
+                className={`px-4 py-2 rounded-full transition-all font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 ${
+                  activeSection === 'profile' ? 'bg-green-500 text-white shadow-lg' : 'text-slate-600 hover:bg-green-50'
+                }`}
+              >
+                <User size={14} />
+                Profile
+              </button>
+              <button
+                onClick={() => setActiveSection('status')}
+                className={`px-4 py-2 rounded-full transition-all font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 ${
+                  activeSection === 'status' ? 'bg-green-500 text-white shadow-lg' : 'text-slate-600 hover:bg-green-50'
+                }`}
+              >
+                <Zap size={14} />
+                Status
+              </button>
+              <button
+                onClick={() => setActiveSection('result')}
+                className={`px-4 py-2 rounded-full transition-all font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 ${
+                  activeSection === 'result' ? 'bg-green-500 text-white shadow-lg' : 'text-slate-600 hover:bg-green-50'
+                }`}
+              >
+                <Trophy size={14} />
+                Result
+              </button>
+              <button
+                onClick={() => setActiveSection('history')}
+                className={`px-4 py-2 rounded-full transition-all font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 ${
+                  activeSection === 'history' ? 'bg-green-500 text-white shadow-lg' : 'text-slate-600 hover:bg-green-50'
+                }`}
+              >
+                <History size={14} />
+                History
+              </button>
+            </div>
+          </div>
+
+          {/* Right: Actions */}
+          <div className="flex items-center justify-end gap-4 w-1/4">
+            <button className="px-4 py-2 rounded-xl bg-white border-2 border-blue-200 hover:border-green-500 transition-all flex items-center gap-2 text-sm font-bold text-slate-700">
+              <Bell size={16} className="text-green-500" />
+              <span className="px-2 py-0.5 rounded-full bg-green-500 text-white text-xs">0</span>
+            </button>
             
-            <div className="flex-1">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h2 className="text-3xl font-bold text-[#c5a059] mb-2">{player.name}</h2>
-                  <p className="text-gray-400">{player.nationality || 'Not specified'}</p>
-                </div>
-                <div className={`px-4 py-2 rounded-lg font-semibold ${statusColor} bg-[#2a2016]`}>
-                  {player.status === 'SOLD' ? <CheckCircle className="w-5 h-5 inline mr-2" /> : <Clock className="w-5 h-5 inline mr-2" />}
-                  {statusLabel}
-                </div>
+            <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-white border-2 border-blue-200">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-r from-green-500 to-teal-500 flex items-center justify-center text-white font-bold text-sm">
+                {currentUser.name?.[0] || 'P'}
               </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-[#0d0a09] border border-[#2a2016] rounded-lg p-4">
-                  <p className="text-xs text-gray-400 mb-1">Base Price</p>
-                  <p className="text-lg font-bold text-[#c5a059]">${(player.basePrice / 1000000).toFixed(2)}M</p>
-                </div>
-                {player.soldPrice && (
-                  <div className="bg-[#0d0a09] border border-[#2a2016] rounded-lg p-4">
-                    <p className="text-xs text-gray-400 mb-1">Sold Price</p>
-                    <p className="text-lg font-bold text-green-500">${(player.soldPrice / 1000000).toFixed(2)}M</p>
-                  </div>
-                )}
-                <div className="bg-[#0d0a09] border border-[#2a2016] rounded-lg p-4">
-                  <p className="text-xs text-gray-400 mb-1">Age</p>
-                  <p className="text-lg font-bold text-white">{player.age || 'N/A'}</p>
-                </div>
-                <div className="bg-[#0d0a09] border border-[#2a2016] rounded-lg p-4">
-                  <p className="text-xs text-gray-400 mb-1">Role</p>
-                  <p className="text-lg font-bold text-white">{match.config.roles.find(r => r.id === player.roleId)?.name || 'N/A'}</p>
-                </div>
+              <div>
+                <p className="text-xs font-bold text-slate-800">{currentUser.name}</p>
+                <p className="text-[9px] text-slate-500 uppercase tracking-wider">Player</p>
               </div>
-
-              {player.bio && (
-                <div className="mt-4 p-4 bg-[#0d0a09] border border-[#2a2016] rounded-lg">
-                  <p className="text-sm text-gray-300">{player.bio}</p>
-                </div>
-              )}
-
-              {player.stats && (
-                <div className="mt-4 p-4 bg-[#0d0a09] border border-[#2a2016] rounded-lg">
-                  <p className="text-xs text-gray-400 mb-2">Stats</p>
-                  <p className="text-sm text-gray-300">{player.stats}</p>
-                </div>
-              )}
             </div>
+
+            <button 
+              onClick={() => setStatus(AuctionStatus.HOME)} 
+              className="px-4 py-2 rounded-xl bg-green-500/10 border-2 border-green-500/20 hover:bg-green-500 hover:text-white transition-all flex items-center gap-2 text-sm font-bold text-green-600"
+            >
+              <LogOut size={16} />
+              <span>Logout</span>
+            </button>
           </div>
         </div>
+      </div>
 
-        {/* Match Info */}
-        <div className="bg-[#1a1410] border border-[#2a2016] rounded-xl p-6">
-          <h3 className="text-xl font-bold text-[#c5a059] mb-4">Match Information</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="flex items-center gap-3">
-              <Trophy className="w-5 h-5 text-[#c5a059]" />
-              <div>
-                <p className="text-xs text-gray-400">Sport</p>
-                <p className="text-sm font-semibold">{sport.customSportName || sport.sportType}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <Calendar className="w-5 h-5 text-[#c5a059]" />
-              <div>
-                <p className="text-xs text-gray-400">Match</p>
-                <p className="text-sm font-semibold">{match.name}</p>
-              </div>
-            </div>
-            {player.teamId && (
-              <div className="flex items-center gap-3">
-                <CheckCircle className="w-5 h-5 text-green-500" />
-                <div>
-                  <p className="text-xs text-gray-400">Team</p>
-                  <p className="text-sm font-semibold">{match.teams.find(t => t.id === player.teamId)?.name || 'Unknown'}</p>
+      {/* Main Content Area */}
+      <div className="pt-32 pb-12 px-8 max-w-[1600px] mx-auto">
+        {activeSection === 'profile' && (
+          <div className="space-y-8">
+            <h1 className="text-4xl font-black uppercase tracking-wider gold-text">My Profile</h1>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Player Card */}
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl overflow-hidden border-2 border-green-200 shadow-2xl hover:shadow-3xl transition-all hover:-translate-y-1">
+                <div className="h-40 bg-gradient-to-br from-green-400 to-teal-500"></div>
+                <div className="relative p-8 -mt-12">
+                  <div className="w-32 h-32 rounded-2xl overflow-hidden border-4 border-white shadow-2xl mx-auto">
+                    <img src={playerData.photo} alt="Player" className="w-full h-full object-cover" />
+                  </div>
+                  <h3 className="text-2xl font-black text-center mt-6 uppercase">{currentUser.name}</h3>
+                  <p className="text-sm text-slate-500 text-center uppercase tracking-wider">{playerData.role}</p>
+                  <div className="mt-6 flex items-center justify-center gap-2">
+                    <div className={`w-4 h-4 rounded-full ${getStatusColor(playerData.status)} shadow-lg`}></div>
+                    <span className="text-sm font-bold text-slate-600">{getStatusLabel(playerData.status)}</span>
+                  </div>
                 </div>
+              </div>
+
+              {/* Base Price Card */}
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-8 border-2 border-green-200 shadow-2xl hover:shadow-3xl transition-all hover:-translate-y-1">
+                <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Base Price</p>
+                <p className="text-4xl font-black gold-text mb-6">₹{(playerData.basePrice / 100000).toFixed(1)}L</p>
+                <div className="p-4 bg-green-50 rounded-2xl border-2 border-green-100">
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    This is your estimated value. Teams will bid against this base price during the auction.
+                  </p>
+                </div>
+              </div>
+
+              {/* Stats Card */}
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-8 border-2 border-green-200 shadow-2xl hover:shadow-3xl transition-all hover:-translate-y-1">
+                <h3 className="font-black text-slate-800 mb-6 uppercase tracking-wider text-sm">Quick Stats</h3>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-slate-600 uppercase tracking-wider font-bold">Matches</span>
+                    <span className="font-black text-lg">25</span>
+                  </div>
+                  <div className="h-1 bg-gray-200 rounded-full"></div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-slate-600 uppercase tracking-wider font-bold">Runs/Points</span>
+                    <span className="font-black text-lg">1,250</span>
+                  </div>
+                  <div className="h-1 bg-gray-200 rounded-full"></div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-slate-600 uppercase tracking-wider font-bold">Avg. Rating</span>
+                    <span className="font-black text-lg">8.2/10</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeSection === 'status' && (
+          <div className="space-y-8">
+            <h1 className="text-4xl font-black uppercase tracking-wider gold-text">Auction Status</h1>
+            
+            {playerData.status === 'live' ? (
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-10 border-2 border-green-500 shadow-2xl">
+                <div className="flex items-center gap-3 mb-8">
+                  <div className="w-5 h-5 rounded-full bg-green-500 animate-pulse shadow-lg"></div>
+                  <span className="text-2xl font-black text-green-600 uppercase tracking-wider">YOU'RE LIVE NOW!</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div>
+                    <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Current Bid</p>
+                    <p className="text-5xl font-black gold-text">₹8.5 Lakhs</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Leading Team</p>
+                    <p className="text-3xl font-black text-slate-800">Team Champions</p>
+                  </div>
+                </div>
+                <div className="mt-8 p-6 bg-green-50 rounded-2xl border-2 border-green-200">
+                  <p className="text-sm text-slate-700 leading-relaxed">
+                    <strong className="text-slate-800">Note:</strong> You cannot interact with bidding. Teams are competing for you!
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-12 border-2 border-blue-100 text-center shadow-2xl">
+                <Clock size={56} className="mx-auto mb-6 text-slate-400" />
+                <p className="text-2xl font-black text-slate-800">Your turn is coming up</p>
+                <p className="text-slate-500 mt-3">Please wait while other players are being auctioned</p>
               </div>
             )}
           </div>
-        </div>
+        )}
 
-        {/* Auction Status */}
-        {player.status === 'PENDING' && (
-          <div className="mt-6 bg-[#c5a059]/10 border border-[#c5a059]/30 rounded-xl p-6">
-            <div className="flex items-center gap-3">
-              <Clock className="w-6 h-6 text-[#c5a059]" />
-              <div>
-                <h4 className="text-lg font-bold text-[#c5a059]">Waiting for Auction</h4>
-                <p className="text-sm text-gray-300">Your profile is registered and will be called for bidding soon</p>
+        {activeSection === 'result' && (
+          <div className="space-y-8">
+            <h1 className="text-4xl font-black uppercase tracking-wider gold-text">Auction Result</h1>
+            
+            {playerData.soldTo ? (
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-10 border-2 border-green-500 shadow-2xl">
+                <div className="text-center mb-8">
+                  <Trophy size={72} className="mx-auto mb-6 text-green-500" />
+                  <h3 className="text-4xl font-black uppercase mb-3">Congratulations!</h3>
+                  <p className="text-slate-600 text-lg">You've been successfully sold</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="text-center p-4 bg-white rounded-2xl border-2 border-green-100">
+                    <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Sold To</p>
+                    <p className="text-xl font-black">{playerData.soldTo}</p>
+                  </div>
+                  <div className="text-center p-4 bg-white rounded-2xl border-2 border-green-100">
+                    <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Final Price</p>
+                    <p className="text-xl font-black gold-text">₹{playerData.finalPrice ? (playerData.finalPrice / 100000).toFixed(1) : '0'} Lakhs</p>
+                  </div>
+                  <div className="text-center p-4 bg-white rounded-2xl border-2 border-green-100">
+                    <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Auctioneer</p>
+                    <p className="text-xl font-black">John Doe</p>
+                  </div>
+                </div>
               </div>
+            ) : (
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-12 border-2 border-blue-100 text-center shadow-2xl">
+                <Trophy size={56} className="mx-auto mb-6 text-slate-400" />
+                <p className="text-2xl font-black text-slate-800">Results will appear here</p>
+                <p className="text-slate-500 mt-3">Check back after the auction completes</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeSection === 'history' && (
+          <div className="space-y-8">
+            <h1 className="text-4xl font-black uppercase tracking-wider gold-text">Past Seasons</h1>
+            <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-10 border-2 border-blue-100 shadow-2xl">
+              <p className="text-slate-500 text-lg">Your auction history will appear here</p>
             </div>
           </div>
         )}

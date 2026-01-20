@@ -16,8 +16,8 @@ import { loadAppState, saveAppState, loadSportsData, saveSportsData, loadAllSpor
 // Import Components
 import {
   HUDPill, OrbitalItem, SoldCelebration, SettingsSidebar,
-  HomePage, AuthPage, HowItWorksPage, SetupPage, MatchesPage, SettingsPage, SettingsLayoutPage, DashboardPage, PlayersPage, TeamsPage, AuctionRoomPage, HistoryPage,
-  PlayerModal, TeamModal, SquadModal, PlayerDashboardPage, PlayerRegistrationPage
+  HomePage, MarketplacePage, AuthPage, AdminRegistrationPage, RoleSelectionPage, RoleBasedRegistrationPage, ProfileCompletionPage, HowItWorksPage, SetupPage, MatchesPage, SettingsPage, SettingsLayoutPage, DashboardPage, PlayersPage, TeamsPage, AuctionRoomPage, HistoryPage,
+  PlayerModal, TeamModal, SquadModal, PlayerDashboardPage, PlayerRegistrationPage, AdminDashboardPage, AuctioneerDashboardPage, TeamRepDashboardPage, GuestDashboardPage
 } from './components';
 
 // --- Core Application ---
@@ -28,7 +28,12 @@ const AppContent: React.FC = () => {
   // Map status to route paths (one-way navigation to avoid loops)
   const statusToPath: Record<AuctionStatus, string> = {
     [AuctionStatus.HOME]: '/',
+    [AuctionStatus.MARKETPLACE]: '/marketplace',
     [AuctionStatus.AUTH]: '/login',
+    [AuctionStatus.ADMIN_REGISTRATION]: '/admin/register',
+    [AuctionStatus.ROLE_SELECTION]: '/role/select',
+    [AuctionStatus.ROLE_REGISTRATION]: '/role/register',
+    [AuctionStatus.PROFILE_COMPLETION]: '/profile/complete',
     [AuctionStatus.HOW_IT_WORKS]: '/how-it-works',
     [AuctionStatus.SETUP]: '/setup',
     [AuctionStatus.MATCHES]: '/matches',
@@ -38,7 +43,33 @@ const AppContent: React.FC = () => {
     [AuctionStatus.ENDED]: '/auction',
     [AuctionStatus.SETTINGS]: '/settings',
     [AuctionStatus.PLAYER_REGISTRATION]: '/player/register',
-    [AuctionStatus.PLAYER_DASHBOARD]: '/player/dashboard'
+    [AuctionStatus.PLAYER_DASHBOARD]: '/player/dashboard',
+    [AuctionStatus.ADMIN_DASHBOARD]: '/admin/dashboard',
+    [AuctionStatus.AUCTIONEER_DASHBOARD]: '/auctioneer/dashboard',
+    [AuctionStatus.TEAM_REP_DASHBOARD]: '/team-rep/dashboard',
+    [AuctionStatus.GUEST_DASHBOARD]: '/guest/dashboard'
+  };
+
+  // Reverse mapping: path to status (for refreshes and back button)
+  const pathToStatus: Record<string, AuctionStatus> = {
+    '/': AuctionStatus.HOME,
+    '/marketplace': AuctionStatus.MARKETPLACE,
+    '/login': AuctionStatus.AUTH,
+    '/admin/register': AuctionStatus.ADMIN_REGISTRATION,
+    '/role/select': AuctionStatus.ROLE_SELECTION,
+    '/role/register': AuctionStatus.ROLE_REGISTRATION,
+    '/profile/complete': AuctionStatus.PROFILE_COMPLETION,
+    '/how-it-works': AuctionStatus.HOW_IT_WORKS,
+    '/setup': AuctionStatus.SETUP,
+    '/matches': AuctionStatus.MATCHES,
+    '/auction': AuctionStatus.READY,
+    '/settings': AuctionStatus.SETTINGS,
+    '/player/register': AuctionStatus.PLAYER_REGISTRATION,
+    '/player/dashboard': AuctionStatus.PLAYER_DASHBOARD,
+    '/admin/dashboard': AuctionStatus.ADMIN_DASHBOARD,
+    '/auctioneer/dashboard': AuctionStatus.AUCTIONEER_DASHBOARD,
+    '/team-rep/dashboard': AuctionStatus.TEAM_REP_DASHBOARD,
+    '/guest/dashboard': AuctionStatus.GUEST_DASHBOARD
   };
   // Load initial state from backend
   const loadInitialState = async () => {
@@ -60,24 +91,54 @@ const AppContent: React.FC = () => {
   };
 
   // Initialize state with default values (will be loaded in useEffect)
-  const [status, setStatus] = useState<AuctionStatus>(AuctionStatus.HOME);
-  
-  // User state
-  const [currentUser, setCurrentUser] = useState({
-    name: 'Guest User',
-    email: 'guest@hypehammer.com',
-    avatar: undefined,
-    role: UserRole.AUCTIONEER,
-    playerId: undefined as string | undefined
+  const [status, setStatus] = useState<AuctionStatus>(() => {
+    // Try to restore status from sessionStorage first
+    const savedStatus = sessionStorage.getItem('hypehammer_current_status');
+    if (savedStatus) {
+      return savedStatus as AuctionStatus;
+    }
+    // Otherwise, derive from current URL path
+    const currentPath = window.location.pathname;
+    return pathToStatus[currentPath] || AuctionStatus.HOME;
   });
+  const [pendingDashboardStatus, setPendingDashboardStatus] = useState<AuctionStatus | null>(null);
+  
+  // User state - restore from sessionStorage on refresh
+  const [currentUser, setCurrentUser] = useState(() => {
+    const savedUser = sessionStorage.getItem('hypehammer_current_user');
+    if (savedUser) {
+      try {
+        return JSON.parse(savedUser);
+      } catch (e) {
+        console.error('Error parsing saved user:', e);
+      }
+    }
+    return {
+      name: 'Guest User',
+      email: 'guest@hypehammer.com',
+      avatar: undefined,
+      role: UserRole.AUCTIONEER,
+      playerId: undefined as string | undefined
+    };
+  });
+
+  // OAuth user pending profile completion
+  const [pendingOAuthUser, setPendingOAuthUser] = useState<any>(null);
+  
+  // Role selection state for registration flow
+  const [selectedRoleForRegistration, setSelectedRoleForRegistration] = useState<UserRole | null>(null);
   
   // Settings sidebar state
   const [isSettingsSidebarOpen, setIsSettingsSidebarOpen] = useState(false);
   
-  // Multi-sport, multi-match state
+  // Multi-sport, multi-match state - restore from sessionStorage
   const [allSports, setAllSports] = useState<SportData[]>([]);
-  const [currentSport, setCurrentSport] = useState<string | null>(null);
-  const [currentMatchId, setCurrentMatchId] = useState<string | null>(null);
+  const [currentSport, setCurrentSport] = useState<string | null>(() => {
+    return sessionStorage.getItem('hypehammer_current_sport') || null;
+  });
+  const [currentMatchId, setCurrentMatchId] = useState<string | null>(() => {
+    return sessionStorage.getItem('hypehammer_current_match_id') || null;
+  });
   
   // Current match data (derived from allSports)
   const currentSportData = useMemo(() => {
@@ -87,9 +148,17 @@ const AppContent: React.FC = () => {
   }, [allSports, currentSport]);
 
   const currentMatch = useMemo(() => {
-    if (!currentSportData || !currentMatchId) return null;
-    return currentSportData.matches.find(m => m.id === currentMatchId);
+    if (!currentSportData || !currentMatchId) {
+      console.log('📊 currentMatch is NULL - currentSportData:', !!currentSportData, 'currentMatchId:', currentMatchId);
+      return null;
+    }
+    const match = currentSportData.matches.find(m => m.id === currentMatchId);
+    console.log('📊 currentMatch computed:', match?.name);
+    return match;
   }, [currentSportData, currentMatchId]);
+
+  // Log status on every render
+  console.log('🔄 App render - status:', status, 'currentUser.role:', currentUser.role, 'currentMatch:', currentMatch?.id);
 
   // Current match state (for active auction)
   const [config, setConfig] = useState<AuctionConfig>(INITIAL_CONFIG);
@@ -133,6 +202,22 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     const loadSavedData = async () => {
       try {
+        // Load from localStorage first (instant)
+        const localData = localStorage.getItem('hypehammer_sports');
+        let hasData = false;
+        
+        if (localData) {
+          try {
+            const parsedData = JSON.parse(localData);
+            if (parsedData && parsedData.length > 0) {
+              setAllSports(parsedData);
+              hasData = true;
+            }
+          } catch (err) {
+            console.error('Error parsing local storage:', err);
+          }
+        }
+        
         const savedState = await loadAppState();
         const sportsFromDB = await loadAllSportsFromDB();
 
@@ -145,6 +230,187 @@ const AppContent: React.FC = () => {
 
         if (sportsFromDB && sportsFromDB.length > 0) {
           setAllSports(sportsFromDB);
+          localStorage.setItem('hypehammer_sports', JSON.stringify(sportsFromDB));
+          hasData = true;
+        }
+
+        // If no data exists, create mock auctions
+        if (!hasData) {
+          const mockSports: SportData[] = [
+            {
+              sportType: SportType.CRICKET,
+              matches: [
+                {
+                  id: 'mock-cricket-1',
+                  name: 'Inter-College Cricket Championship 2026',
+                  createdAt: Date.now() - 7 * 24 * 60 * 60 * 1000,
+                  matchDate: Date.now() + 15 * 24 * 60 * 60 * 1000,
+                  place: 'Mumbai, Maharashtra',
+                  config: {
+                    sport: SportType.CRICKET,
+                    type: AuctionType.OPEN,
+                    level: 'College',
+                    squadSize: { min: 11, max: 15 },
+                    totalBudget: 10000000,
+                    roles: [],
+                    rules: {}
+                  },
+                  players: [],
+                  teams: [],
+                  history: [],
+                  status: 'SETUP'
+                },
+                {
+                  id: 'mock-cricket-2',
+                  name: 'City Premier League - Season 2',
+                  createdAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
+                  matchDate: Date.now() + 5 * 24 * 60 * 60 * 1000,
+                  place: 'Bangalore, Karnataka',
+                  config: {
+                    sport: SportType.CRICKET,
+                    type: AuctionType.OPEN,
+                    level: 'Professional',
+                    squadSize: { min: 11, max: 20 },
+                    totalBudget: 50000000,
+                    roles: [],
+                    rules: {}
+                  },
+                  players: [],
+                  teams: [],
+                  history: [],
+                  status: 'ONGOING'
+                }
+              ]
+            },
+            {
+              sportType: SportType.FOOTBALL,
+              matches: [
+                {
+                  id: 'mock-football-1',
+                  name: 'Corporate Football Cup 2026',
+                  createdAt: Date.now() - 10 * 24 * 60 * 60 * 1000,
+                  matchDate: Date.now() + 20 * 24 * 60 * 60 * 1000,
+                  place: 'Delhi NCR',
+                  config: {
+                    sport: SportType.FOOTBALL,
+                    type: AuctionType.OPEN,
+                    level: 'Amateur',
+                    squadSize: { min: 11, max: 18 },
+                    totalBudget: 8000000,
+                    roles: [],
+                    rules: {}
+                  },
+                  players: [],
+                  teams: [],
+                  history: [],
+                  status: 'SETUP'
+                }
+              ]
+            },
+            {
+              sportType: SportType.KABADDI,
+              matches: [
+                {
+                  id: 'mock-kabaddi-1',
+                  name: 'National Kabaddi Championship',
+                  createdAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
+                  matchDate: Date.now() - 5 * 24 * 60 * 60 * 1000,
+                  place: 'Pune, Maharashtra',
+                  config: {
+                    sport: SportType.KABADDI,
+                    type: AuctionType.OPEN,
+                    level: 'Professional',
+                    squadSize: { min: 7, max: 12 },
+                    totalBudget: 30000000,
+                    roles: [],
+                    rules: {}
+                  },
+                  players: [],
+                  teams: [],
+                  history: [],
+                  status: 'COMPLETED'
+                }
+              ]
+            }
+          ];
+          
+          setAllSports(mockSports);
+          localStorage.setItem('hypehammer_sports', JSON.stringify(mockSports));
+        }
+
+        // Seed mock users if they don't exist
+        const existingUsers = localStorage.getItem('hypehammer_users');
+        if (!existingUsers) {
+          const mockUsers = [
+            {
+              id: 'user-admin-1',
+              email: 'admin@hypehammer.com',
+              password: 'admin123',
+              name: 'Super Admin',
+              role: UserRole.ADMIN,
+              organizationName: 'HypeHammer Sports',
+              designation: 'Platform Administrator',
+              adminApprovalStatus: 'approved',
+              seasonId: 'mock-cricket-1'
+            },
+            {
+              id: 'user-auctioneer-1',
+              email: 'auctioneer@hypehammer.com',
+              password: 'auctioneer123',
+              name: 'John Auctioneer',
+              role: UserRole.AUCTIONEER,
+              experienceLevel: 'Expert',
+              languages: ['English', 'Hindi'],
+              previousAuctions: 25,
+              availability: 'Full-time',
+              auctioneerId: 'auc-001',
+              seasonId: 'mock-cricket-1'
+            },
+            {
+              id: 'user-teamrep-1',
+              email: 'teamrep@hypehammer.com',
+              password: 'team123',
+              name: 'Mumbai Warriors Rep',
+              role: UserRole.TEAM_REP,
+              teamName: 'Mumbai Warriors',
+              teamShortCode: 'MW',
+              homeCity: 'Mumbai',
+              roleInTeam: 'Team Manager',
+              seasonId: 'mock-cricket-1'
+            },
+            {
+              id: 'user-player-1',
+              email: 'player@hypehammer.com',
+              password: 'player123',
+              name: 'Virat Sharma',
+              role: UserRole.PLAYER,
+              dateOfBirth: '1995-11-05',
+              gender: 'Male',
+              nationality: 'Indian',
+              sport: SportType.CRICKET,
+              playerRole: 'Batsman',
+              battingStyle: 'Right-hand bat',
+              experienceLevel: 'Professional',
+              basePrice: 500000,
+              playerCategory: 'Capped',
+              playerApprovalStatus: 'approved',
+              playerId: 'player-001',
+              seasonId: 'mock-cricket-1'
+            },
+            {
+              id: 'user-guest-1',
+              email: 'guest@hypehammer.com',
+              password: 'guest123',
+              name: 'Guest Viewer',
+              role: UserRole.GUEST,
+              favoriteSport: SportType.CRICKET,
+              favoriteTeam: 'Mumbai Warriors',
+              seasonId: 'mock-cricket-1'
+            }
+          ];
+          
+          localStorage.setItem('hypehammer_users', JSON.stringify(mockUsers));
+          console.log('✅ Mock users created! Check DEMO_USERS.md for login credentials.');
         }
       } catch (error) {
         console.error('Error loading data:', error);
@@ -154,11 +420,59 @@ const AppContent: React.FC = () => {
     loadSavedData();
   }, []);
 
+  // Navigate to pending dashboard once currentMatch is ready
+  useEffect(() => {
+    if (pendingDashboardStatus && currentMatch) {
+      console.log('✅ currentMatch ready, navigating to:', pendingDashboardStatus);
+      setStatus(pendingDashboardStatus);
+      setPendingDashboardStatus(null);
+    }
+  }, [pendingDashboardStatus, currentMatch]);
+
   // One-way sync status to URL (prevents view loops)
   useEffect(() => {
     const path = statusToPath[status] || '/';
-    navigate(path, { replace: true });
+    // Use push for history support, but only if URL actually changed
+    const currentPath = window.location.pathname;
+    if (currentPath !== path) {
+      navigate(path);
+    }
+    // Save current status to sessionStorage for refresh persistence
+    sessionStorage.setItem('hypehammer_current_status', status);
   }, [status, navigate]);
+
+  // Handle browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      const currentPath = window.location.pathname;
+      const newStatus = pathToStatus[currentPath];
+      if (newStatus && newStatus !== status) {
+        console.log('🔙 Browser back/forward detected. Changing status from', status, 'to', newStatus);
+        setStatus(newStatus);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [status]);
+
+  // Save user state to sessionStorage whenever it changes
+  useEffect(() => {
+    sessionStorage.setItem('hypehammer_current_user', JSON.stringify(currentUser));
+  }, [currentUser]);
+
+  // Save current sport and match to sessionStorage whenever they change
+  useEffect(() => {
+    if (currentSport) {
+      sessionStorage.setItem('hypehammer_current_sport', currentSport);
+    }
+  }, [currentSport]);
+
+  useEffect(() => {
+    if (currentMatchId) {
+      sessionStorage.setItem('hypehammer_current_match_id', currentMatchId);
+    }
+  }, [currentMatchId]);
 
   // Save app state to JSON file whenever key state changes
   useEffect(() => {
@@ -174,6 +488,8 @@ const AppContent: React.FC = () => {
   // Save sports data to JSON file whenever it changes
   useEffect(() => {
     saveSportsData(allSports);
+    // Also save to localStorage
+    localStorage.setItem('hypehammer_sports', JSON.stringify(allSports));
   }, [allSports]);
 
   // Update allSports whenever current match's players/teams change
@@ -441,6 +757,11 @@ const AppContent: React.FC = () => {
       email: 'guest@hypehammer.com',
       avatar: undefined
     });
+    // Clear sessionStorage
+    sessionStorage.removeItem('hypehammer_current_user');
+    sessionStorage.removeItem('hypehammer_current_sport');
+    sessionStorage.removeItem('hypehammer_current_match_id');
+    sessionStorage.removeItem('hypehammer_current_status');
     // Reset to home
     setStatus(AuctionStatus.HOME);
     setCurrentSport(null);
@@ -598,16 +919,237 @@ const AppContent: React.FC = () => {
 
   const isAuctionRoomActive = activeTab === 'room';
 
+  // Handle login - route to appropriate dashboard based on role
+  const handleLogin = (user: { email: string; password: string; role: UserRole }) => {
+    console.log('🔐 Login attempt:', user.email, 'Role:', user.role);
+    
+    // Load full user data from localStorage
+    const storedUsers = localStorage.getItem('hypehammer_users');
+    let fullUserData = null;
+    
+    if (storedUsers) {
+      try {
+        const users = JSON.parse(storedUsers);
+        fullUserData = users.find((u: any) => u.email === user.email);
+        console.log('✅ Found user data:', fullUserData?.name, 'Role:', fullUserData?.role);
+      } catch (err) {
+        console.error('Error loading user data:', err);
+      }
+    }
+    
+    // Update current user with full data
+    const updatedUser = {
+      email: user.email,
+      role: user.role,
+      name: fullUserData?.name || user.email.split('@')[0],
+      teamName: fullUserData?.teamName,
+      playerRole: fullUserData?.playerRole,
+      basePrice: fullUserData?.basePrice,
+      viewerType: fullUserData?.viewerType,
+    };
+    
+    setCurrentUser(updatedUser);
+
+    // For admin, route immediately (no match needed)
+    if (user.role === UserRole.ADMIN) {
+      console.log('➡️ Admin login - going to ADMIN_DASHBOARD');
+      setStatus(AuctionStatus.ADMIN_DASHBOARD);
+      return;
+    }
+
+    // For non-admin roles, select first match and set pending dashboard
+    if (allSports.length === 0) {
+      console.warn('⚠️ No sports data available');
+      setStatus(AuctionStatus.MARKETPLACE);
+      return;
+    }
+
+    const firstSport = allSports[0];
+    if (!firstSport.matches || firstSport.matches.length === 0) {
+      console.warn('⚠️ No matches available');
+      setStatus(AuctionStatus.MARKETPLACE);
+      return;
+    }
+
+    const firstMatch = firstSport.matches[0];
+    const sportName = firstSport.sportType || firstSport.customSportName || 'Cricket';
+    
+    console.log('🎯 Auto-selecting:', sportName, firstMatch.name);
+    
+    // Determine target dashboard based on role
+    let targetDashboard: AuctionStatus;
+    switch (user.role) {
+      case UserRole.AUCTIONEER:
+        targetDashboard = AuctionStatus.AUCTIONEER_DASHBOARD;
+        break;
+      case UserRole.TEAM_REP:
+        targetDashboard = AuctionStatus.TEAM_REP_DASHBOARD;
+        break;
+      case UserRole.PLAYER:
+        targetDashboard = AuctionStatus.PLAYER_DASHBOARD;
+        break;
+      case UserRole.GUEST:
+        targetDashboard = AuctionStatus.GUEST_DASHBOARD;
+        break;
+      default:
+        setStatus(AuctionStatus.MARKETPLACE);
+        return;
+    }
+    
+    console.log('📍 Setting pending dashboard:', targetDashboard);
+    
+    // Set match context and pending dashboard
+    setCurrentSport(sportName);
+    setCurrentMatchId(firstMatch.id);
+    setPendingDashboardStatus(targetDashboard);
+  };
+
   // --- Layout Views ---
 
   if (status === AuctionStatus.HOME) {
-    return <HomePage setStatus={setStatus} />;
+    return <HomePage setStatus={setStatus} onLogin={handleLogin} />;
+  }
+
+  if (status === AuctionStatus.MARKETPLACE) {
+    return <MarketplacePage 
+      allSports={allSports}
+      setStatus={setStatus}
+      onSelectMatch={(sportType, matchId) => {
+        setCurrentSport(sportType);
+        setCurrentMatchId(matchId);
+        // User can now join/register for this specific match - go to role selection
+        setStatus(AuctionStatus.ROLE_SELECTION);
+      }}
+      onCreateSeason={() => {
+        // Admin wants to create a new season
+        setStatus(AuctionStatus.ADMIN_REGISTRATION);
+      }}
+      currentUserRole={currentUser.role}
+    />;
+  }
+
+  if (status === AuctionStatus.ROLE_SELECTION) {
+    return <RoleSelectionPage 
+      setStatus={setStatus}
+      selectedMatch={currentMatch}
+      selectedSport={currentSportData}
+      onRoleSelected={(role) => {
+        setSelectedRoleForRegistration(role);
+        setStatus(AuctionStatus.ROLE_REGISTRATION);
+      }}
+    />;
+  }
+
+  if (status === AuctionStatus.ROLE_REGISTRATION) {
+    return <RoleBasedRegistrationPage 
+      setStatus={setStatus}
+      selectedRole={selectedRoleForRegistration || UserRole.GUEST}
+      selectedMatch={currentMatch}
+      selectedSport={currentSportData}
+      onRegister={(registrationData) => {
+        console.log('Registration data:', registrationData);
+        // Here you would save the registration to backend/localStorage
+        // For now, just log it
+      }}
+    />;
+  }
+
+  if (status === AuctionStatus.ADMIN_REGISTRATION) {
+    return <AdminRegistrationPage 
+      setStatus={setStatus}
+      onRegisterAdmin={(adminData) => {
+        // Process admin registration
+        setCurrentUser({
+          name: adminData.fullName,
+          email: adminData.email,
+          avatar: undefined,
+          role: UserRole.ADMIN,
+          playerId: undefined
+        });
+        
+        // Create the new season/match immediately
+        const newMatchId = `match-${Date.now()}`;
+        const newMatch: MatchData = {
+          id: newMatchId,
+          name: adminData.seasonName,
+          createdAt: Date.now(),
+          matchDate: new Date(adminData.auctionDateTime).getTime(),
+          place: adminData.venueLocation || (adminData.venueMode === 'Online' ? 'Online' : 'TBD'),
+          config: {
+            sport: adminData.sportType as SportType,
+            type: AuctionType.OPEN,
+            level: 'Professional',
+            squadSize: { min: 11, max: adminData.maxPlayersPerTeam },
+            totalBudget: adminData.baseBudgetPerTeam,
+            roles: [],
+            rules: {}
+          },
+          players: [],
+          teams: [],
+          history: [],
+          status: 'SETUP'
+        };
+        
+        // Find or create sport data
+        const sportIndex = allSports.findIndex(s => 
+          s.sportType === adminData.sportType || s.customSportName === adminData.sportType
+        );
+        
+        if (sportIndex >= 0) {
+          // Sport exists, add match to it
+          const updatedSports = [...allSports];
+          updatedSports[sportIndex].matches.push(newMatch);
+          setAllSports(updatedSports);
+          
+          // Save to localStorage
+          localStorage.setItem('hypehammer_sports', JSON.stringify(updatedSports));
+        } else {
+          // Create new sport entry
+          const newSportData: SportData = {
+            sportType: adminData.sportType as SportType,
+            matches: [newMatch]
+          };
+          const updatedSports = [...allSports, newSportData];
+          setAllSports(updatedSports);
+          
+          // Save to localStorage
+          localStorage.setItem('hypehammer_sports', JSON.stringify(updatedSports));
+        }
+        
+        // Note: Modal will show and redirect to marketplace
+      }}
+    />;
   }
 
   if (status === AuctionStatus.AUTH) {
     return <AuthPage 
       setStatus={setStatus} 
-      onLogin={(userData) => setCurrentUser(userData)}
+      onLogin={(userData) => {
+        if (userData.isOAuthUser) {
+          // Store OAuth user and redirect to profile completion
+          setPendingOAuthUser(userData);
+          setStatus(AuctionStatus.PROFILE_COMPLETION);
+        } else {
+          // Regular signup/login
+          setCurrentUser(userData);
+        }
+      }}
+    />;
+  }
+
+  if (status === AuctionStatus.PROFILE_COMPLETION) {
+    return <ProfileCompletionPage 
+      setStatus={setStatus} 
+      oauthUser={pendingOAuthUser}
+      onProfileComplete={(completedUser) => {
+        setCurrentUser(completedUser);
+        setPendingOAuthUser(null);
+        if (completedUser.role === UserRole.PLAYER) {
+          setStatus(AuctionStatus.PLAYER_REGISTRATION);
+        } else {
+          setStatus(AuctionStatus.SETUP);
+        }
+      }}
     />;
   }
 
@@ -621,10 +1163,71 @@ const AppContent: React.FC = () => {
   }
 
   if (status === AuctionStatus.PLAYER_DASHBOARD) {
+    console.log('🎨 Rendering PLAYER_DASHBOARD, currentMatch:', currentMatch?.id);
+    if (!currentMatch) {
+      console.warn('⚠️ No currentMatch yet, showing loading...');
+      return <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-white text-xl">Loading Player Dashboard...</div>
+      </div>;
+    }
     return <PlayerDashboardPage 
+      setStatus={setStatus}
+      currentMatch={currentMatch}
       currentUser={currentUser}
+    />;
+  }
+
+  if (status === AuctionStatus.ADMIN_DASHBOARD) {
+    console.log('🎨 Rendering ADMIN_DASHBOARD');
+    return <AdminDashboardPage 
+      setStatus={setStatus}
       allSports={allSports}
-      onEditProfile={() => setStatus(AuctionStatus.PLAYER_REGISTRATION)}
+      currentUser={currentUser}
+    />;
+  }
+
+  if (status === AuctionStatus.AUCTIONEER_DASHBOARD) {
+    console.log('🎨 Rendering AUCTIONEER_DASHBOARD, currentMatch:', currentMatch?.id);
+    if (!currentMatch) {
+      console.warn('⚠️ No currentMatch yet, showing loading...');
+      return <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-white text-xl">Loading Auctioneer Dashboard...</div>
+      </div>;
+    }
+    return <AuctioneerDashboardPage 
+      setStatus={setStatus}
+      currentMatch={currentMatch}
+      currentUser={currentUser}
+    />;
+  }
+
+  if (status === AuctionStatus.TEAM_REP_DASHBOARD) {
+    console.log('🎨 Rendering TEAM_REP_DASHBOARD, currentMatch:', currentMatch?.id);
+    if (!currentMatch) {
+      console.warn('⚠️ No currentMatch yet, showing loading...');
+      return <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-white text-xl">Loading Team Dashboard...</div>
+      </div>;
+    }
+    return <TeamRepDashboardPage 
+      setStatus={setStatus}
+      currentMatch={currentMatch}
+      currentUser={currentUser}
+    />;
+  }
+
+  if (status === AuctionStatus.GUEST_DASHBOARD) {
+    console.log('🎨 Rendering GUEST_DASHBOARD, currentMatch:', currentMatch?.id);
+    if (!currentMatch) {
+      console.warn('⚠️ No currentMatch yet, showing loading...');
+      return <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-white text-xl">Loading Guest Dashboard...</div>
+      </div>;
+    }
+    return <GuestDashboardPage 
+      setStatus={setStatus}
+      currentMatch={currentMatch}
+      currentUser={currentUser}
     />;
   }
 
@@ -671,27 +1274,29 @@ const AppContent: React.FC = () => {
     />;
   }
 
+  // Fallback/default view - auction room for READY/LIVE/PAUSED/ENDED statuses
+  console.log('🎨 Rendering fallback auction room view, status:', status);
   return (
-    <div className="h-screen bg-[#0d0a09] flex flex-col items-center p-4 lg:p-8 overflow-hidden relative">
+    <div className="h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50 flex flex-col items-center p-4 lg:p-8 overflow-hidden relative">
       {soldAnimationData && <SoldCelebration player={soldAnimationData.player} team={soldAnimationData.team} price={soldAnimationData.price} onComplete={() => { setSoldAnimationData(null); setTimeout(() => handleNextPlayer(), 100); }} />}
 
       <div className="fixed top-8 left-10 z-[60] flex items-center gap-6">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-2xl cursor-pointer overflow-hidden border-2 border-[#c5a059]" onClick={() => setStatus(AuctionStatus.HOME)}>
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-2xl cursor-pointer overflow-hidden border-2 border-blue-500" onClick={() => setStatus(AuctionStatus.HOME)}>
             <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
           </div>
           <div className="hidden sm:block">
             <h2 className="text-xl font-display font-black tracking-widest gold-text uppercase leading-none">HypeHammer</h2>
-            <p className="text-[10px] font-bold text-[#b4a697] uppercase tracking-[0.3em] mt-1">{config.sport} Protocol</p>
+            <p className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.3em] mt-1">{config.sport} Protocol</p>
           </div>
         </div>
-        <button onClick={handleBackToMatches} className="bg-[#1a1410]/80 border border-[#c5a059]/20 backdrop-blur-xl px-4 py-2.5 rounded-full text-[#c5a059] hover:bg-[#c5a059] hover:text-[#0d0a09] transition-all shadow-lg flex items-center gap-2"><ArrowLeft size={14} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">Back to Matches</span></button>
+        <button onClick={handleBackToMatches} className="bg-white/80 border border-blue-500/20 backdrop-blur-xl px-4 py-2.5 rounded-full text-blue-600 hover:bg-blue-500 hover:text-white transition-all shadow-lg flex items-center gap-2"><ArrowLeft size={14} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">Back to Matches</span></button>
       </div>
 
       <div className="fixed top-8 right-10 z-[60] flex gap-3">
         {currentPlayerIdx !== null && <HUDPill icon={<TrendingUp size={12} />}>Round {auctionRound}</HUDPill>}
         <HUDPill icon={<Activity size={12} />}>System Live</HUDPill>
-        <button onClick={() => setIsSettingsSidebarOpen(true)} className="p-2.5 bg-[#a65d50]/10 border border-[#a65d50]/20 rounded-full text-[#a65d50] hover:bg-[#a65d50] hover:text-white transition-all"><Settings size={16} /></button>
+        <button onClick={() => setIsSettingsSidebarOpen(true)} className="p-2.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-orange-500 hover:bg-orange-500 hover:text-white transition-all"><Settings size={16} /></button>
       </div>
 
       <div className="w-full max-w-[1500px] h-full flex flex-col pt-20 pb-20">
@@ -769,10 +1374,10 @@ const AppContent: React.FC = () => {
             </nav>
             <button 
               onClick={() => setIsNavExpanded(!isNavExpanded)}
-              className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-500 shadow-2xl relative border border-[#c5a059]/30 ${isNavExpanded ? 'bg-[#c5a059] text-[#0d0a09]' : 'orbital-nav text-[#c5a059]'}`}
+              className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-500 shadow-2xl relative border border-blue-500/30 ${isNavExpanded ? 'bg-blue-500 text-[#0d0a09]' : 'orbital-nav text-blue-600'}`}
             >
               {isNavExpanded ? <X size={24} /> : <Gavel size={24} />}
-              {!isNavExpanded && <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#c5a059] rounded-full animate-pulse border border-[#0d0a09]"></div>}
+              {!isNavExpanded && <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full animate-pulse border border-[#0d0a09]"></div>}
             </button>
           </div>
         ) : (

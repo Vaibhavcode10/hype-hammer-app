@@ -13,9 +13,96 @@ export enum SportType {
 }
 
 export enum UserRole {
+  ADMIN = 'ADMIN',
   AUCTIONEER = 'AUCTIONEER',
+  TEAM_REP = 'TEAM_REP',
   PLAYER = 'PLAYER',
-  ADMIN = 'ADMIN'
+  GUEST = 'GUEST'
+}
+
+export interface UserRegistration {
+  id?: string;
+  email: string;
+  password?: string;
+  name: string;
+  role?: UserRole;
+  avatar?: string;
+  isOAuthUser?: boolean; // OAuth login flag
+  profileComplete?: boolean; // Whether role-specific details are filled
+  
+  // Common fields
+  phone?: string;
+  profilePhoto?: string;
+  username?: string;
+  
+  // Admin specific
+  adminId?: string;
+  organizationName?: string;
+  designation?: string; // Admin / Super Admin
+  adminAuthCode?: string;
+  governmentId?: string;
+  adminApprovalStatus?: 'pending' | 'approved' | 'rejected';
+  twoFactorEnabled?: boolean;
+  lastLogin?: number;
+  permissions?: string[];
+  
+  // Auctioneer specific
+  auctioneerId?: string;
+  auctioneerLicense?: string;
+  experience?: string; // Years of experience
+  languagesKnown?: string[];
+  previousAuctions?: string;
+  auctioneerGovtId?: string;
+  approvedByAdmin?: boolean;
+  assignedAuctionEvent?: string;
+  
+  // Team Rep specific
+  teamId?: string;
+  teamName?: string;
+  teamShortCode?: string;
+  teamLogo?: string; // MANDATORY for teams
+  homeCity?: string;
+  repFullName?: string;
+  repEmail?: string;
+  repMobile?: string;
+  repPhoto?: string;
+  repRole?: string; // Owner / Manager / Captain
+  totalBudget?: number;
+  remainingPurse?: number;
+  maxSquadSize?: number;
+  authorizationLetter?: string; // PDF
+  teamApprovalStatus?: 'pending' | 'approved' | 'rejected';
+  
+  // Player specific
+  playerId?: string;
+  dateOfBirth?: string;
+  gender?: string;
+  nationality?: string;
+  playerPhoto?: string; // MANDATORY for players
+  contactEmail?: string;
+  contactMobile?: string;
+  city?: string;
+  state?: string;
+  sport?: SportType;
+  playerRole?: string; // Playing role
+  battingStyle?: string;
+  bowlingStyle?: string;
+  experienceLevel?: string;
+  previousTeams?: string;
+  basePrice?: number;
+  playerCategory?: string;
+  availabilityStatus?: string;
+  sportsId?: string; // Govt ID / Sports ID
+  consentGiven?: boolean;
+  playerApprovalStatus?: 'pending' | 'approved' | 'rejected';
+  
+  // Guest specific
+  guestOrganization?: string;
+  guestType?: string;
+  favoriteTeam?: string;
+  notificationsEnabled?: boolean;
+  
+  createdAt?: number;
 }
 
 export enum AuctionType {
@@ -26,7 +113,12 @@ export enum AuctionType {
 
 export enum AuctionStatus {
   HOME = 'HOME',
+  MARKETPLACE = 'MARKETPLACE',
   AUTH = 'AUTH',
+  ADMIN_REGISTRATION = 'ADMIN_REGISTRATION',
+  ROLE_SELECTION = 'ROLE_SELECTION',
+  ROLE_REGISTRATION = 'ROLE_REGISTRATION',
+  PROFILE_COMPLETION = 'PROFILE_COMPLETION',
   HOW_IT_WORKS = 'HOW_IT_WORKS',
   SETUP = 'SETUP',
   MATCHES = 'MATCHES',
@@ -36,7 +128,12 @@ export enum AuctionStatus {
   READY = 'READY',
   LIVE = 'LIVE',
   PAUSED = 'PAUSED',
-  ENDED = 'ENDED'
+  ENDED = 'ENDED',
+  // Role-based Dashboards
+  ADMIN_DASHBOARD = 'ADMIN_DASHBOARD',
+  AUCTIONEER_DASHBOARD = 'AUCTIONEER_DASHBOARD',
+  TEAM_REP_DASHBOARD = 'TEAM_REP_DASHBOARD',
+  GUEST_DASHBOARD = 'GUEST_DASHBOARD'
 }
 
 export interface PlayerRole {

@@ -50,15 +50,15 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
       <div className="max-w-4xl mx-auto">
         <button 
           onClick={onBack}
-          className="flex items-center gap-3 bg-[#1a1410]/80 border border-[#c5a059]/20 backdrop-blur-xl px-6 py-3 rounded-full text-[#c5a059] hover:bg-[#c5a059] hover:text-[#0d0a09] transition-all shadow-lg mb-8"
+          className="flex items-center gap-3 bg-white/80 border border-blue-500/20 backdrop-blur-xl px-6 py-3 rounded-full text-blue-600 hover:bg-blue-500 hover:text-white transition-all shadow-lg mb-8"
         >
           <ArrowLeft size={18} />
           <span className="text-[10px] font-black uppercase tracking-[0.2em]">Back to Dashboard</span>
         </button>
 
-        <div className="bg-[#1a1410] border border-[#2a2016] rounded-xl p-8">
+        <div className="bg-white border border-slate-300 rounded-xl p-8">
           <div className="mb-8">
-            <h1 className="text-4xl font-bold text-[#c5a059] mb-2">Player Registration</h1>
+            <h1 className="text-4xl font-bold text-blue-600 mb-2">Player Registration</h1>
             <p className="text-gray-400">Register yourself for upcoming auctions</p>
           </div>
 
@@ -75,7 +75,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                   setSelectedMatch('');
                   setPlayerData(prev => ({ ...prev, roleId: '' }));
                 }}
-                className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+                className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none"
                 required
               >
                 <option value="">Choose a sport...</option>
@@ -99,7 +99,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                 <select
                   value={selectedMatch}
                   onChange={(e) => setSelectedMatch(e.target.value)}
-                  className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+                  className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none"
                   required
                 >
                   <option value="">Choose a match...</option>
@@ -124,7 +124,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                       type="text"
                       value={playerData.name}
                       onChange={(e) => setPlayerData(prev => ({ ...prev, name: e.target.value }))}
-                      className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+                      className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none"
                       required
                     />
                   </div>
@@ -137,7 +137,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                       type="number"
                       value={playerData.age}
                       onChange={(e) => setPlayerData(prev => ({ ...prev, age: parseInt(e.target.value) }))}
-                      className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+                      className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none"
                       min="15"
                       max="60"
                     />
@@ -154,7 +154,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                       value={playerData.nationality}
                       onChange={(e) => setPlayerData(prev => ({ ...prev, nationality: e.target.value }))}
                       placeholder="e.g., Indian, Australian"
-                      className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+                      className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none"
                     />
                   </div>
 
@@ -165,7 +165,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                     <select
                       value={playerData.roleId}
                       onChange={(e) => setPlayerData(prev => ({ ...prev, roleId: e.target.value }))}
-                      className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+                      className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none"
                       required
                     >
                       <option value="">Select your role...</option>
@@ -186,7 +186,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                       type="number"
                       value={playerData.basePrice}
                       onChange={(e) => setPlayerData(prev => ({ ...prev, basePrice: parseInt(e.target.value) }))}
-                      className="w-full pl-12 pr-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+                      className="w-full pl-12 pr-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none"
                       min="50000"
                       step="50000"
                       required
@@ -203,7 +203,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                       type="checkbox"
                       checked={playerData.isOverseas}
                       onChange={(e) => setPlayerData(prev => ({ ...prev, isOverseas: e.target.checked }))}
-                      className="w-5 h-5 rounded bg-[#0d0a09] border-[#2a2016] text-[#c5a059] focus:ring-[#c5a059]"
+                      className="w-5 h-5 rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500"
                     />
                     <span className="text-sm font-semibold text-gray-300">Overseas Player</span>
                   </label>
@@ -218,7 +218,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                     value={playerData.imageUrl}
                     onChange={(e) => setPlayerData(prev => ({ ...prev, imageUrl: e.target.value }))}
                     placeholder="https://example.com/your-photo.jpg"
-                    className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none"
+                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none"
                   />
                 </div>
 
@@ -231,7 +231,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                     onChange={(e) => setPlayerData(prev => ({ ...prev, bio: e.target.value }))}
                     placeholder="Tell teams about yourself..."
                     rows={3}
-                    className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none resize-none"
+                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none resize-none"
                   />
                 </div>
 
@@ -244,7 +244,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                     onChange={(e) => setPlayerData(prev => ({ ...prev, stats: e.target.value }))}
                     placeholder="e.g., 500+ runs, 50 wickets, MVP 2023"
                     rows={3}
-                    className="w-full px-4 py-3 bg-[#0d0a09] border border-[#2a2016] rounded-lg text-white focus:border-[#c5a059] outline-none resize-none"
+                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none resize-none"
                   />
                 </div>
 
@@ -258,7 +258,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 px-6 py-3 bg-[#c5a059] text-[#0d0a09] rounded-lg font-semibold hover:bg-[#d4af6a] transition-all"
+                    className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-500 to-orange-500 text-white rounded-lg font-semibold hover:brightness-110 transition-all"
                   >
                     Register for Auction
                   </button>

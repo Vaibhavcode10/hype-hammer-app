@@ -45,15 +45,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ players, teams, hi
       </div>
       <div className="lg:col-span-12 mt-6">
         <CommandCard title="Strategic Liquidity" icon={<BarChart3 size={16}/>}>
-          <div className="h-[300px] flex items-end justify-between gap-4 px-4 pb-4 border-b border-[#3d2f2b]">
+          <div className="h-[300px] flex items-end justify-between gap-4 px-4 pb-4 border-b border-slate-300">
             {teams.map(t => (
               <div key={t.id} className="flex-1 flex flex-col items-center gap-3 group relative">
                 <div 
                   className="w-full gold-gradient rounded-t-xl transition-all group-hover:brightness-125" 
                   style={{ height: `${((t.budget - t.remainingBudget) / t.budget) * 200 + 10}px` }}
                 ></div>
-                <span className="text-[10px] font-black uppercase text-[#b4a697] truncate w-full text-center">{t.name}</span>
-                <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-all bg-[#c5a059] text-[#0d0a09] px-3 py-1 rounded-lg text-[10px] font-black">
+                <span className="text-[10px] font-black uppercase text-slate-600 truncate w-full text-center">{t.name}</span>
+                <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-all bg-gradient-to-r from-blue-500 to-orange-500 text-white px-3 py-1 rounded-lg text-[10px] font-black">
                   ${((t.budget-t.remainingBudget)/1000000).toFixed(1)}M
                 </div>
               </div>

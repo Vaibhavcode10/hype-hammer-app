@@ -1,5 +1,10 @@
 export { HomePage } from './HomePage';
+export { MarketplacePage } from './MarketplacePage';
 export { AuthPage } from './AuthPage';
+export { AdminRegistrationPage } from './AdminRegistrationPage';
+export { RoleSelectionPage } from './RoleSelectionPage';
+export { RoleBasedRegistrationPage } from './RoleBasedRegistrationPage';
+export { ProfileCompletionPage } from './ProfileCompletionPage';
 export { HowItWorksPage } from './HowItWorksPage';
 export { SetupPage } from './SetupPage';
 export { MatchesPage } from './MatchesPage';
@@ -12,3 +17,8 @@ export { AuctionRoomPage } from './AuctionRoomPage';
 export { HistoryPage } from './HistoryPage';
 export { PlayerDashboardPage } from './PlayerDashboardPage';
 export { PlayerRegistrationPage } from './PlayerRegistrationPage';
+export { AdminDashboardPage } from './AdminDashboardPage';
+export { AuctioneerDashboardPage } from './AuctioneerDashboardPage';
+export { TeamRepDashboardPage } from './TeamRepDashboardPage';
+export { GuestDashboardPage } from './GuestDashboardPage';
+

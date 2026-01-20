@@ -12,6 +12,7 @@ import kabaddiTeams from '../components/db/kabaddi/teams.json';
 import kabaddiMatches from '../components/db/kabaddi/matches.json';
 
 import appStateData from '../components/db/app-state.json';
+import { UserRegistration } from '../types';
 
 // Optional API base (defaults to local dev server)
 const API_BASE = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:3001';
@@ -19,7 +20,9 @@ const API_BASE = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:30
 // Local storage keys
 const STORAGE_KEYS = {
   appState: 'hypehammer.appState',
-  sportsData: 'hypehammer.sportsData'
+  sportsData: 'hypehammer.sportsData',
+  users: 'hypehammer.users',
+  currentUser: 'hypehammer.currentUser'
 };
 
 // Safe localStorage helpers (no-op on server)
@@ -254,5 +257,160 @@ export async function saveSportsData(data: any[]): Promise<boolean> {
 
   const ok = safeSetItem(STORAGE_KEYS.sportsData, JSON.stringify(data));
   if (!ok) console.warn('Sports data did not persist');
+  return ok;
+}
+
+// User Registration Management
+export async function registerUser(userData: UserRegistration): Promise<boolean> {
+  // Generate a unique ID for the user
+  userData.id = userData.id || `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  // Try API first
+  const apiSaved = await fetchFromApi('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(userData)
+  });
+  if (apiSaved) {
+    // Save as current user
+    safeSetItem(STORAGE_KEYS.currentUser, JSON.stringify(userData));
+    return true;
+  }
+
+  // Fallback to localStorage
+  const users = await getAllUsers();
+  users.push(userData);
+  const ok = safeSetItem(STORAGE_KEYS.users, JSON.stringify(users));
+  
+  if (ok) {
+    // Save as current user
+    safeSetItem(STORAGE_KEYS.currentUser, JSON.stringify(userData));
+    const logMsg = userData.isOAuthUser 
+      ? `✅ OAuth user registered: ${userData.email} (profile pending)`
+      : `✅ User registered: ${userData.email} with role ${userData.role}`;
+    console.log(logMsg);
+  }
+  
+  return ok;
+}
+
+export async function loginUser(email: string, password: string): Promise<UserRegistration | null> {
+  // Try API first
+  const apiResponse = await fetchFromApi('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  
+  if (apiResponse?.user) {
+    safeSetItem(STORAGE_KEYS.currentUser, JSON.stringify(apiResponse.user));
+    return apiResponse.user as UserRegistration;
+  }
+
+  // Fallback to localStorage
+  const users = await getAllUsers();
+  const user = users.find(u => u.email === email && u.password === password);
+  
+  if (user) {
+    safeSetItem(STORAGE_KEYS.currentUser, JSON.stringify(user));
+    console.log(`✅ User logged in: ${user.email}`);
+    return user;
+  }
+  
+  return null;
+}
+
+export async function getCurrentUser(): Promise<UserRegistration | null> {
+  const saved = safeGetItem(STORAGE_KEYS.currentUser);
+  if (saved) {
+    try {
+      return JSON.parse(saved) as UserRegistration;
+    } catch (err) {
+      console.warn('Failed to parse current user', err);
+    }
+  }
+  return null;
+}
+
+export async function logoutUser(): Promise<boolean> {
+  return safeSetItem(STORAGE_KEYS.currentUser, '') || true;
+}
+
+export async function getAllUsers(): Promise<UserRegistration[]> {
+  // Try API first
+  const apiData = await fetchFromApi('/api/auth/users');
+  if (apiData && Array.isArray(apiData)) return apiData;
+
+  // Fallback to localStorage
+  const saved = safeGetItem(STORAGE_KEYS.users);
+  if (saved) {
+    try {
+      return JSON.parse(saved) as UserRegistration[];
+    } catch (err) {
+      console.warn('Failed to parse users', err);
+    }
+  }
+  return [];
+}
+
+export async function getUserById(userId: string): Promise<UserRegistration | null> {
+  const users = await getAllUsers();
+  return users.find(u => u.id === userId) || null;
+}
+
+export async function updateUser(userId: string, updates: Partial<UserRegistration>): Promise<boolean> {
+  const users = await getAllUsers();
+  const userIndex = users.findIndex(u => u.id === userId);
+  
+  if (userIndex === -1) return false;
+  
+  users[userIndex] = { ...users[userIndex], ...updates };
+  const ok = safeSetItem(STORAGE_KEYS.users, JSON.stringify(users));
+  
+  // Update current user if it's the logged-in user
+  const currentUser = await getCurrentUser();
+  if (currentUser?.id === userId) {
+    safeSetItem(STORAGE_KEYS.currentUser, JSON.stringify(users[userIndex]));
+  }
+  
+  return ok;
+}
+
+export async function completeOAuthProfile(userData: UserRegistration): Promise<boolean> {
+  // OAuth users already have an ID from registerUser
+  if (!userData.id) {
+    userData.id = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+  
+  userData.profileComplete = true;
+  
+  // Try API first
+  const apiSaved = await fetchFromApi('/api/auth/complete-profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(userData)
+  });
+  if (apiSaved) {
+    safeSetItem(STORAGE_KEYS.currentUser, JSON.stringify(userData));
+    return true;
+  }
+
+  // Fallback to localStorage - update existing user
+  const users = await getAllUsers();
+  const userIndex = users.findIndex(u => u.id === userData.id || u.email === userData.email);
+  
+  if (userIndex !== -1) {
+    users[userIndex] = userData;
+  } else {
+    users.push(userData);
+  }
+  
+  const ok = safeSetItem(STORAGE_KEYS.users, JSON.stringify(users));
+  
+  if (ok) {
+    safeSetItem(STORAGE_KEYS.currentUser, JSON.stringify(userData));
+    console.log(`✅ OAuth profile completed: ${userData.email} with role ${userData.role}`);
+  }
+  
   return ok;
 }

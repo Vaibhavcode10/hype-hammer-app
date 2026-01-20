@@ -58,50 +58,50 @@ export const TeamModal: React.FC<TeamModalProps> = ({
       <div className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#c5a059]">Team Name *</label>
+            <label className="text-[10px] font-black uppercase text-blue-600">Team Name *</label>
             <input 
               type="text" 
-              className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+              className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
               value={newTeam.name} 
               onChange={e => setNewTeam({...newTeam, name: e.target.value})} 
               placeholder="Team Name" 
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#c5a059]">Budget *</label>
+            <label className="text-[10px] font-black uppercase text-blue-600">Budget *</label>
             <input 
               type="number" 
-              className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+              className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
               value={newTeam.budget} 
               onChange={e => setNewTeam({...newTeam, budget: Number(e.target.value)})} 
               placeholder="100000000" 
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#c5a059]">Owner</label>
+            <label className="text-[10px] font-black uppercase text-blue-600">Owner</label>
             <input 
               type="text" 
-              className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+              className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
               value={newTeam.owner || ''} 
               onChange={e => setNewTeam({...newTeam, owner: e.target.value})} 
               placeholder="Owner Name" 
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#c5a059]">Home City</label>
+            <label className="text-[10px] font-black uppercase text-blue-600">Home City</label>
             <input 
               type="text" 
-              className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+              className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
               value={newTeam.homeCity || ''} 
               onChange={e => setNewTeam({...newTeam, homeCity: e.target.value})} 
               placeholder="Mumbai" 
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#c5a059]">Foundation Year</label>
+            <label className="text-[10px] font-black uppercase text-blue-600">Foundation Year</label>
             <input 
               type="number" 
-              className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+              className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
               value={newTeam.foundationYear || ''} 
               onChange={e => setNewTeam({...newTeam, foundationYear: Number(e.target.value) || undefined})} 
               placeholder="2024" 
@@ -109,10 +109,10 @@ export const TeamModal: React.FC<TeamModalProps> = ({
           </div>
         </div>
         <div className="space-y-2">
-          <label className="text-[10px] font-black uppercase text-[#c5a059]">Logo URL</label>
+          <label className="text-[10px] font-black uppercase text-blue-600">Logo URL</label>
           <input 
             type="text" 
-            className="w-full bg-[#0d0a09] border border-[#3d2f2b] rounded-2xl px-5 py-4 text-[#f5f5dc] outline-none focus:ring-1 ring-[#c5a059]" 
+            className="w-full bg-white border border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500" 
             value={newTeam.logo || ''} 
             onChange={e => setNewTeam({...newTeam, logo: e.target.value})} 
             placeholder="https://example.com/logo.png" 
@@ -120,7 +120,7 @@ export const TeamModal: React.FC<TeamModalProps> = ({
         </div>
         <button 
           onClick={handleSave} 
-          className="w-full py-5 gold-gradient rounded-3xl text-[#0d0a09] font-black uppercase text-xs shadow-2xl hover:brightness-110 transition-all"
+          className="w-full py-5 gold-gradient rounded-3xl text-white font-black uppercase text-xs shadow-2xl hover:brightness-110 transition-all"
         >
           Deploy Charter
         </button>
