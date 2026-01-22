@@ -293,9 +293,12 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                     value={formData.seasonName}
                     onChange={(e) => handleInputChange('seasonName', e.target.value)}
                     className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                    placeholder="Inter-College Cricket Championship 2026"
+                    placeholder="e.g., IPL 2026, Inter-College Cricket Championship"
                     required
                   />
+                  <p className="text-xs text-slate-500 mt-1">
+                    This will be displayed as the tournament/season name (NOT your personal name)
+                  </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

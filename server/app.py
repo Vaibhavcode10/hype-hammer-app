@@ -5,6 +5,7 @@ Provides REST API endpoints for the React frontend
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import firebase_admin
 from firebase_admin import credentials, firestore
 from functools import wraps
@@ -14,6 +15,8 @@ import json
 from typing import Dict, List, Any, Tuple, Optional
 import uuid
 from dotenv import load_dotenv
+import threading
+import time
 
 # Load environment variables
 load_dotenv()
@@ -21,13 +24,16 @@ load_dotenv()
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app, resources={
-    r"/api/*": {
+    r"/*": {
         "origins": ["http://localhost:3000", "http://localhost:5173", "http://localhost:*"],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
     }
 })
+
+# Initialize SocketIO with CORS
+socketio = SocketIO(app, cors_allowed_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:*"])
 
 # ========================
 # FIREBASE INITIALIZATION
@@ -274,29 +280,46 @@ def login():
         if not data.get('email') or not data.get('password'):
             return error_response("Email and password required", 400)
         
-        # Check all role-specific collections
-        collections = ['auctioneers', 'teams', 'players', 'guests', 'users']
+        print(f"🔐 Login attempt for email: {data['email']}")
+        
+        # Check all role-specific collections including matches (for organizers)
+        collections = ['auctioneers', 'teams', 'players', 'guests', 'matches']
         
         for collection_name in collections:
+            print(f"   Checking collection: {collection_name}")
             docs = db.collection(collection_name).where('email', '==', data['email']).stream()
             doc_list = list(docs)
             
             if doc_list:
+                print(f"   ✅ Found user in {collection_name}")
                 user_doc = doc_list[0]
                 user_data = user_doc.to_dict()
                 
+                # Debug: Print what we found
+                print(f"   User data keys: {user_data.keys()}")
+                print(f"   Has password field: {'password' in user_data}")
+                print(f"   Password matches: {user_data.get('password') == data['password']}")
+                
                 # Check password
                 if user_data.get('password') != data['password']:
+                    print(f"   ❌ Password mismatch!")
                     return error_response("Invalid email or password", 401)
                 
+                print(f"   ✅ Login successful!")
                 # Return user data (excluding password)
                 response_data = {k: v for k, v in user_data.items() if k != 'password'}
                 response_data['collection'] = collection_name  # Include which collection user is from
                 
+                # If from matches collection, set role to ADMIN (organizer)
+                if collection_name == 'matches' and 'role' not in response_data:
+                    response_data['role'] = 'ADMIN'
+                
                 return success_response({'user': response_data}, "Login successful")
         
+        print(f"   ❌ User not found in any collection")
         return error_response("Invalid email or password", 401)
     except Exception as e:
+        print(f"   ❌ Login error: {str(e)}")
         return error_response(f"Login failed: {str(e)}")
 
 # ========================
@@ -313,8 +336,8 @@ def register_auctioneer():
         if not all(field in data for field in required_fields):
             return error_response(f"Missing required fields: {required_fields}")
         
-        # Check if email exists in any collection
-        for collection in ['auctioneers', 'teams', 'players', 'guests']:
+        # Check if email exists in any collection (including matches for organizers)
+        for collection in ['auctioneers', 'teams', 'players', 'guests', 'matches']:
             existing = db.collection(collection).where('email', '==', data['email']).stream()
             if list(existing):
                 return error_response(f"Email {data['email']} already registered", 409)
@@ -358,8 +381,8 @@ def register_team():
         if not all(field in data for field in required_fields):
             return error_response(f"Missing required fields: {required_fields}")
         
-        # Check if email exists in any collection
-        for collection in ['auctioneers', 'teams', 'players', 'guests']:
+        # Check if email exists in any collection (including matches for organizers)
+        for collection in ['auctioneers', 'teams', 'players', 'guests', 'matches']:
             existing = db.collection(collection).where('email', '==', data['email']).stream()
             if list(existing):
                 return error_response(f"Email {data['email']} already registered", 409)
@@ -407,8 +430,8 @@ def register_player():
         if not all(field in data for field in required_fields):
             return error_response(f"Missing required fields: {required_fields}")
         
-        # Check if email exists in any collection
-        for collection in ['auctioneers', 'teams', 'players', 'guests']:
+        # Check if email exists in any collection (including matches for organizers)
+        for collection in ['auctioneers', 'teams', 'players', 'guests', 'matches']:
             existing = db.collection(collection).where('email', '==', data['email']).stream()
             if list(existing):
                 return error_response(f"Email {data['email']} already registered", 409)
@@ -464,8 +487,8 @@ def register_guest():
         if not all(field in data for field in required_fields):
             return error_response(f"Missing required fields: {required_fields}")
         
-        # Check if email exists in any collection
-        for collection in ['auctioneers', 'teams', 'players', 'guests']:
+        # Check if email exists in any collection (including matches for organizers)
+        for collection in ['auctioneers', 'teams', 'players', 'guests', 'matches']:
             existing = db.collection(collection).where('email', '==', data['email']).stream()
             if list(existing):
                 return error_response(f"Email {data['email']} already registered", 409)
@@ -1098,10 +1121,47 @@ def update_match(match_id):
 
 @app.route('/api/matches/<match_id>', methods=['DELETE'])
 def delete_match(match_id):
-    """Delete a match"""
+    """Delete a match and all associated data (cascade delete)"""
     try:
+        # Delete the match
         db.collection('matches').document(match_id).delete()
-        return success_response(None, "Match deleted successfully")
+        
+        # CASCADE DELETE: Delete all players for this match
+        players_query = db.collection('players').where('matchId', '==', match_id).stream()
+        for player_doc in players_query:
+            player_doc.reference.delete()
+        
+        # CASCADE DELETE: Delete all teams for this match
+        teams_query = db.collection('teams').where('matchId', '==', match_id).stream()
+        for team_doc in teams_query:
+            team_doc.reference.delete()
+        
+        # CASCADE DELETE: Delete all auctioneers for this match
+        auctioneers_query = db.collection('auctioneers').where('matchId', '==', match_id).stream()
+        for auctioneer_doc in auctioneers_query:
+            auctioneer_doc.reference.delete()
+        
+        # CASCADE DELETE: Delete all guests for this match
+        guests_query = db.collection('guests').where('matchId', '==', match_id).stream()
+        for guest_doc in guests_query:
+            guest_doc.reference.delete()
+        
+        # CASCADE DELETE: Delete all bids for this match
+        bids_query = db.collection('bids').where('matchId', '==', match_id).stream()
+        for bid_doc in bids_query:
+            bid_doc.reference.delete()
+        
+        # CASCADE DELETE: Delete auction state for this match
+        auction_state_ref = db.collection('auction_states').document(match_id)
+        if auction_state_ref.get().exists:
+            auction_state_ref.delete()
+        
+        # CASCADE DELETE: Delete auctioneer assignments for this match
+        assignments_query = db.collection('auctioneer_assignments').where('matchId', '==', match_id).stream()
+        for assignment_doc in assignments_query:
+            assignment_doc.reference.delete()
+        
+        return success_response(None, "Match and all associated data deleted successfully")
     except Exception as e:
         return error_response(f"Failed to delete match: {str(e)}")
 
@@ -1210,10 +1270,21 @@ def save_all_sports():
             for match in sport_data.get('matches', []):
                 match_id = match.get('id')
                 
-                # Save match
+                # Save match (include organizer credentials if present)
+                # Exclude nested arrays and prevent duplicate fields
                 match_to_save = {k: v for k, v in match.items() if k not in ['players', 'teams', 'history']}
                 match_to_save['sport'] = sport_type
                 match_to_save['updatedAt'] = datetime.now().isoformat()
+                
+                # Normalize organizer credentials (avoid duplicates)
+                if 'organizerEmail' in match_to_save:
+                    match_to_save['email'] = match_to_save['organizerEmail']
+                    del match_to_save['organizerEmail']
+                if 'organizerPassword' in match_to_save:
+                    match_to_save['password'] = match_to_save['organizerPassword']
+                    del match_to_save['organizerPassword']
+                if 'organizerName' in match_to_save:
+                    match_to_save['organizerName'] = match_to_save['organizerName']
                 
                 db.collection('matches').document(match_id).set(match_to_save, merge=True)
                 
@@ -1452,12 +1523,838 @@ def api_info():
 
 
 # ========================
+# AUCTIONEER APPROVAL & ASSIGNMENT
+# ========================
+
+@app.route('/api/auctioneer/assignments', methods=['GET'])
+def get_auctioneer_assignments():
+    """Get all auctioneer assignments with status"""
+    try:
+        season_id = request.args.get('seasonId')
+        query = db.collection('auctioneer_assignments')
+        
+        if season_id:
+            query = query.where('seasonId', '==', season_id)
+        
+        docs = query.stream()
+        assignments = serialize_firestore_docs(docs)
+        
+        return success_response(assignments, f"Retrieved {len(assignments)} assignments")
+    except Exception as e:
+        return error_response(f"Failed to retrieve assignments: {str(e)}")
+
+
+@app.route('/api/auctioneer/approve', methods=['POST'])
+def approve_auctioneer():
+    """Admin approves auctioneer for a season - ONLY ONE PER SEASON"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['auctioneerId', 'seasonId', 'adminId']
+        if not all(field in data for field in required_fields):
+            return error_response(f"Missing required fields: {required_fields}")
+        
+        auctioneer_id = data['auctioneerId']
+        season_id = data['seasonId']
+        admin_id = data['adminId']
+        
+        # Check if there's already an approved auctioneer for this season
+        existing = db.collection('auctioneer_assignments')\
+            .where('seasonId', '==', season_id)\
+            .where('status', '==', 'approved')\
+            .stream()
+        
+        existing_list = list(existing)
+        if existing_list:
+            return error_response(
+                f"Season {season_id} already has an approved auctioneer. Only one auctioneer per season allowed.",
+                409
+            )
+        
+        # Check if auctioneer exists
+        auctioneer_doc = db.collection('auctioneers').document(auctioneer_id).get()
+        if not auctioneer_doc.exists:
+            return error_response(f"Auctioneer {auctioneer_id} not found", 404)
+        
+        # Create or update assignment
+        assignment_id = f"{season_id}_{auctioneer_id}"
+        assignment_data = {
+            'id': assignment_id,
+            'auctioneerId': auctioneer_id,
+            'seasonId': season_id,
+            'status': 'approved',
+            'approvedBy': admin_id,
+            'approvedAt': datetime.now().isoformat(),
+            'createdAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat()
+        }
+        
+        db.collection('auctioneer_assignments').document(assignment_id).set(assignment_data)
+        
+        # Update auctioneer status
+        db.collection('auctioneers').document(auctioneer_id).update({
+            'status': 'approved',
+            'approvedAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat()
+        })
+        
+        # Emit real-time event to notify auctioneer
+        socketio.emit('AUCTIONEER_APPROVED', {
+            'auctioneerId': auctioneer_id,
+            'seasonId': season_id,
+            'message': 'Your application has been approved! You can now access the auction dashboard.'
+        }, room=f'user_{auctioneer_id}')
+        
+        return success_response(assignment_data, "Auctioneer approved successfully")
+    except Exception as e:
+        return error_response(f"Failed to approve auctioneer: {str(e)}")
+
+
+@app.route('/api/auctioneer/reject', methods=['POST'])
+def reject_auctioneer():
+    """Admin rejects auctioneer application"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['auctioneerId', 'seasonId', 'adminId']
+        if not all(field in data for field in required_fields):
+            return error_response(f"Missing required fields: {required_fields}")
+        
+        auctioneer_id = data['auctioneerId']
+        season_id = data['seasonId']
+        reason = data.get('reason', 'Application not approved')
+        
+        # Update auctioneer status
+        db.collection('auctioneers').document(auctioneer_id).update({
+            'status': 'rejected',
+            'rejectedAt': datetime.now().isoformat(),
+            'rejectionReason': reason,
+            'updatedAt': datetime.now().isoformat()
+        })
+        
+        # Emit real-time event
+        socketio.emit('AUCTIONEER_REJECTED', {
+            'auctioneerId': auctioneer_id,
+            'seasonId': season_id,
+            'reason': reason
+        }, room=f'user_{auctioneer_id}')
+        
+        return success_response(None, "Auctioneer application rejected")
+    except Exception as e:
+        return error_response(f"Failed to reject auctioneer: {str(e)}")
+
+
+@app.route('/api/auctioneers', methods=['GET'])
+def get_auctioneers():
+    """Get auctioneers, optionally filtered by email"""
+    try:
+        email = request.args.get('email')
+        
+        if email:
+            # Query by email
+            auctioneers_query = db.collection('auctioneers').where('email', '==', email).stream()
+            auctioneers = [serialize_firestore_doc(a) for a in auctioneers_query]
+            return success_response(auctioneers, "Auctioneers retrieved")
+        else:
+            # Get all auctioneers
+            auctioneers = db.collection('auctioneers').stream()
+            auctioneers_list = [serialize_firestore_doc(a) for a in auctioneers]
+            return success_response(auctioneers_list, "All auctioneers retrieved")
+    except Exception as e:
+        return error_response(f"Failed to get auctioneers: {str(e)}")
+
+
+@app.route('/api/auctioneer/status/<auctioneer_id>', methods=['GET'])
+def get_auctioneer_status(auctioneer_id):
+    """Get auctioneer approval status"""
+    try:
+        doc = db.collection('auctioneers').document(auctioneer_id).get()
+        
+        if not doc.exists:
+            return error_response(f"Auctioneer {auctioneer_id} not found", 404)
+        
+        auctioneer = serialize_firestore_doc(doc)
+        status = auctioneer.get('status', 'pending')
+        
+        # Check if approved for any season
+        assignments = db.collection('auctioneer_assignments')\
+            .where('auctioneerId', '==', auctioneer_id)\
+            .where('status', '==', 'approved')\
+            .stream()
+        
+        approved_seasons = [serialize_firestore_doc(a) for a in assignments]
+        
+        return success_response({
+            'status': status,
+            'auctioneer': auctioneer,
+            'approvedSeasons': approved_seasons,
+            'isApproved': status == 'approved'
+        }, "Status retrieved")
+    except Exception as e:
+        return error_response(f"Failed to get status: {str(e)}")
+
+
+# ========================
+# LIVE AUCTION STATE MANAGEMENT
+# ========================
+
+# Global auction state (in-memory, synced with Firestore)
+auction_state = {}
+
+def get_auction_state(season_id: str) -> Dict:
+    """Get current auction state from Firestore"""
+    try:
+        doc = db.collection('auction_states').document(season_id).get()
+        if doc.exists:
+            return serialize_firestore_doc(doc)
+        return None
+    except Exception as e:
+        print(f"Error getting auction state: {e}")
+        return None
+
+
+def update_auction_state(season_id: str, updates: Dict):
+    """Update auction state in Firestore and broadcast"""
+    try:
+        updates['updatedAt'] = datetime.now().isoformat()
+        db.collection('auction_states').document(season_id).set(updates, merge=True)
+        
+        # Broadcast to all connected clients in this season room
+        socketio.emit('AUCTION_STATE_UPDATE', updates, room=f'season_{season_id}')
+        
+        return True
+    except Exception as e:
+        print(f"Error updating auction state: {e}")
+        return False
+
+
+@app.route('/api/auction/state/<season_id>', methods=['GET'])
+def get_auction_state_api(season_id):
+    """Get current auction state"""
+    try:
+        state = get_auction_state(season_id)
+        if not state:
+            return error_response("Auction state not found", 404)
+        return success_response(state, "Auction state retrieved")
+    except Exception as e:
+        return error_response(f"Failed to get auction state: {str(e)}")
+
+
+@app.route('/api/auction/initialize', methods=['POST'])
+def initialize_auction():
+    """Initialize auction state for a season - Admin only"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['seasonId', 'startTime', 'endTime']
+        if not all(field in data for field in required_fields):
+            return error_response(f"Missing required fields: {required_fields}")
+        
+        season_id = data['seasonId']
+        
+        # Check if auctioneer is approved
+        assignments = db.collection('auctioneer_assignments')\
+            .where('seasonId', '==', season_id)\
+            .where('status', '==', 'approved')\
+            .stream()
+        
+        approved_list = list(assignments)
+        if not approved_list:
+            return error_response("No approved auctioneer for this season. Cannot start auction.", 400)
+        
+        auction_state_data = {
+            'id': season_id,
+            'seasonId': season_id,
+            'status': 'READY',  # READY, LIVE, PAUSED, ENDED
+            'startTime': data['startTime'],
+            'endTime': data['endTime'],
+            'currentPlayerId': None,
+            'currentBid': 0,
+            'leadingTeamId': None,
+            'biddingActive': False,
+            'playerQueue': data.get('playerQueue', []),
+            'completedPlayers': [],
+            'createdAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat()
+        }
+        
+        db.collection('auction_states').document(season_id).set(auction_state_data)
+        
+        # Broadcast to all dashboards
+        socketio.emit('AUCTION_INITIALIZED', auction_state_data, room=f'season_{season_id}')
+        
+        return success_response(auction_state_data, "Auction initialized successfully")
+    except Exception as e:
+        return error_response(f"Failed to initialize auction: {str(e)}")
+
+
+@app.route('/api/auction/start', methods=['POST'])
+def start_auction():
+    """Start the auction - Auctioneer or Admin only"""
+    try:
+        data = request.get_json()
+        season_id = data.get('seasonId')
+        
+        if not season_id:
+            return error_response("seasonId required")
+        
+        state = get_auction_state(season_id)
+        if not state:
+            return error_response("Auction not initialized", 400)
+        
+        if state['status'] == 'LIVE':
+            return error_response("Auction already live", 400)
+        
+        updates = {
+            'status': 'LIVE',
+            'startedAt': datetime.now().isoformat()
+        }
+        
+        update_auction_state(season_id, updates)
+        
+        # Broadcast to all dashboards
+        socketio.emit('AUCTION_STARTED', {
+            'seasonId': season_id,
+            'message': 'Auction is now LIVE!',
+            'timestamp': datetime.now().isoformat()
+        }, room=f'season_{season_id}')
+        
+        # Start server timer
+        start_auction_timer(season_id)
+        
+        return success_response(None, "Auction started successfully")
+    except Exception as e:
+        return error_response(f"Failed to start auction: {str(e)}")
+
+
+@app.route('/api/auction/pause', methods=['POST'])
+def pause_auction():
+    """Pause the auction - Admin or Auctioneer"""
+    try:
+        data = request.get_json()
+        season_id = data.get('seasonId')
+        
+        updates = {
+            'status': 'PAUSED',
+            'pausedAt': datetime.now().isoformat()
+        }
+        
+        update_auction_state(season_id, updates)
+        
+        socketio.emit('AUCTION_PAUSED', {
+            'seasonId': season_id,
+            'timestamp': datetime.now().isoformat()
+        }, room=f'season_{season_id}')
+        
+        return success_response(None, "Auction paused")
+    except Exception as e:
+        return error_response(f"Failed to pause auction: {str(e)}")
+
+
+@app.route('/api/auction/resume', methods=['POST'])
+def resume_auction():
+    """Resume paused auction"""
+    try:
+        data = request.get_json()
+        season_id = data.get('seasonId')
+        
+        updates = {
+            'status': 'LIVE',
+            'resumedAt': datetime.now().isoformat()
+        }
+        
+        update_auction_state(season_id, updates)
+        
+        socketio.emit('AUCTION_RESUMED', {
+            'seasonId': season_id,
+            'timestamp': datetime.now().isoformat()
+        }, room=f'season_{season_id}')
+        
+        return success_response(None, "Auction resumed")
+    except Exception as e:
+        return error_response(f"Failed to resume auction: {str(e)}")
+
+
+@app.route('/api/auction/end', methods=['POST'])
+def end_auction():
+    """End the auction - Admin only"""
+    try:
+        data = request.get_json()
+        season_id = data.get('seasonId')
+        
+        updates = {
+            'status': 'ENDED',
+            'endedAt': datetime.now().isoformat()
+        }
+        
+        update_auction_state(season_id, updates)
+        
+        socketio.emit('AUCTION_ENDED', {
+            'seasonId': season_id,
+            'timestamp': datetime.now().isoformat()
+        }, room=f'season_{season_id}')
+        
+        return success_response(None, "Auction ended")
+    except Exception as e:
+        return error_response(f"Failed to end auction: {str(e)}")
+
+
+# ========================
+# LIVE BIDDING SYSTEM
+# ========================
+
+@app.route('/api/auction/player/start', methods=['POST'])
+def start_player_bidding():
+    """Auctioneer starts bidding for a player"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['seasonId', 'playerId', 'basePrice']
+        if not all(field in data for field in required_fields):
+            return error_response(f"Missing required fields: {required_fields}")
+        
+        season_id = data['seasonId']
+        player_id = data['playerId']
+        base_price = data['basePrice']
+        
+        # Get player details
+        player_doc = db.collection('players').document(player_id).get()
+        if not player_doc.exists:
+            return error_response("Player not found", 404)
+        
+        player = serialize_firestore_doc(player_doc)
+        
+        updates = {
+            'currentPlayerId': player_id,
+            'currentPlayerName': player.get('name', 'Unknown'),
+            'currentBid': base_price,
+            'leadingTeamId': None,
+            'leadingTeamName': None,
+            'biddingActive': True,
+            'bidStartTime': datetime.now().isoformat(),
+            'bidHistory': []
+        }
+        
+        update_auction_state(season_id, updates)
+        
+        # Broadcast to all dashboards
+        socketio.emit('PLAYER_BIDDING_STARTED', {
+            'seasonId': season_id,
+            'player': player,
+            'basePrice': base_price,
+            'timestamp': datetime.now().isoformat()
+        }, room=f'season_{season_id}')
+        
+        return success_response(None, "Player bidding started")
+    except Exception as e:
+        return error_response(f"Failed to start player bidding: {str(e)}")
+
+
+@app.route('/api/auction/bid', methods=['POST'])
+def place_bid():
+    """Team Rep places a bid - SERVER VALIDATES"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['seasonId', 'teamId', 'amount']
+        if not all(field in data for field in required_fields):
+            return error_response(f"Missing required fields: {required_fields}")
+        
+        season_id = data['seasonId']
+        team_id = data['teamId']
+        amount = data['amount']
+        
+        # Get current auction state
+        state = get_auction_state(season_id)
+        if not state:
+            return error_response("Auction state not found", 404)
+        
+        # Validate auction is live
+        if state['status'] != 'LIVE':
+            return error_response("Auction is not live", 400)
+        
+        # Validate bidding is active
+        if not state.get('biddingActive'):
+            return error_response("No player is currently up for bidding", 400)
+        
+        # Validate bid amount
+        current_bid = state.get('currentBid', 0)
+        if amount <= current_bid:
+            return error_response(f"Bid must be higher than current bid of {current_bid}", 400)
+        
+        # Get team details
+        team_doc = db.collection('teams').document(team_id).get()
+        if not team_doc.exists:
+            return error_response("Team not found", 404)
+        
+        team = serialize_firestore_doc(team_doc)
+        
+        # Validate team has enough budget
+        remaining_budget = team.get('remainingBudget', 0)
+        if amount > remaining_budget:
+            return error_response(f"Insufficient budget. Remaining: {remaining_budget}", 400)
+        
+        # Update auction state with new bid
+        bid_history = state.get('bidHistory', [])
+        bid_history.append({
+            'teamId': team_id,
+            'teamName': team.get('name', 'Unknown'),
+            'amount': amount,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+        updates = {
+            'currentBid': amount,
+            'leadingTeamId': team_id,
+            'leadingTeamName': team.get('name', 'Unknown'),
+            'bidHistory': bid_history,
+            'lastBidTime': datetime.now().isoformat()
+        }
+        
+        update_auction_state(season_id, updates)
+        
+        # Save bid to bids collection
+        bid_id = generate_id('bid')
+        bid_data = {
+            'id': bid_id,
+            'seasonId': season_id,
+            'playerId': state['currentPlayerId'],
+            'teamId': team_id,
+            'teamName': team.get('name'),
+            'amount': amount,
+            'timestamp': datetime.now().isoformat()
+        }
+        db.collection('bids').document(bid_id).set(bid_data)
+        
+        # Broadcast to ALL dashboards - EVERYONE SEES SAME BID
+        socketio.emit('NEW_BID', {
+            'seasonId': season_id,
+            'playerId': state['currentPlayerId'],
+            'teamId': team_id,
+            'teamName': team.get('name'),
+            'amount': amount,
+            'timestamp': datetime.now().isoformat()
+        }, room=f'season_{season_id}')
+        
+        return success_response(None, "Bid placed successfully")
+    except Exception as e:
+        return error_response(f"Failed to place bid: {str(e)}")
+
+
+@app.route('/api/auction/player/close', methods=['POST'])
+def close_player_bidding():
+    """Auctioneer closes bidding for current player"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['seasonId', 'sold']
+        if not all(field in data for field in required_fields):
+            return error_response(f"Missing required fields: {required_fields}")
+        
+        season_id = data['seasonId']
+        sold = data['sold']  # True if sold, False if unsold
+        
+        state = get_auction_state(season_id)
+        if not state:
+            return error_response("Auction state not found", 404)
+        
+        player_id = state.get('currentPlayerId')
+        if not player_id:
+            return error_response("No player currently up for bidding", 400)
+        
+        final_amount = state.get('currentBid', 0)
+        winning_team_id = state.get('leadingTeamId')
+        
+        result_data = {
+            'playerId': player_id,
+            'playerName': state.get('currentPlayerName'),
+            'sold': sold,
+            'finalAmount': final_amount if sold else 0,
+            'teamId': winning_team_id if sold else None,
+            'teamName': state.get('leadingTeamName') if sold else None,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        if sold and winning_team_id:
+            # Update player status
+            db.collection('players').document(player_id).update({
+                'status': 'SOLD',
+                'soldTo': winning_team_id,
+                'soldAmount': final_amount,
+                'soldAt': datetime.now().isoformat()
+            })
+            
+            # Update team budget and roster
+            team_doc = db.collection('teams').document(winning_team_id).get()
+            if team_doc.exists:
+                team = serialize_firestore_doc(team_doc)
+                new_budget = team.get('remainingBudget', 0) - final_amount
+                players_list = team.get('players', [])
+                players_list.append(player_id)
+                
+                db.collection('teams').document(winning_team_id).update({
+                    'remainingBudget': new_budget,
+                    'players': players_list,
+                    'updatedAt': datetime.now().isoformat()
+                })
+        else:
+            # Mark player as unsold
+            db.collection('players').document(player_id).update({
+                'status': 'UNSOLD',
+                'updatedAt': datetime.now().isoformat()
+            })
+        
+        # Update auction state
+        completed = state.get('completedPlayers', [])
+        completed.append(player_id)
+        
+        updates = {
+            'currentPlayerId': None,
+            'currentPlayerName': None,
+            'currentBid': 0,
+            'leadingTeamId': None,
+            'leadingTeamName': None,
+            'biddingActive': False,
+            'completedPlayers': completed,
+            'bidHistory': []
+        }
+        
+        update_auction_state(season_id, updates)
+        
+        # Broadcast to all dashboards
+        event_name = 'PLAYER_SOLD' if sold else 'PLAYER_UNSOLD'
+        socketio.emit(event_name, result_data, room=f'season_{season_id}')
+        
+        return success_response(result_data, "Player bidding closed")
+    except Exception as e:
+        return error_response(f"Failed to close bidding: {str(e)}")
+
+
+# ========================
+# SERVER-CONTROLLED TIMER
+# ========================
+
+active_timers = {}
+
+def auction_timer_thread(season_id: str, end_time_str: str):
+    """Background thread that broadcasts timer updates"""
+    try:
+        end_time = datetime.fromisoformat(end_time_str)
+        
+        while season_id in active_timers:
+            state = get_auction_state(season_id)
+            if not state or state['status'] not in ['LIVE', 'READY']:
+                break
+            
+            now = datetime.now()
+            remaining = (end_time - now).total_seconds()
+            
+            if remaining <= 0:
+                # Auction time ended
+                update_auction_state(season_id, {'status': 'ENDED'})
+                socketio.emit('AUCTION_TIME_ENDED', {
+                    'seasonId': season_id,
+                    'timestamp': now.isoformat()
+                }, room=f'season_{season_id}')
+                break
+            
+            # Broadcast timer update every second
+            socketio.emit('AUCTION_TIMER_UPDATE', {
+                'seasonId': season_id,
+                'remainingSeconds': int(remaining),
+                'serverTime': now.isoformat()
+            }, room=f'season_{season_id}')
+            
+            time.sleep(1)
+        
+    except Exception as e:
+        print(f"Timer thread error: {e}")
+    finally:
+        if season_id in active_timers:
+            del active_timers[season_id]
+
+
+def start_auction_timer(season_id: str):
+    """Start the server-controlled timer"""
+    state = get_auction_state(season_id)
+    if not state or not state.get('endTime'):
+        return False
+    
+    # Stop existing timer if any
+    if season_id in active_timers:
+        active_timers[season_id] = False
+        time.sleep(1)
+    
+    # Start new timer thread
+    active_timers[season_id] = True
+    timer_thread = threading.Thread(
+        target=auction_timer_thread,
+        args=(season_id, state['endTime']),
+        daemon=True
+    )
+    timer_thread.start()
+    return True
+
+
+# ========================
+# WEBSOCKET EVENT HANDLERS
+# ========================
+
+@socketio.on('connect')
+def handle_connect():
+    """Client connected"""
+    print(f'Client connected: {request.sid}')
+    emit('connection_response', {'status': 'connected', 'message': 'Connected to HypeHammer server'})
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Client disconnected"""
+    print(f'Client disconnected: {request.sid}')
+
+
+@socketio.on('join_season')
+def handle_join_season(data):
+    """Join a season room to receive real-time updates"""
+    season_id = data.get('seasonId')
+    user_id = data.get('userId')
+    role = data.get('role')
+    
+    if not season_id:
+        emit('error', {'message': 'seasonId required'})
+        return
+    
+    join_room(f'season_{season_id}')
+    
+    # Also join user-specific room for personal notifications
+    if user_id:
+        join_room(f'user_{user_id}')
+    
+    print(f'User {user_id} ({role}) joined season_{season_id}')
+    
+    # Send current auction state
+    state = get_auction_state(season_id)
+    if state:
+        emit('AUCTION_STATE_UPDATE', state)
+    
+    emit('joined_season', {
+        'seasonId': season_id,
+        'message': f'Joined season {season_id} successfully'
+    })
+
+
+@socketio.on('leave_season')
+def handle_leave_season(data):
+    """Leave a season room"""
+    season_id = data.get('seasonId')
+    if season_id:
+        leave_room(f'season_{season_id}')
+        print(f'Client left season_{season_id}')
+
+
+# ========================
+# ADMIN OVERRIDE CONTROLS
+# ========================
+
+@app.route('/api/admin/override/close-bidding', methods=['POST'])
+def admin_force_close():
+    """Admin force closes current bidding"""
+    return close_player_bidding()
+
+
+@app.route('/api/admin/override/extend-timer', methods=['POST'])
+def admin_extend_timer():
+    """Admin extends auction timer"""
+    try:
+        data = request.get_json()
+        season_id = data.get('seasonId')
+        additional_minutes = data.get('minutes', 10)
+        
+        state = get_auction_state(season_id)
+        if not state:
+            return error_response("Auction not found", 404)
+        
+        current_end = datetime.fromisoformat(state['endTime'])
+        new_end = current_end + timedelta(minutes=additional_minutes)
+        
+        updates = {
+            'endTime': new_end.isoformat()
+        }
+        
+        update_auction_state(season_id, updates)
+        
+        socketio.emit('TIMER_EXTENDED', {
+            'seasonId': season_id,
+            'newEndTime': new_end.isoformat(),
+            'addedMinutes': additional_minutes
+        }, room=f'season_{season_id}')
+        
+        return success_response(None, f"Timer extended by {additional_minutes} minutes")
+    except Exception as e:
+        return error_response(f"Failed to extend timer: {str(e)}")
+
+
+@app.route('/api/admin/override/replace-auctioneer', methods=['POST'])
+def admin_replace_auctioneer():
+    """Admin replaces current auctioneer (emergency)"""
+    try:
+        data = request.get_json()
+        season_id = data.get('seasonId')
+        old_auctioneer_id = data.get('oldAuctioneerId')
+        new_auctioneer_id = data.get('newAuctioneerId')
+        
+        # Revoke old approval
+        old_assignment_id = f"{season_id}_{old_auctioneer_id}"
+        db.collection('auctioneer_assignments').document(old_assignment_id).update({
+            'status': 'replaced',
+            'replacedAt': datetime.now().isoformat()
+        })
+        
+        db.collection('auctioneers').document(old_auctioneer_id).update({
+            'status': 'replaced'
+        })
+        
+        # Approve new auctioneer
+        new_assignment_id = f"{season_id}_{new_auctioneer_id}"
+        db.collection('auctioneer_assignments').document(new_assignment_id).set({
+            'id': new_assignment_id,
+            'auctioneerId': new_auctioneer_id,
+            'seasonId': season_id,
+            'status': 'approved',
+            'approvedAt': datetime.now().isoformat()
+        })
+        
+        db.collection('auctioneers').document(new_auctioneer_id).update({
+            'status': 'approved'
+        })
+        
+        # Notify both
+        socketio.emit('AUCTIONEER_REPLACED', {
+            'seasonId': season_id,
+            'oldAuctioneerId': old_auctioneer_id,
+            'newAuctioneerId': new_auctioneer_id
+        }, room=f'season_{season_id}')
+        
+        return success_response(None, "Auctioneer replaced")
+    except Exception as e:
+        return error_response(f"Failed to replace auctioneer: {str(e)}")
+
+
+# ========================
 # MAIN
 # ========================
 
 if __name__ == '__main__':
-    app.run(
+    print("🔥 HypeHammer Server Starting...")
+    print("✅ Flask + SocketIO initialized")
+    print("✅ Real-time bidding enabled")
+    print("✅ Server-controlled auction system active")
+    print(f"🌐 Server running on http://localhost:5000")
+    
+    socketio.run(
+        app,
         host='0.0.0.0',
         port=5000,
-        debug=True
+        debug=True,
+        allow_unsafe_werkzeug=True
     )

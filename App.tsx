@@ -806,14 +806,7 @@ const AppContent: React.FC = () => {
     
     setCurrentUser(updatedUser);
 
-    // For admin, route immediately (no match needed)
-    if (user.role === UserRole.ADMIN) {
-      console.log('➡️ Admin login - going to ADMIN_DASHBOARD');
-      setStatus(AuctionStatus.ADMIN_DASHBOARD);
-      return;
-    }
-
-    // For non-admin roles, select first match and set pending dashboard
+    // For all roles (including admin), select first match and set pending dashboard
     if (allSports.length === 0) {
       console.warn('⚠️ No sports data available');
       setStatus(AuctionStatus.MARKETPLACE);
@@ -832,9 +825,16 @@ const AppContent: React.FC = () => {
     
     console.log('🎯 Auto-selecting:', sportName, firstMatch.name);
     
+    // Set current sport and match FIRST
+    setCurrentSport(sportName);
+    setCurrentMatchId(firstMatch.id);
+    
     // Determine target dashboard based on role
     let targetDashboard: AuctionStatus;
     switch (user.role) {
+      case UserRole.ADMIN:
+        targetDashboard = AuctionStatus.ADMIN_DASHBOARD;
+        break;
       case UserRole.AUCTIONEER:
         targetDashboard = AuctionStatus.AUCTIONEER_DASHBOARD;
         break;
@@ -854,8 +854,8 @@ const AppContent: React.FC = () => {
     
     console.log('📍 Navigating to dashboard:', targetDashboard);
     
-    // Go directly to dashboard (even if no match data yet)
-    setStatus(targetDashboard);
+    // Use pending dashboard to wait for currentMatch to be ready
+    setPendingDashboardStatus(targetDashboard);
   };
 
   // --- Layout Views ---
@@ -1013,7 +1013,7 @@ const AppContent: React.FC = () => {
         const newMatchId = `match-${Date.now()}`;
         const newMatch: MatchData = {
           id: newMatchId,
-          name: adminData.seasonName,
+          name: adminData.seasonName, // This is the season/match name entered by user
           createdAt: Date.now(),
           matchDate: new Date(adminData.auctionDateTime).getTime(),
           place: adminData.venueLocation || (adminData.venueMode === 'Online' ? 'Online' : 'TBD'),
@@ -1029,7 +1029,13 @@ const AppContent: React.FC = () => {
           players: [],
           teams: [],
           history: [],
-          status: 'SETUP'
+          status: 'SETUP',
+          // Store organizer credentials for login (will be normalized to email/password in backend)
+          organizerEmail: adminData.email,
+          organizerPassword: adminData.password,
+          organizerName: adminData.fullName,
+          organizationType: adminData.organizerType,
+          organizationName: adminData.organizationName
         };
         
         // Find or create sport data
@@ -1059,6 +1065,9 @@ const AppContent: React.FC = () => {
           localStorage.setItem('hypehammer_sports', JSON.stringify(updatedSports));
           await saveSportsData(updatedSports);
         }
+        
+        // IMPORTANT: Set the newly created match as current match
+        setCurrentMatchId(newMatchId);
         
         // Note: Modal will show and redirect to marketplace
       }}
@@ -1108,15 +1117,9 @@ const AppContent: React.FC = () => {
 
   if (status === AuctionStatus.PLAYER_DASHBOARD) {
     console.log('🎨 Rendering PLAYER_DASHBOARD, currentMatch:', currentMatch?.id);
-    if (!currentMatch) {
-      console.warn('⚠️ No currentMatch yet, showing loading...');
-      return <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white text-xl">Loading Player Dashboard...</div>
-      </div>;
-    }
     return <PlayerDashboardPage 
       setStatus={setStatus}
-      currentMatch={currentMatch}
+      currentMatch={currentMatch!}
       currentUser={currentUser}
     />;
   }
@@ -1125,52 +1128,35 @@ const AppContent: React.FC = () => {
     console.log('🎨 Rendering ADMIN_DASHBOARD');
     return <AdminDashboardPage 
       setStatus={setStatus}
-      allSports={allSports}
+      currentMatch={currentMatch!}
       currentUser={currentUser}
     />;
   }
 
   if (status === AuctionStatus.AUCTIONEER_DASHBOARD) {
     console.log('🎨 Rendering AUCTIONEER_DASHBOARD, currentMatch:', currentMatch?.id);
-    if (!currentMatch) {
-      console.warn('⚠️ No currentMatch yet, showing loading...');
-      return <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white text-xl">Loading Auctioneer Dashboard...</div>
-      </div>;
-    }
+    // Always render dashboard - it will handle approval states and loading
     return <AuctioneerDashboardPage 
       setStatus={setStatus}
-      currentMatch={currentMatch}
+      currentMatch={currentMatch!}
       currentUser={currentUser}
     />;
   }
 
   if (status === AuctionStatus.TEAM_REP_DASHBOARD) {
     console.log('🎨 Rendering TEAM_REP_DASHBOARD, currentMatch:', currentMatch?.id);
-    if (!currentMatch) {
-      console.warn('⚠️ No currentMatch yet, showing loading...');
-      return <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white text-xl">Loading Team Dashboard...</div>
-      </div>;
-    }
     return <TeamRepDashboardPage 
       setStatus={setStatus}
-      currentMatch={currentMatch}
+      currentMatch={currentMatch!}
       currentUser={currentUser}
     />;
   }
 
   if (status === AuctionStatus.GUEST_DASHBOARD) {
     console.log('🎨 Rendering GUEST_DASHBOARD, currentMatch:', currentMatch?.id);
-    if (!currentMatch) {
-      console.warn('⚠️ No currentMatch yet, showing loading...');
-      return <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white text-xl">Loading Guest Dashboard...</div>
-      </div>;
-    }
     return <GuestDashboardPage 
       setStatus={setStatus}
-      currentMatch={currentMatch}
+      currentMatch={currentMatch!}
       currentUser={currentUser}
     />;
   }

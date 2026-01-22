@@ -266,12 +266,6 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
                 </div>
               )}
 
-              {/* Demo Users Hint */}
-              <div className="p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
-                <p className="text-xs text-blue-700 font-bold mb-2">📝 Demo Credentials Available:</p>
-                <p className="text-xs text-blue-600">Check <strong>DEMO_USERS.md</strong> file for all login credentials</p>
-              </div>
-
               <button
                 type="submit"
                 className="w-full gold-gradient text-white py-3 rounded-xl font-bold text-sm uppercase tracking-wider hover:brightness-110 transition-all shadow-lg"

@@ -208,6 +208,12 @@ export interface MatchData {
   teams: Team[];
   history: Bid[];
   status: 'SETUP' | 'ONGOING' | 'COMPLETED';
+  // Organizer credentials (for authentication)
+  organizerEmail?: string;
+  organizerPassword?: string;
+  organizerName?: string;
+  organizationType?: string;
+  organizationName?: string;
 }
 
 export interface SportData {
