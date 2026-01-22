@@ -137,7 +137,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-2xl overflow-hidden border-2 border-blue-500">
-                <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+                <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
               </div>
               <div>
                 <h2 className="text-2xl font-display font-black tracking-widest gold-text uppercase leading-none">Settings</h2>
@@ -328,10 +328,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         {/* Action Buttons */}
         <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
           <button 
-            onClick={() => setStatus(AuctionStatus.SETUP)}
+            onClick={() => setStatus(AuctionStatus.MARKETPLACE)}
             className="px-8 py-4 bg-white border border-blue-500/20 rounded-full text-blue-600 hover:bg-blue-500/10 transition-all text-[11px] font-black uppercase tracking-wider"
           >
-            Go to Setup Page
+            Go to Marketplace
           </button>
           <button 
             onClick={() => setStatus(AuctionStatus.READY)}

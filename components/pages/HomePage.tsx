@@ -14,15 +14,47 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
   const [selectedRole, setSelectedRole] = useState<UserRole>(UserRole.ADMIN);
   const [loginError, setLoginError] = useState('');
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     
-    // Validate credentials from localStorage
+    try {
+      // Try Firebase API first
+      const response = await fetch('http://localhost:5000/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const user = data.data.user;
+        
+        // Auto-detect role from Firebase user data
+        const authenticatedUser = {
+          email: user.email,
+          password: loginPassword,
+          role: user.role as UserRole,
+        };
+        
+        setShowLoginModal(false);
+        
+        if (onLogin) {
+          onLogin(authenticatedUser);
+        } else {
+          setStatus(AuctionStatus.MARKETPLACE);
+        }
+        return;
+      }
+    } catch (err) {
+      console.error('Firebase login error:', err);
+    }
+
+    // Fallback to localStorage for demo users
     const storedUsers = localStorage.getItem('hypehammer_users');
     
     if (!storedUsers) {
-      setLoginError('No users found. Please refresh the page to seed demo users.');
+      setLoginError('No users found. Please register first or refresh the page to seed demo users.');
       return;
     }
 
@@ -34,7 +66,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
       );
 
       if (!user) {
-        setLoginError('Invalid email or password. Check DEMO_USERS.md for credentials.');
+        setLoginError('Invalid email or password. Please check your credentials and try again.');
         return;
       }
 
@@ -42,16 +74,14 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
       const authenticatedUser = {
         email: user.email,
         password: user.password,
-        role: user.role as UserRole, // Use role from stored user
+        role: user.role as UserRole,
       };
       
       setShowLoginModal(false);
       
-      // Call the onLogin callback if provided
       if (onLogin) {
         onLogin(authenticatedUser);
       } else {
-        // Fallback: just go to marketplace
         setStatus(AuctionStatus.MARKETPLACE);
       }
     } catch (err) {
@@ -66,7 +96,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
       <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between p-8 bg-gradient-to-b from-white/90 to-transparent backdrop-blur-sm">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-blue-500 shadow-2xl">
-            <img src="./logo.jpg" alt="HypeHammer Logo" className="w-full h-full object-cover" />
+            <img src="/logo.jpg" alt="HypeHammer Logo" className="w-full h-full object-cover" />
           </div>
           <div>
             <h2 className="text-xl font-display font-black tracking-widest gold-text uppercase leading-none">HypeHammer</h2>
@@ -198,7 +228,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
             
             <div className="flex flex-col items-center mb-6">
               <div className="w-16 h-16 rounded-2xl overflow-hidden border-2 border-blue-500 shadow-lg mb-4">
-                <img src="./logo.jpg" alt="HypeHammer Logo" className="w-full h-full object-cover" />
+                <img src="/logo.jpg" alt="HypeHammer Logo" className="w-full h-full object-cover" />
               </div>
               <h2 className="text-2xl font-display font-black tracking-wide gold-text uppercase">Login</h2>
               <p className="text-sm text-gray-600 mt-1">Access your account</p>

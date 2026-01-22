@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, Trophy, Clock, DollarSign, Bell, LogOut, Menu, Activity, History, Award, Zap } from 'lucide-react';
-import { AuctionStatus, MatchData, UserRole } from '../../types';
+import { AuctionStatus, MatchData, UserRole, Player } from '../../types';
 
 interface PlayerDashboardPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -10,16 +10,33 @@ interface PlayerDashboardPageProps {
 
 export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   const [activeSection, setActiveSection] = useState<'profile' | 'status' | 'result' | 'history'>('profile');
+  const [playerData, setPlayerData] = useState<Player | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Mock player data
-  const playerData = {
-    photo: './logo.jpg',
-    role: currentUser.playerRole || 'All-rounder',
-    basePrice: currentUser.basePrice || 500000,
-    status: 'pending', // pending | live | sold | unsold
-    soldTo: null as string | null,
-    finalPrice: null as number | null,
-  };
+  // Fetch player data from API
+  useEffect(() => {
+    const fetchPlayerData = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}&email=${currentUser.email}`);
+        if (response.ok) {
+          const data = await response.json();
+          const player = data.data?.find((p: Player) => p.email === currentUser.email);
+          if (player) {
+            setPlayerData(player);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch player data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (currentMatch?.id && currentUser?.email) {
+      fetchPlayerData();
+    }
+  }, [currentMatch?.id, currentUser?.email]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -49,11 +66,11 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
           {/* Left: Logo */}
           <div className="flex items-center gap-4 w-1/4">
             <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-green-400 shadow-2xl hover:scale-105 transition-transform cursor-pointer" onClick={() => setStatus(AuctionStatus.HOME)}>
-              <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+              <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <div>
               <h1 className="text-2xl font-display font-black tracking-widest gold-text uppercase leading-none">Player</h1>
-              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.3em] mt-1">{currentUser.playerRole || 'Batsman'}</p>
+              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.3em] mt-1">{playerData?.roleId || currentUser.playerRole || 'Player'}</p>
             </div>
           </div>
 
@@ -133,19 +150,37 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
           <div className="space-y-8">
             <h1 className="text-4xl font-black uppercase tracking-wider gold-text">My Profile</h1>
             
+            {loading ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="text-center">
+                  <div className="w-16 h-16 border-4 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                  <p className="text-lg font-bold text-slate-600">Loading player data...</p>
+                </div>
+              </div>
+            ) : !playerData ? (
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-12 border-2 border-green-100 text-center shadow-2xl">
+                <User size={56} className="mx-auto mb-6 text-slate-400" />
+                <p className="text-2xl font-black text-slate-800">No Player Profile Found</p>
+                <p className="text-slate-500 mt-3">Your player registration might be pending</p>
+              </div>
+            ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* Player Card */}
               <div className="bg-white/80 backdrop-blur-lg rounded-3xl overflow-hidden border-2 border-green-200 shadow-2xl hover:shadow-3xl transition-all hover:-translate-y-1">
                 <div className="h-40 bg-gradient-to-br from-green-400 to-teal-500"></div>
                 <div className="relative p-8 -mt-12">
-                  <div className="w-32 h-32 rounded-2xl overflow-hidden border-4 border-white shadow-2xl mx-auto">
-                    <img src={playerData.photo} alt="Player" className="w-full h-full object-cover" />
+                  <div className="w-32 h-32 rounded-2xl overflow-hidden border-4 border-white shadow-2xl mx-auto bg-slate-200 flex items-center justify-center">
+                    {playerData?.imageUrl ? (
+                      <img src={playerData.imageUrl} alt="Player" className="w-full h-full object-cover" />
+                    ) : (
+                      <User size={48} className="text-slate-400" />
+                    )}
                   </div>
-                  <h3 className="text-2xl font-black text-center mt-6 uppercase">{currentUser.name}</h3>
-                  <p className="text-sm text-slate-500 text-center uppercase tracking-wider">{playerData.role}</p>
+                  <h3 className="text-2xl font-black text-center mt-6 uppercase">{playerData.name}</h3>
+                  <p className="text-sm text-slate-500 text-center uppercase tracking-wider">{playerData.roleId}</p>
                   <div className="mt-6 flex items-center justify-center gap-2">
-                    <div className={`w-4 h-4 rounded-full ${getStatusColor(playerData.status)} shadow-lg`}></div>
-                    <span className="text-sm font-bold text-slate-600">{getStatusLabel(playerData.status)}</span>
+                    <div className={`w-4 h-4 rounded-full ${getStatusColor(playerData.status?.toLowerCase() || 'pending')} shadow-lg`}></div>
+                    <span className="text-sm font-bold text-slate-600">{getStatusLabel(playerData.status?.toLowerCase() || 'pending')}</span>
                   </div>
                 </div>
               </div>
@@ -153,7 +188,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
               {/* Base Price Card */}
               <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-8 border-2 border-green-200 shadow-2xl hover:shadow-3xl transition-all hover:-translate-y-1">
                 <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Base Price</p>
-                <p className="text-4xl font-black gold-text mb-6">₹{(playerData.basePrice / 100000).toFixed(1)}L</p>
+                <p className="text-4xl font-black gold-text mb-6">₹{((playerData.basePrice || 0) / 100000).toFixed(1)}L</p>
                 <div className="p-4 bg-green-50 rounded-2xl border-2 border-green-100">
                   <p className="text-xs text-slate-600 leading-relaxed">
                     This is your estimated value. Teams will bid against this base price during the auction.
@@ -182,6 +217,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
                 </div>
               </div>
             </div>
+            )}
           </div>
         )}
 
@@ -189,7 +225,11 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
           <div className="space-y-8">
             <h1 className="text-4xl font-black uppercase tracking-wider gold-text">Auction Status</h1>
             
-            {playerData.status === 'live' ? (
+            {!playerData ? (
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-12 text-center border-2 border-green-100 shadow-2xl">
+                <p className="text-slate-500">No player data available</p>
+              </div>
+            ) : playerData.status?.toLowerCase() === 'live' ? (
               <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-10 border-2 border-green-500 shadow-2xl">
                 <div className="flex items-center gap-3 mb-8">
                   <div className="w-5 h-5 rounded-full bg-green-500 animate-pulse shadow-lg"></div>
@@ -225,25 +265,25 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
           <div className="space-y-8">
             <h1 className="text-4xl font-black uppercase tracking-wider gold-text">Auction Result</h1>
             
-            {playerData.soldTo ? (
+            {!playerData ? (
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-12 text-center border-2 border-green-100 shadow-2xl">
+                <p className="text-slate-500">No player data available</p>
+              </div>
+            ) : playerData.teamId && playerData.soldPrice ? (
               <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-10 border-2 border-green-500 shadow-2xl">
                 <div className="text-center mb-8">
                   <Trophy size={72} className="mx-auto mb-6 text-green-500" />
                   <h3 className="text-4xl font-black uppercase mb-3">Congratulations!</h3>
                   <p className="text-slate-600 text-lg">You've been successfully sold</p>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="text-center p-4 bg-white rounded-2xl border-2 border-green-100">
-                    <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Sold To</p>
-                    <p className="text-xl font-black">{playerData.soldTo}</p>
+                    <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Sold To Team</p>
+                    <p className="text-xl font-black">Team #{playerData.teamId}</p>
                   </div>
                   <div className="text-center p-4 bg-white rounded-2xl border-2 border-green-100">
                     <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Final Price</p>
-                    <p className="text-xl font-black gold-text">₹{playerData.finalPrice ? (playerData.finalPrice / 100000).toFixed(1) : '0'} Lakhs</p>
-                  </div>
-                  <div className="text-center p-4 bg-white rounded-2xl border-2 border-green-100">
-                    <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider font-bold">Auctioneer</p>
-                    <p className="text-xl font-black">John Doe</p>
+                    <p className="text-xl font-black gold-text">₹{((playerData.soldPrice || 0) / 100000).toFixed(1)} Lakhs</p>
                   </div>
                 </div>
               </div>

@@ -12,11 +12,12 @@ import {
 import { INITIAL_CONFIG, SPORT_DEFAULTS } from './constants';
 import { getAuctionInsights } from './services/geminiService';
 import { loadAppState, saveAppState, loadSportsData, saveSportsData, loadAllSportsFromDB } from './services/storageService';
+import { registerAuctioneer, registerTeam, registerPlayer, registerGuest } from './services/apiService';
 
 // Import Components
 import {
   HUDPill, OrbitalItem, SoldCelebration, SettingsSidebar,
-  HomePage, MarketplacePage, AuthPage, AdminRegistrationPage, RoleSelectionPage, RoleBasedRegistrationPage, ProfileCompletionPage, HowItWorksPage, SetupPage, MatchesPage, SettingsPage, SettingsLayoutPage, DashboardPage, PlayersPage, TeamsPage, AuctionRoomPage, HistoryPage,
+  HomePage, MarketplacePage, AuthPage, AdminRegistrationPage, RoleSelectionPage, RoleBasedRegistrationPage, ProfileCompletionPage, HowItWorksPage, SettingsPage, SettingsLayoutPage, PlayersPage, TeamsPage, AuctionRoomPage, HistoryPage,
   PlayerModal, TeamModal, SquadModal, PlayerDashboardPage, PlayerRegistrationPage, AdminDashboardPage, AuctioneerDashboardPage, TeamRepDashboardPage, GuestDashboardPage
 } from './components';
 
@@ -35,8 +36,8 @@ const AppContent: React.FC = () => {
     [AuctionStatus.ROLE_REGISTRATION]: '/role/register',
     [AuctionStatus.PROFILE_COMPLETION]: '/profile/complete',
     [AuctionStatus.HOW_IT_WORKS]: '/how-it-works',
-    [AuctionStatus.SETUP]: '/setup',
-    [AuctionStatus.MATCHES]: '/matches',
+    [AuctionStatus.SETUP]: '/auction',
+    [AuctionStatus.MATCHES]: '/marketplace',
     [AuctionStatus.READY]: '/auction',
     [AuctionStatus.LIVE]: '/auction',
     [AuctionStatus.PAUSED]: '/auction',
@@ -60,8 +61,6 @@ const AppContent: React.FC = () => {
     '/role/register': AuctionStatus.ROLE_REGISTRATION,
     '/profile/complete': AuctionStatus.PROFILE_COMPLETION,
     '/how-it-works': AuctionStatus.HOW_IT_WORKS,
-    '/setup': AuctionStatus.SETUP,
-    '/matches': AuctionStatus.MATCHES,
     '/auction': AuctionStatus.READY,
     '/settings': AuctionStatus.SETTINGS,
     '/player/register': AuctionStatus.PLAYER_REGISTRATION,
@@ -202,216 +201,73 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     const loadSavedData = async () => {
       try {
-        // Load from localStorage first (instant)
+        // Load app state
+        const savedState = await loadAppState();
+        if (savedState && savedState.status) {
+          // Only restore valid persistent statuses (not transitional ones like MATCHES, SETUP, READY)
+          const persistentStatuses = [
+            AuctionStatus.HOME,
+            AuctionStatus.MARKETPLACE,
+            AuctionStatus.ADMIN_DASHBOARD,
+            AuctionStatus.AUCTIONEER_DASHBOARD,
+            AuctionStatus.TEAM_REP_DASHBOARD,
+            AuctionStatus.PLAYER_DASHBOARD,
+            AuctionStatus.GUEST_DASHBOARD,
+            AuctionStatus.SETTINGS
+          ];
+          
+          if (persistentStatuses.includes(savedState.status as AuctionStatus)) {
+            setStatus(savedState.status as AuctionStatus);
+            setCurrentSport(savedState.currentSport);
+            setCurrentMatchId(savedState.currentMatchId);
+            setActiveTab(savedState.activeTab as any);
+          } else {
+            // For deprecated/transitional statuses, go to HOME
+            console.warn('⚠️ Skipping deprecated status from localStorage:', savedState.status);
+            setStatus(AuctionStatus.HOME);
+          }
+        }
+
+        // Load from localStorage immediately for instant display
         const localData = localStorage.getItem('hypehammer_sports');
-        let hasData = false;
-        
         if (localData) {
           try {
             const parsedData = JSON.parse(localData);
             if (parsedData && parsedData.length > 0) {
+              console.log('📦 Loaded cached sports data from localStorage');
               setAllSports(parsedData);
-              hasData = true;
             }
           } catch (err) {
             console.error('Error parsing local storage:', err);
           }
         }
-        
-        const savedState = await loadAppState();
+
+        // Try API to get fresh data (source of truth)
         const sportsFromDB = await loadAllSportsFromDB();
-
-        if (savedState) {
-          setStatus(savedState.status as AuctionStatus);
-          setCurrentSport(savedState.currentSport);
-          setCurrentMatchId(savedState.currentMatchId);
-          setActiveTab(savedState.activeTab as any);
-        }
-
         if (sportsFromDB && sportsFromDB.length > 0) {
-          setAllSports(sportsFromDB);
-          localStorage.setItem('hypehammer_sports', JSON.stringify(sportsFromDB));
-          hasData = true;
+          console.log('✅ Loaded fresh sports data from Firebase');
+          // Only update if data actually changed (deep comparison via JSON)
+          const currentData = localStorage.getItem('hypehammer_sports');
+          const newData = JSON.stringify(sportsFromDB);
+          if (currentData !== newData) {
+            console.log('📊 Data changed, updating state');
+            setAllSports(sportsFromDB);
+            localStorage.setItem('hypehammer_sports', newData);
+          } else {
+            console.log('✓ Data unchanged, skipping update');
+          }
+          return; // Exit here - we got fresh data from API
         }
 
-        // If no data exists, create mock auctions
-        if (!hasData) {
-          const mockSports: SportData[] = [
-            {
-              sportType: SportType.CRICKET,
-              matches: [
-                {
-                  id: 'mock-cricket-1',
-                  name: 'Inter-College Cricket Championship 2026',
-                  createdAt: Date.now() - 7 * 24 * 60 * 60 * 1000,
-                  matchDate: Date.now() + 15 * 24 * 60 * 60 * 1000,
-                  place: 'Mumbai, Maharashtra',
-                  config: {
-                    sport: SportType.CRICKET,
-                    type: AuctionType.OPEN,
-                    level: 'College',
-                    squadSize: { min: 11, max: 15 },
-                    totalBudget: 10000000,
-                    roles: [],
-                    rules: {}
-                  },
-                  players: [],
-                  teams: [],
-                  history: [],
-                  status: 'SETUP'
-                },
-                {
-                  id: 'mock-cricket-2',
-                  name: 'City Premier League - Season 2',
-                  createdAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
-                  matchDate: Date.now() + 5 * 24 * 60 * 60 * 1000,
-                  place: 'Bangalore, Karnataka',
-                  config: {
-                    sport: SportType.CRICKET,
-                    type: AuctionType.OPEN,
-                    level: 'Professional',
-                    squadSize: { min: 11, max: 20 },
-                    totalBudget: 50000000,
-                    roles: [],
-                    rules: {}
-                  },
-                  players: [],
-                  teams: [],
-                  history: [],
-                  status: 'ONGOING'
-                }
-              ]
-            },
-            {
-              sportType: SportType.FOOTBALL,
-              matches: [
-                {
-                  id: 'mock-football-1',
-                  name: 'Corporate Football Cup 2026',
-                  createdAt: Date.now() - 10 * 24 * 60 * 60 * 1000,
-                  matchDate: Date.now() + 20 * 24 * 60 * 60 * 1000,
-                  place: 'Delhi NCR',
-                  config: {
-                    sport: SportType.FOOTBALL,
-                    type: AuctionType.OPEN,
-                    level: 'Amateur',
-                    squadSize: { min: 11, max: 18 },
-                    totalBudget: 8000000,
-                    roles: [],
-                    rules: {}
-                  },
-                  players: [],
-                  teams: [],
-                  history: [],
-                  status: 'SETUP'
-                }
-              ]
-            },
-            {
-              sportType: SportType.KABADDI,
-              matches: [
-                {
-                  id: 'mock-kabaddi-1',
-                  name: 'National Kabaddi Championship',
-                  createdAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
-                  matchDate: Date.now() - 5 * 24 * 60 * 60 * 1000,
-                  place: 'Pune, Maharashtra',
-                  config: {
-                    sport: SportType.KABADDI,
-                    type: AuctionType.OPEN,
-                    level: 'Professional',
-                    squadSize: { min: 7, max: 12 },
-                    totalBudget: 30000000,
-                    roles: [],
-                    rules: {}
-                  },
-                  players: [],
-                  teams: [],
-                  history: [],
-                  status: 'COMPLETED'
-                }
-              ]
-            }
-          ];
-          
-          setAllSports(mockSports);
-          localStorage.setItem('hypehammer_sports', JSON.stringify(mockSports));
+        // If API returned nothing but we had localStorage data, keep using it
+        if (localData) {
+          console.log('⚠️ API returned no data, keeping cached data');
+          return;
         }
 
-        // Seed mock users if they don't exist
-        const existingUsers = localStorage.getItem('hypehammer_users');
-        if (!existingUsers) {
-          const mockUsers = [
-            {
-              id: 'user-admin-1',
-              email: 'admin@hypehammer.com',
-              password: 'admin123',
-              name: 'Super Admin',
-              role: UserRole.ADMIN,
-              organizationName: 'HypeHammer Sports',
-              designation: 'Platform Administrator',
-              adminApprovalStatus: 'approved',
-              seasonId: 'mock-cricket-1'
-            },
-            {
-              id: 'user-auctioneer-1',
-              email: 'auctioneer@hypehammer.com',
-              password: 'auctioneer123',
-              name: 'John Auctioneer',
-              role: UserRole.AUCTIONEER,
-              experienceLevel: 'Expert',
-              languages: ['English', 'Hindi'],
-              previousAuctions: 25,
-              availability: 'Full-time',
-              auctioneerId: 'auc-001',
-              seasonId: 'mock-cricket-1'
-            },
-            {
-              id: 'user-teamrep-1',
-              email: 'teamrep@hypehammer.com',
-              password: 'team123',
-              name: 'Mumbai Warriors Rep',
-              role: UserRole.TEAM_REP,
-              teamName: 'Mumbai Warriors',
-              teamShortCode: 'MW',
-              homeCity: 'Mumbai',
-              roleInTeam: 'Team Manager',
-              seasonId: 'mock-cricket-1'
-            },
-            {
-              id: 'user-player-1',
-              email: 'player@hypehammer.com',
-              password: 'player123',
-              name: 'Virat Sharma',
-              role: UserRole.PLAYER,
-              dateOfBirth: '1995-11-05',
-              gender: 'Male',
-              nationality: 'Indian',
-              sport: SportType.CRICKET,
-              playerRole: 'Batsman',
-              battingStyle: 'Right-hand bat',
-              experienceLevel: 'Professional',
-              basePrice: 500000,
-              playerCategory: 'Capped',
-              playerApprovalStatus: 'approved',
-              playerId: 'player-001',
-              seasonId: 'mock-cricket-1'
-            },
-            {
-              id: 'user-guest-1',
-              email: 'guest@hypehammer.com',
-              password: 'guest123',
-              name: 'Guest Viewer',
-              role: UserRole.GUEST,
-              favoriteSport: SportType.CRICKET,
-              favoriteTeam: 'Mumbai Warriors',
-              seasonId: 'mock-cricket-1'
-            }
-          ];
-          
-          localStorage.setItem('hypehammer_users', JSON.stringify(mockUsers));
-          console.log('✅ Mock users created! Check DEMO_USERS.md for login credentials.');
-        }
+        // If we get here, no data from API or localStorage
+        console.log('No auction data found. Start by creating an auction.');
+        setAllSports([]);
       } catch (error) {
         console.error('Error loading data:', error);
       }
@@ -485,12 +341,12 @@ const AppContent: React.FC = () => {
     saveAppState(stateToSave);
   }, [status, currentSport, currentMatchId, activeTab]);
 
-  // Save sports data to JSON file whenever it changes
-  useEffect(() => {
-    saveSportsData(allSports);
-    // Also save to localStorage
-    localStorage.setItem('hypehammer_sports', JSON.stringify(allSports));
-  }, [allSports]);
+  // NOTE: Disabled auto-save to prevent infinite loops and ERR_INSUFFICIENT_RESOURCES
+  // Sports data is now managed through Firebase, not local JSON files
+  // useEffect(() => {
+  //   saveSportsData(allSports);
+  //   localStorage.setItem('hypehammer_sports', JSON.stringify(allSports));
+  // }, [allSports]);
 
   // Update allSports whenever current match's players/teams change
   useEffect(() => {
@@ -996,12 +852,10 @@ const AppContent: React.FC = () => {
         return;
     }
     
-    console.log('📍 Setting pending dashboard:', targetDashboard);
+    console.log('📍 Navigating to dashboard:', targetDashboard);
     
-    // Set match context and pending dashboard
-    setCurrentSport(sportName);
-    setCurrentMatchId(firstMatch.id);
-    setPendingDashboardStatus(targetDashboard);
+    // Go directly to dashboard (even if no match data yet)
+    setStatus(targetDashboard);
   };
 
   // --- Layout Views ---
@@ -1046,10 +900,98 @@ const AppContent: React.FC = () => {
       selectedRole={selectedRoleForRegistration || UserRole.GUEST}
       selectedMatch={currentMatch}
       selectedSport={currentSportData}
-      onRegister={(registrationData) => {
-        console.log('Registration data:', registrationData);
-        // Here you would save the registration to backend/localStorage
-        // For now, just log it
+      onRegister={async (registrationData) => {
+        try {
+          console.log('Registration data:', registrationData);
+          
+          if (!registrationData.seasonId) {
+            alert('No match selected. Please select a match first.');
+            return false;
+          }
+          
+          let result = null;
+          
+          // Call appropriate registration endpoint
+          switch (registrationData.role) {
+            case UserRole.AUCTIONEER:
+              result = await registerAuctioneer(registrationData);
+              if (result) {
+                setCurrentUser({
+                  name: registrationData.fullName,
+                  email: registrationData.email,
+                  avatar: undefined,
+                  role: UserRole.AUCTIONEER
+                });
+                setCurrentMatchId(registrationData.seasonId);
+                setPendingDashboardStatus(AuctionStatus.AUCTIONEER_DASHBOARD);
+                return true;
+              }
+              break;
+              
+            case UserRole.TEAM_REP:
+              result = await registerTeam(registrationData);
+              if (result) {
+                setCurrentUser({
+                  name: registrationData.fullName,
+                  email: registrationData.email,
+                  avatar: undefined,
+                  role: UserRole.TEAM_REP
+                });
+                setCurrentMatchId(registrationData.seasonId);
+                setPendingDashboardStatus(AuctionStatus.TEAM_REP_DASHBOARD);
+                return true;
+              }
+              break;
+              
+            case UserRole.PLAYER:
+              result = await registerPlayer(registrationData);
+              if (result && result.playerId) {
+                setCurrentUser({
+                  name: registrationData.fullName,
+                  email: registrationData.email,
+                  avatar: undefined,
+                  role: UserRole.PLAYER,
+                  playerId: result.playerId
+                });
+                setCurrentMatchId(registrationData.seasonId);
+                setPendingDashboardStatus(AuctionStatus.PLAYER_DASHBOARD);
+                return true;
+              }
+              break;
+              
+            case UserRole.GUEST:
+              result = await registerGuest(registrationData);
+              if (result) {
+                setCurrentUser({
+                  name: registrationData.fullName,
+                  email: registrationData.email,
+                  avatar: undefined,
+                  role: UserRole.GUEST
+                });
+                setCurrentMatchId(registrationData.seasonId);
+                setPendingDashboardStatus(AuctionStatus.GUEST_DASHBOARD);
+                return true;
+              }
+              break;
+              
+            default:
+              console.error('Unknown role:', registrationData.role);
+              alert('Invalid role selected');
+              return false;
+          }
+          
+          // If we get here, registration failed
+          alert('Registration failed. The email may already be registered or there was a server error.');
+          return false;
+        } catch (error: any) {
+          console.error('❌ Registration error:', error);
+          if (error.status === 409) {
+            alert('This email is already registered. Please use a different email or sign in.');
+          } else {
+            alert('Registration failed. Please try again or contact support.');
+          }
+          return false;
+        }
       }}
     />;
   }
@@ -1057,7 +999,7 @@ const AppContent: React.FC = () => {
   if (status === AuctionStatus.ADMIN_REGISTRATION) {
     return <AdminRegistrationPage 
       setStatus={setStatus}
-      onRegisterAdmin={(adminData) => {
+      onRegisterAdmin={async (adminData) => {
         // Process admin registration
         setCurrentUser({
           name: adminData.fullName,
@@ -1101,8 +1043,9 @@ const AppContent: React.FC = () => {
           updatedSports[sportIndex].matches.push(newMatch);
           setAllSports(updatedSports);
           
-          // Save to localStorage
+          // Save to both localStorage AND backend API
           localStorage.setItem('hypehammer_sports', JSON.stringify(updatedSports));
+          await saveSportsData(updatedSports);
         } else {
           // Create new sport entry
           const newSportData: SportData = {
@@ -1112,8 +1055,9 @@ const AppContent: React.FC = () => {
           const updatedSports = [...allSports, newSportData];
           setAllSports(updatedSports);
           
-          // Save to localStorage
+          // Save to both localStorage AND backend API
           localStorage.setItem('hypehammer_sports', JSON.stringify(updatedSports));
+          await saveSportsData(updatedSports);
         }
         
         // Note: Modal will show and redirect to marketplace
@@ -1235,31 +1179,6 @@ const AppContent: React.FC = () => {
     return <HowItWorksPage setStatus={setStatus} />;
   }
 
-  if (status === AuctionStatus.SETUP) {
-    return <SetupPage 
-      config={config} 
-      setConfig={setConfig} 
-      onSelectSport={handleSelectSport}
-      setStatus={setStatus} 
-    />;
-  }
-
-  if (status === AuctionStatus.MATCHES) {
-    if (!currentSportData) {
-      setStatus(AuctionStatus.SETUP);
-      return null;
-    }
-    return <MatchesPage 
-      sportData={currentSportData}
-      setStatus={setStatus}
-      onCreateMatch={handleCreateMatch}
-      onUpdateMatch={handleUpdateMatch}
-      onSelectMatch={handleSelectMatch}
-      onDeleteMatch={handleDeleteMatch}
-      onBackToSetup={handleBackToSetup}
-    />;
-  }
-
   if (status === AuctionStatus.SETTINGS) {
     return <SettingsLayoutPage 
       config={config} 
@@ -1301,10 +1220,6 @@ const AppContent: React.FC = () => {
 
       <div className="w-full max-w-[1500px] h-full flex flex-col pt-20 pb-20">
         <div className="flex-1 overflow-y-auto custom-scrollbar px-2 lg:px-4 animate-in fade-in duration-700">
-          {activeTab === 'dashboard' && (
-            <DashboardPage players={players} teams={teams} history={history} />
-          )}
-
           {activeTab === 'players' && (
             <PlayersPage 
               filteredPlayers={filteredPlayers}

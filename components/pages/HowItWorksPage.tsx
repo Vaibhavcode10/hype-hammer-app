@@ -25,7 +25,7 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ setStatus }) => 
           
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-2xl overflow-hidden border-2 border-blue-500">
-              <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+              <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <h2 className="text-xl font-display font-black tracking-widest gold-text uppercase leading-none">HypeHammer</h2>
           </div>
@@ -183,7 +183,7 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ setStatus }) => 
           {/* CTA Button */}
           <div className="mt-8">
             <button 
-              onClick={() => setStatus(AuctionStatus.SETUP)}
+              onClick={() => setStatus(AuctionStatus.MARKETPLACE)}
               className="px-12 py-5 gold-gradient text-white rounded-full font-black uppercase tracking-[0.3em] text-sm shadow-2xl hover:brightness-110 transition-all inline-flex items-center gap-3"
             >
               <SettingsIcon size={20} />

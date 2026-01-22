@@ -4,7 +4,7 @@ import { AuctionStatus, SportType } from '../../types';
 
 interface AdminRegistrationPageProps {
   setStatus: (status: AuctionStatus) => void;
-  onRegisterAdmin: (adminData: AdminFormData) => void;
+  onRegisterAdmin: (adminData: AdminFormData) => void | Promise<void>;
 }
 
 export interface AdminFormData {
@@ -86,10 +86,10 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isStepValid(4)) {
-      onRegisterAdmin(formData);
+      await onRegisterAdmin(formData);
       setShowSuccessModal(true);
     }
   };

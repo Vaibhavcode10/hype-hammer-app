@@ -62,7 +62,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
           {/* Left: Logo */}
           <div className="flex items-center gap-4 w-1/4">
             <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-yellow-400 shadow-2xl hover:scale-105 transition-transform cursor-pointer" onClick={() => setStatus(AuctionStatus.HOME)}>
-              <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+              <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <div>
               <h1 className="text-2xl font-display font-black tracking-widest gold-text uppercase leading-none">Super Admin</h1>

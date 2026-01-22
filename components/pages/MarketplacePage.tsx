@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Trophy, Calendar, Users, Play, Clock, MapPin, Filter, Search, Plus, ArrowLeft } from 'lucide-react';
 import { AuctionStatus, SportData, MatchData, UserRole } from '../../types';
 
@@ -12,7 +12,7 @@ interface MarketplacePageProps {
 
 type FilterType = 'all' | 'upcoming' | 'ongoing' | 'completed';
 
-export const MarketplacePage: React.FC<MarketplacePageProps> = ({
+const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
   allSports,
   setStatus,
   onSelectMatch,
@@ -21,18 +21,26 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Flatten all matches from all sports with their sport context
-  const allMatches = allSports.flatMap(sport =>
+  // Wait for allSports to load
+  useEffect(() => {
+    if (allSports && allSports.length > 0) {
+      setIsLoading(false);
+    }
+  }, [allSports]);
+
+  // Flatten all matches from all sports with their sport context (memoized to prevent recalculation)
+  const allMatches = useMemo(() => allSports.flatMap(sport =>
     sport.matches.map(match => ({
       ...match,
       sportType: sport.sportType,
       sportName: sport.customSportName || sport.sportType
     }))
-  );
+  ), [allSports]);
 
-  // Filter matches based on search and status
-  const filteredMatches = allMatches.filter(match => {
+  // Filter matches based on search and status (memoized)
+  const filteredMatches = useMemo(() => allMatches.filter(match => {
     const matchesSearch = searchTerm === '' || 
       match.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       match.sportName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -45,14 +53,14 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
       (activeFilter === 'completed' && match.status === 'COMPLETED');
 
     return matchesSearch && matchesFilter;
-  });
+  }), [allMatches, searchTerm, activeFilter]);
 
-  // Group by status for display
-  const upcomingMatches = filteredMatches.filter(m => m.status === 'SETUP');
-  const ongoingMatches = filteredMatches.filter(m => m.status === 'ONGOING');
-  const completedMatches = filteredMatches.filter(m => m.status === 'COMPLETED');
+  // Group by status for display (memoized to prevent recalculation)
+  const upcomingMatches = useMemo(() => filteredMatches.filter(m => m.status === 'SETUP'), [filteredMatches]);
+  const ongoingMatches = useMemo(() => filteredMatches.filter(m => m.status === 'ONGOING'), [filteredMatches]);
+  const completedMatches = useMemo(() => filteredMatches.filter(m => m.status === 'COMPLETED'), [filteredMatches]);
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = useCallback((status: string) => {
     switch (status) {
       case 'SETUP':
         return <span className="px-3 py-1 bg-blue-100 text-blue-600 rounded-full text-xs font-bold">UPCOMING</span>;
@@ -63,9 +71,14 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
       default:
         return null;
     }
-  };
+  }, []);
 
-  const renderMatchCard = (match: MatchData & { sportType: string; sportName: string }) => (
+  const renderMatchCard = useCallback((match: MatchData & { sportType: string; sportName: string }) => {
+    const budgetPool = ((match.config?.totalBudget || 10000000) * match.teams.length / 10000000).toFixed(1);
+    const playersSold = (match.history?.length || 0);
+    const totalPlayers = match.players.length;
+    
+    return (
     <div
       key={`${match.sportType}-${match.id}`}
       className="bg-white border-2 border-slate-200 rounded-2xl p-6 hover:border-blue-500 hover:shadow-xl transition-all group cursor-pointer"
@@ -90,7 +103,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="flex items-center gap-2 text-sm text-slate-600">
           <Calendar className="w-4 h-4 text-blue-500" />
-          <span>{match.matchDate ? new Date(match.matchDate).toLocaleDateString() : new Date(match.createdAt).toLocaleDateString()}</span>
+          <span>{match.matchDate ? new Date(match.matchDate).toLocaleDateString() : match.createdAt ? new Date(match.createdAt).toLocaleDateString() : 'TBD'}</span>
         </div>
         {match.place && (
           <div className="flex items-center gap-2 text-sm text-slate-600">
@@ -104,7 +117,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
         </div>
         <div className="flex items-center gap-2 text-sm text-slate-600">
           <Trophy className="w-4 h-4 text-orange-500" />
-          <span>{match.players.length} Players</span>
+          <span>{totalPlayers} Players</span>
         </div>
       </div>
 
@@ -112,11 +125,11 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
       <div className="bg-slate-50 rounded-lg p-3 mb-4">
         <div className="flex justify-between text-xs">
           <span className="text-slate-600">Budget Pool</span>
-          <span className="font-bold text-slate-900">₹{(match.config.totalBudget * match.teams.length / 10000000).toFixed(1)}Cr</span>
+          <span className="font-bold text-slate-900">₹{budgetPool}Cr</span>
         </div>
         <div className="flex justify-between text-xs mt-2">
           <span className="text-slate-600">Players Sold</span>
-          <span className="font-bold text-green-600">{match.history.length} / {match.players.length}</span>
+          <span className="font-bold text-green-600">{playersSold} / {totalPlayers}</span>
         </div>
       </div>
 
@@ -132,7 +145,8 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
         {match.status === 'COMPLETED' ? 'View Results' : match.status === 'ONGOING' ? 'Join Live' : 'Register Now'}
       </button>
     </div>
-  );
+    );
+  }, [onSelectMatch, getStatusBadge]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50">
@@ -209,8 +223,15 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
           </div>
         </div>
 
+        {/* Loading State */}
+        {isLoading && (
+          <div className="flex items-center justify-center py-20">
+            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500"></div>
+          </div>
+        )}
+
         {/* Empty State */}
-        {filteredMatches.length === 0 && (
+        {!isLoading && filteredMatches.length === 0 && (
           <div className="text-center py-20">
             <Trophy className="w-20 h-20 mx-auto mb-6 text-slate-300" />
             <h3 className="text-2xl font-bold text-slate-900 mb-2">No Auctions Found</h3>
@@ -227,7 +248,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
         )}
 
         {/* Live Now Section */}
-        {ongoingMatches.length > 0 && (activeFilter === 'all' || activeFilter === 'ongoing') && (
+        {!isLoading && ongoingMatches.length > 0 && (activeFilter === 'all' || activeFilter === 'ongoing') && (
           <div className="mb-12">
             <div className="flex items-center gap-3 mb-6">
               <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
@@ -241,7 +262,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
         )}
 
         {/* Upcoming Section */}
-        {upcomingMatches.length > 0 && (activeFilter === 'all' || activeFilter === 'upcoming') && (
+        {!isLoading && upcomingMatches.length > 0 && (activeFilter === 'all' || activeFilter === 'upcoming') && (
           <div className="mb-12">
             <div className="flex items-center gap-3 mb-6">
               <Clock className="w-6 h-6 text-blue-500" />
@@ -255,7 +276,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
         )}
 
         {/* Completed Section */}
-        {completedMatches.length > 0 && (activeFilter === 'all' || activeFilter === 'completed') && (
+        {!isLoading && completedMatches.length > 0 && (activeFilter === 'all' || activeFilter === 'completed') && (
           <div>
             <div className="flex items-center gap-3 mb-6">
               <Trophy className="w-6 h-6 text-gray-500" />
@@ -271,3 +292,6 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
     </div>
   );
 };
+
+// Memoize to prevent unnecessary re-renders when parent re-renders
+export const MarketplacePage = React.memo(MarketplacePageComponent);

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Eye, Trophy, Users, DollarSign, Bell, User, LogOut, Menu, Activity, Star, TrendingUp, Zap } from 'lucide-react';
-import { AuctionStatus, MatchData, UserRole } from '../../types';
+import { AuctionStatus, MatchData, UserRole, Team, Player } from '../../types';
 
 interface GuestDashboardPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -12,25 +12,51 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
   const [activeSection, setActiveSection] = useState<'live' | 'favorites' | 'summary'>('live');
   const [favoriteTeams, setFavoriteTeams] = useState<string[]>([]);
   const [favoritePlayers, setFavoritePlayers] = useState<string[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Mock live data
-  const liveData = {
-    currentPlayer: {
-      name: 'Virat Sharma',
-      role: 'Batsman',
-      photo: './logo.jpg',
-    },
-    currentBid: 1250000,
-    leadingTeam: 'Mumbai Warriors',
-    basePrice: 500000,
-  };
+  // Fetch real data from API
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        
+        // Fetch teams for this match
+        const teamsResponse = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
+        if (teamsResponse.ok) {
+          const teamsData = await teamsResponse.json();
+          setTeams(teamsData.data || []);
+        }
+        
+        // Fetch players for this match
+        const playersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
+        if (playersResponse.ok) {
+          const playersData = await playersResponse.json();
+          setPlayers(playersData.data || []);
+        }
+      } catch (error) {
+        console.error('Failed to fetch auction data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
 
+    if (currentMatch?.id) {
+      fetchData();
+    }
+  }, [currentMatch?.id]);
+
+  // Calculate real auction summary
   const auctionSummary = {
-    totalPlayers: currentMatch.players?.length || 0,
-    playersSold: 45,
-    playersUnsold: 5,
-    highestBid: 2500000,
-    topBuy: { player: 'MS Kumar', team: 'Chennai Kings', price: 2500000 },
+    totalPlayers: players.length,
+    playersSold: players.filter(p => p.status === 'SOLD').length,
+    playersUnsold: players.filter(p => p.status === 'UNSOLD').length,
+    totalTeams: teams.length,
+    highestBid: players.reduce((max, p) => p.soldPrice && p.soldPrice > max ? p.soldPrice : max, 0),
+    topBuy: players
+      .filter(p => p.soldPrice)
+      .sort((a, b) => (b.soldPrice || 0) - (a.soldPrice || 0))[0]
   };
 
   const getAuctionStatusColor = (status: string) => {
@@ -61,7 +87,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
           {/* Left: Logo */}
           <div className="flex items-center gap-4 w-1/4">
             <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-cyan-400 shadow-2xl hover:scale-105 transition-transform cursor-pointer" onClick={() => setStatus(AuctionStatus.HOME)}>
-              <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+                <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <div>
               <h1 className="text-2xl font-display font-black tracking-widest gold-text uppercase leading-none">Spectator</h1>
@@ -132,46 +158,76 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
 
       {/* Main Content Area */}
       <div className="pt-32 pb-12 px-8 max-w-[1600px] mx-auto">
-        {activeSection === 'live' && (
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="text-center">
+              <div className="w-16 h-16 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+              <p className="text-lg font-bold text-slate-600">Loading auction data...</p>
+            </div>
+          </div>
+        ) : activeSection === 'live' && (
           <div className="space-y-8">
             <h1 className="text-4xl font-black uppercase tracking-wider gold-text">Live Auction View</h1>
             
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Current Player Card */}
-              <div className="lg:col-span-2 bg-white/80 backdrop-blur-lg rounded-3xl overflow-hidden border-2 border-cyan-200 shadow-2xl">
-                <div className="h-48 bg-gradient-to-br from-cyan-400 to-blue-500"></div>
-                <div className="relative p-8 -mt-20">
-                  <div className="w-40 h-40 rounded-3xl overflow-hidden border-4 border-white shadow-2xl">
-                    <img src={liveData.currentPlayer.photo} alt="Player" className="w-full h-full object-cover" />
-                  </div>
-                  <h2 className="text-3xl font-black mt-6 uppercase">{liveData.currentPlayer.name}</h2>
-                  <p className="text-slate-500 uppercase tracking-wider mt-2">{liveData.currentPlayer.role}</p>
-                </div>
+            {players.length === 0 ? (
+              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-12 border-2 border-blue-100 text-center shadow-2xl">
+                <Activity size={56} className="mx-auto mb-6 text-slate-400" />
+                <p className="text-2xl font-black text-slate-800">No Auction Data Available</p>
+                <p className="text-slate-500 mt-3">Waiting for auction to start or players to be added</p>
               </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Current Player Card */}
+                <div className="lg:col-span-2 bg-white/80 backdrop-blur-lg rounded-3xl overflow-hidden border-2 border-cyan-200 shadow-2xl">
+                  <div className="h-48 bg-gradient-to-br from-cyan-400 to-blue-500"></div>
+                  <div className="relative p-8 -mt-20">
+                    <div className="w-40 h-40 rounded-3xl overflow-hidden border-4 border-white shadow-2xl bg-slate-200 flex items-center justify-center">
+                      {players[0]?.imageUrl ? (
+                        <img src={players[0].imageUrl} alt="Player" className="w-full h-full object-cover" />
+                      ) : (
+                        <User size={64} className="text-slate-400" />
+                      )}
+                    </div>
+                    <h2 className="text-3xl font-black mt-6 uppercase">{players[0]?.name || 'No Player'}</h2>
+                    <p className="text-slate-500 uppercase tracking-wider mt-2">{players[0]?.roleId || 'Unknown Role'}</p>
+                    <p className="text-sm text-slate-400 mt-2">Status: {players[0]?.status || 'PENDING'}</p>
+                  </div>
+                </div>
 
-              {/* Bid Info Card */}
-              <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-8 border-2 border-cyan-200 shadow-2xl">
-                <h3 className="text-sm font-black uppercase tracking-wider text-slate-600 mb-6">Current Bid</h3>
-                <p className="text-5xl font-black gold-text mb-8">₹{(liveData.currentBid / 100000).toFixed(1)}L</p>
-                
-                <div className="space-y-4 pt-4 border-t border-cyan-200">
-                  <div>
-                    <p className="text-xs text-slate-500 mb-2 uppercase tracking-wider font-bold">Leading Team</p>
-                    <p className="text-lg font-black">{liveData.leadingTeam}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-500 mb-2 uppercase tracking-wider font-bold">Base Price</p>
-                    <p className="text-lg font-black text-slate-600">₹{(liveData.basePrice / 100000).toFixed(1)}L</p>
+                {/* Bid Info Card */}
+                <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-8 border-2 border-cyan-200 shadow-2xl">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-600 mb-6">
+                    {players[0]?.status === 'SOLD' ? 'Final Price' : 'Base Price'}
+                  </h3>
+                  <p className="text-5xl font-black gold-text mb-8">
+                    ₹{((players[0]?.soldPrice || players[0]?.basePrice || 0) / 100000).toFixed(1)}L
+                  </p>
+                  
+                  <div className="space-y-4 pt-4 border-t border-cyan-200">
+                    {players[0]?.status === 'SOLD' && players[0]?.teamId && (
+                      <div>
+                        <p className="text-xs text-slate-500 mb-2 uppercase tracking-wider font-bold">Bought By</p>
+                        <p className="text-lg font-black">
+                          {teams.find(t => t.id === players[0]?.teamId)?.name || 'Unknown Team'}
+                        </p>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-xs text-slate-500 mb-2 uppercase tracking-wider font-bold">Base Price</p>
+                      <p className="text-lg font-black text-slate-600">₹{((players[0]?.basePrice || 0) / 100000).toFixed(1)}L</p>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Live Status */}
             <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-8 border-2 border-cyan-200 shadow-2xl">
               <div className="flex items-center gap-3">
-                <div className="w-4 h-4 rounded-full bg-green-500 animate-pulse"></div>
-                <span className="text-lg font-black text-green-600 uppercase tracking-wider">Auction LIVE</span>
+                <div className={`w-4 h-4 rounded-full ${currentMatch.auctionStatus === 'LIVE' ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
+                <span className={`text-lg font-black uppercase tracking-wider ${currentMatch.auctionStatus === 'LIVE' ? 'text-green-600' : 'text-gray-600'}`}>
+                  Auction {currentMatch.auctionStatus || 'NOT STARTED'}
+                </span>
               </div>
             </div>
           </div>
@@ -264,22 +320,30 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                   <h3 className="text-sm font-black uppercase tracking-wider text-slate-600">Costliest Buy</h3>
                   <Star size={24} className="text-cyan-500" />
                 </div>
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider font-bold mb-1">Player</p>
-                    <p className="text-xl font-black">{auctionSummary.topBuy.player}</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
+                {auctionSummary.topBuy ? (
+                  <div className="space-y-3">
                     <div>
-                      <p className="text-xs text-slate-500 uppercase tracking-wider font-bold mb-1">Team</p>
-                      <p className="text-lg font-black text-slate-800">{auctionSummary.topBuy.team}</p>
+                      <p className="text-xs text-slate-500 uppercase tracking-wider font-bold mb-1">Player</p>
+                      <p className="text-xl font-black">{auctionSummary.topBuy.name}</p>
                     </div>
-                    <div>
-                      <p className="text-xs text-slate-500 uppercase tracking-wider font-bold mb-1">Price</p>
-                      <p className="text-lg font-black gold-text">₹{(auctionSummary.topBuy.price / 100000).toFixed(1)}L</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wider font-bold mb-1">Team</p>
+                        <p className="text-lg font-black text-slate-800">
+                          {teams.find(t => t.id === auctionSummary.topBuy?.teamId)?.name || 'N/A'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wider font-bold mb-1">Price</p>
+                        <p className="text-lg font-black gold-text">
+                          ₹{((auctionSummary.topBuy.soldPrice || 0) / 100000).toFixed(1)}L
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <p className="text-slate-500 text-center py-4">No sales yet</p>
+                )}
               </div>
             </div>
           </div>

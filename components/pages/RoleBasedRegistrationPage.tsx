@@ -7,7 +7,7 @@ interface RoleBasedRegistrationPageProps {
   selectedRole: UserRole;
   selectedMatch: MatchData | null;
   selectedSport: SportData | null;
-  onRegister: (registrationData: any) => void;
+  onRegister: (registrationData: any) => Promise<boolean | void>;
 }
 
 export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps> = ({
@@ -61,8 +61,38 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   // Common verification
   const [governmentId, setGovernmentId] = useState('');
   const [governmentIdFile, setGovernmentIdFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Handle drag and drop
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      // Check file type
+      const validTypes = ['.pdf', '.jpg', '.jpeg', '.png'];
+      const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+      if (validTypes.includes(fileExtension)) {
+        setGovernmentIdFile(file);
+      } else {
+        alert('Please upload a PDF or image file (JPG, JPEG, PNG)');
+      }
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     const baseData = {
@@ -126,8 +156,10 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
         break;
     }
 
-    onRegister({ ...baseData, ...roleSpecificData });
-    setShowSuccessModal(true);
+    const success = await onRegister({ ...baseData, ...roleSpecificData });
+    if (success !== false) {
+      setShowSuccessModal(true);
+    }
   };
 
   const getRoleTitle = () => {
@@ -680,8 +712,19 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                   <label className="block text-sm font-bold text-slate-700 mb-2">
                     Upload ID Proof <span className="text-red-500">*</span>
                   </label>
-                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-4 text-center hover:border-blue-500 transition-colors cursor-pointer">
-                    <Upload className="mx-auto text-slate-400 mb-2" size={24} />
+                  <div 
+                    className={`border-2 border-dashed rounded-lg p-6 text-center transition-all cursor-pointer ${
+                      isDragging 
+                        ? 'border-blue-500 bg-blue-50' 
+                        : governmentIdFile 
+                          ? 'border-green-500 bg-green-50'
+                          : 'border-slate-300 hover:border-blue-400'
+                    }`}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                  >
+                    <Upload className={`mx-auto mb-2 ${governmentIdFile ? 'text-green-500' : 'text-slate-400'}`} size={32} />
                     <input
                       type="file"
                       onChange={(e) => setGovernmentIdFile(e.target.files?.[0] || null)}
@@ -690,10 +733,33 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       accept=".pdf,.jpg,.jpeg,.png"
                       required
                     />
-                    <label htmlFor="govId" className="cursor-pointer">
-                      <span className="text-sm text-slate-600">
-                        {governmentIdFile ? governmentIdFile.name : 'Upload PDF/Image'}
-                      </span>
+                    <label htmlFor="govId" className="cursor-pointer block">
+                      {governmentIdFile ? (
+                        <div className="space-y-2">
+                          <p className="text-sm font-bold text-green-700">✓ File uploaded</p>
+                          <p className="text-xs text-slate-600 truncate">{governmentIdFile.name}</p>
+                          <p className="text-xs text-slate-500">({(governmentIdFile.size / 1024 / 1024).toFixed(2)} MB)</p>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setGovernmentIdFile(null);
+                            }}
+                            className="text-xs text-red-600 hover:text-red-800 font-bold mt-2"
+                          >
+                            Remove file
+                          </button>
+                        </div>
+                      ) : (
+                        <div>
+                          <p className="text-sm text-slate-600 font-medium mb-1">
+                            Click to upload or drag and drop
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            PDF, JPG, JPEG or PNG (Max 10MB)
+                          </p>
+                        </div>
+                      )}
                     </label>
                   </div>
                 </div>

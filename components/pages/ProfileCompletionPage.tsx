@@ -203,7 +203,7 @@ export const ProfileCompletionPage: React.FC<ProfileCompletionPageProps> = ({
       if (selectedRole === UserRole.PLAYER) {
         setStatus(AuctionStatus.PLAYER_REGISTRATION);
       } else {
-        setStatus(AuctionStatus.SETUP);
+        setStatus(AuctionStatus.MARKETPLACE);
       }
     }, 1500);
   };
@@ -236,7 +236,7 @@ export const ProfileCompletionPage: React.FC<ProfileCompletionPageProps> = ({
           
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-2xl overflow-hidden border-2 border-blue-500">
-              <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+              <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <h2 className="text-lg font-display font-black tracking-widest gold-text uppercase leading-none">HypeHammer</h2>
           </div>

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Play, Pause, SkipForward, Megaphone, AlertCircle, Clock, Trophy, Users, DollarSign, Activity, Bell, User, LogOut, Menu, Zap } from 'lucide-react';
-import { AuctionStatus, MatchData, UserRole } from '../../types';
+import { AuctionStatus, MatchData, UserRole, Player, Team } from '../../types';
 
 interface AuctioneerDashboardPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -10,13 +10,47 @@ interface AuctioneerDashboardPageProps {
 
 export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   const [activeSection, setActiveSection] = useState<'overview' | 'queue' | 'live' | 'announcements' | 'logs'>('overview');
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Mock data - replace with actual data
+  // Fetch real data from API
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const [playersRes, teamsRes] = await Promise.all([
+          fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`),
+          fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`)
+        ]);
+        
+        if (playersRes.ok) {
+          const playersData = await playersRes.json();
+          setPlayers(playersData.data || []);
+        }
+        
+        if (teamsRes.ok) {
+          const teamsData = await teamsRes.json();
+          setTeams(teamsData.data || []);
+        }
+      } catch (error) {
+        console.error('Failed to fetch auction data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (currentMatch?.id) {
+      fetchData();
+    }
+  }, [currentMatch?.id]);
+
+  // Calculate real auction stats
   const auctionStats = {
-    totalPlayers: currentMatch.players?.length || 0,
-    soldPlayers: currentMatch.players?.filter((p: any) => p.status === 'sold').length || 0,
-    unsoldPlayers: currentMatch.players?.filter((p: any) => p.status === 'unsold').length || 0,
-    activeTeams: currentMatch.teams?.length || 0,
+    totalPlayers: players.length,
+    soldPlayers: players.filter(p => p.status === 'SOLD').length,
+    unsoldPlayers: players.filter(p => p.status === 'UNSOLD').length,
+    activeTeams: teams.length,
     currentBidValue: 0,
   };
 
@@ -48,7 +82,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
           {/* Left: Logo */}
           <div className="flex items-center gap-4 w-1/4">
             <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-red-400 shadow-2xl hover:scale-105 transition-transform cursor-pointer" onClick={() => setStatus(AuctionStatus.HOME)}>
-              <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+              <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <div>
               <h1 className="text-2xl font-display font-black tracking-widest gold-text uppercase leading-none">Auctioneer</h1>

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DollarSign, Users, Trophy, TrendingDown, Bell, User, LogOut, Menu, Shield, Activity, History, Zap } from 'lucide-react';
-import { AuctionStatus, MatchData, UserRole } from '../../types';
+import { AuctionStatus, MatchData, UserRole, Team } from '../../types';
 
 interface TeamRepDashboardPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -11,16 +11,33 @@ interface TeamRepDashboardPageProps {
 export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   const [activeSection, setActiveSection] = useState<'overview' | 'live' | 'squad' | 'budget' | 'activity'>('overview');
   const [bidAmount, setBidAmount] = useState('');
+  const [teamData, setTeamData] = useState<Team | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Mock team data - replace with actual data
-  const teamData = {
-    name: currentUser.teamName || 'My Team',
-    logo: './logo.jpg',
-    totalBudget: currentMatch.budget || 1000000,
-    remainingBudget: 750000,
-    playersBought: 8,
-    squadLimit: 15,
-  };
+  // Fetch team data from API
+  useEffect(() => {
+    const fetchTeamData = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
+        if (response.ok) {
+          const data = await response.json();
+          const team = data.data?.find((t: Team) => t.email === currentUser.email);
+          if (team) {
+            setTeamData(team);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch team data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (currentMatch?.id && currentUser?.email) {
+      fetchTeamData();
+    }
+  }, [currentMatch?.id, currentUser?.email]);
 
   const getAuctionStatusColor = (status: string) => {
     switch (status) {
@@ -43,7 +60,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
   };
 
   const handlePlaceBid = () => {
-    if (bidAmount && parseInt(bidAmount) <= teamData.remainingBudget) {
+    if (teamData && bidAmount && parseInt(bidAmount) <= (teamData.remainingBudget || 0)) {
       console.log('Bid placed:', bidAmount);
       setBidAmount('');
     }
@@ -57,11 +74,11 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
           {/* Left: Logo */}
           <div className="flex items-center gap-4 w-1/4">
             <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-purple-400 shadow-2xl hover:scale-105 transition-transform cursor-pointer" onClick={() => setStatus(AuctionStatus.HOME)}>
-              <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+              <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <div>
               <h1 className="text-2xl font-display font-black tracking-widest gold-text uppercase leading-none">Team Rep</h1>
-              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.3em] mt-1">{teamData.name}</p>
+              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.3em] mt-1">{teamData?.name || currentUser.teamName || 'My Team'}</p>
             </div>
           </div>
 
@@ -146,6 +163,16 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
 
       {/* Main Content Area */}
       <div className="pt-32 pb-12 px-8 max-w-[1600px] mx-auto">
+        {loading ? (
+          <div className="flex items-center justify-center min-h-[400px]">
+            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500"></div>
+          </div>
+        ) : !teamData ? (
+          <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-12 text-center border-2 border-blue-100 shadow-2xl">
+            <p className="text-slate-500 text-lg">No team data available</p>
+          </div>
+        ) : (
+          <>
         {activeSection === 'overview' && (
             <div className="space-y-6">
               <h2 className="text-xl font-black uppercase tracking-wide">Team Overview</h2>
@@ -161,7 +188,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                   <div className="mt-2 bg-gray-100 h-2 rounded-full overflow-hidden">
                     <div 
                       className="bg-gradient-to-r from-green-500 to-blue-500 h-full"
-                      style={{ width: `${(teamData.remainingBudget / teamData.totalBudget) * 100}%` }}
+                      style={{ width: `${((teamData.remainingBudget || 0) / (teamData.budget || 1)) * 100}%` }}
                     ></div>
                   </div>
                 </div>
@@ -169,7 +196,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                 <div className="bg-white rounded-2xl p-6 border-2 border-gray-100 hover:border-blue-500 transition-all">
                   <div className="flex items-center justify-between mb-2">
                     <Users size={24} className="text-blue-500" />
-                    <span className="text-2xl font-black">{teamData.playersBought}</span>
+                    <span className="text-2xl font-black">{(teamData.players || []).length}</span>
                   </div>
                   <p className="text-sm font-bold text-gray-600">Players Bought</p>
                 </div>
@@ -177,7 +204,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                 <div className="bg-white rounded-2xl p-6 border-2 border-gray-100 hover:border-purple-500 transition-all">
                   <div className="flex items-center justify-between mb-2">
                     <Trophy size={24} className="text-purple-500" />
-                    <span className="text-2xl font-black">{teamData.squadLimit - teamData.playersBought}</span>
+                    <span className="text-2xl font-black">{11 - (teamData.players || []).length}</span>
                   </div>
                   <p className="text-sm font-bold text-gray-600">Spots Left</p>
                 </div>
@@ -185,7 +212,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                 <div className="bg-white rounded-2xl p-6 border-2 border-gray-100 hover:border-orange-500 transition-all">
                   <div className="flex items-center justify-between mb-2">
                     <TrendingDown size={24} className="text-orange-500" />
-                    <span className="text-2xl font-black">₹{((teamData.totalBudget - teamData.remainingBudget) / 100000).toFixed(1)}L</span>
+                    <span className="text-2xl font-black">₹{(((teamData.budget || 0) - (teamData.remainingBudget || 0)) / 100000).toFixed(1)}L</span>
                   </div>
                   <p className="text-sm font-bold text-gray-600">Total Spent</p>
                 </div>
@@ -194,12 +221,16 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
               {/* Team Info Card */}
               <div className="bg-white rounded-2xl p-6 border-2 border-gray-100">
                 <div className="flex items-center gap-4 mb-6">
-                  <div className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-blue-500">
-                    <img src={teamData.logo} alt="Team Logo" className="w-full h-full object-cover" />
+                  <div className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-blue-500 bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center">
+                    {teamData.logo ? (
+                      <img src={teamData.logo} alt="Team Logo" className="w-full h-full object-cover" />
+                    ) : (
+                      <Shield size={40} className="text-white" />
+                    )}
                   </div>
                   <div>
                     <h3 className="text-2xl font-black uppercase">{teamData.name}</h3>
-                    <p className="text-sm text-gray-600 mt-1">Total Budget: ₹{(teamData.totalBudget / 100000).toFixed(1)} Lakhs</p>
+                    <p className="text-sm text-gray-600 mt-1">Total Budget: ₹{((teamData.budget || 0) / 100000).toFixed(1)} Lakhs</p>
                   </div>
                 </div>
               </div>
@@ -301,6 +332,8 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
               </div>
             </div>
           )}
+        </>
+        )}
       </div>
     </div>
   );

@@ -6,11 +6,8 @@ export { RoleSelectionPage } from './RoleSelectionPage';
 export { RoleBasedRegistrationPage } from './RoleBasedRegistrationPage';
 export { ProfileCompletionPage } from './ProfileCompletionPage';
 export { HowItWorksPage } from './HowItWorksPage';
-export { SetupPage } from './SetupPage';
-export { MatchesPage } from './MatchesPage';
 export { SettingsPage } from './SettingsPage';
 export { SettingsLayoutPage } from './SettingsLayoutPage';
-export { DashboardPage } from './DashboardPage';
 export { PlayersPage } from './PlayersPage';
 export { TeamsPage } from './TeamsPage';
 export { AuctionRoomPage } from './AuctionRoomPage';
@@ -21,4 +18,3 @@ export { AdminDashboardPage } from './AdminDashboardPage';
 export { AuctioneerDashboardPage } from './AuctioneerDashboardPage';
 export { TeamRepDashboardPage } from './TeamRepDashboardPage';
 export { GuestDashboardPage } from './GuestDashboardPage';
-

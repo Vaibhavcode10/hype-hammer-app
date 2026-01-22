@@ -443,7 +443,7 @@ export const SettingsLayoutPage: React.FC<SettingsLayoutPageProps> = ({
             <div>
               <div className="text-center py-8">
                 <div className="w-24 h-24 mx-auto mb-6 rounded-2xl flex items-center justify-center shadow-2xl overflow-hidden border-2 border-blue-500">
-                  <img src="./logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+                  <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
                 </div>
                 <h3 className="text-3xl font-display font-black text-blue-600 uppercase mb-3">HypeHammer</h3>
                 <p className="text-base text-slate-600 mb-2">Universal Sports Auction Platform</p>

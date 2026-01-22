@@ -1,21 +1,7 @@
-// Import JSON files directly
-import cricketPlayers from '../components/db/cricket/players.json';
-import cricketTeams from '../components/db/cricket/teams.json';
-import cricketMatches from '../components/db/cricket/matches.json';
-
-import footballPlayers from '../components/db/football/players.json';
-import footballTeams from '../components/db/football/teams.json';
-import footballMatches from '../components/db/football/matches.json';
-
-import kabaddiPlayers from '../components/db/kabaddi/players.json';
-import kabaddiTeams from '../components/db/kabaddi/teams.json';
-import kabaddiMatches from '../components/db/kabaddi/matches.json';
-
-import appStateData from '../components/db/app-state.json';
 import { UserRegistration } from '../types';
 
-// Optional API base (defaults to local dev server)
-const API_BASE = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:3001';
+// Optional API base (defaults to Flask backend on port 5000)
+const API_BASE = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:5000';
 
 // Local storage keys
 const STORAGE_KEYS = {
@@ -68,26 +54,7 @@ export interface AppState {
   activeTab: string;
 }
 
-// Map of sport data
-const sportDataMap: any = {
-  'cricket': {
-    players: cricketPlayers,
-    teams: cricketTeams,
-    matches: cricketMatches
-  },
-  'football': {
-    players: footballPlayers,
-    teams: footballTeams,
-    matches: footballMatches
-  },
-  'kabaddi': {
-    players: kabaddiPlayers,
-    teams: kabaddiTeams,
-    matches: kabaddiMatches
-  }
-};
 
-console.log('📊 HypeHammer initialized with JSON data');
 
 // App State Management
 export async function loadAppState(): Promise<AppState | null> {
@@ -101,10 +68,11 @@ export async function loadAppState(): Promise<AppState | null> {
     try {
       return JSON.parse(saved) as AppState;
     } catch (err) {
-      console.warn('Failed to parse saved app state, falling back to seed', err);
+      console.warn('Failed to parse saved app state', err);
     }
   }
-  return appStateData as AppState;
+  
+  return null;
 }
 
 export async function saveAppState(state: AppState): Promise<boolean> {
@@ -128,7 +96,7 @@ export async function loadSportPlayers(sportName: string): Promise<any[] | null>
   const apiData = await fetchFromApi(`/api/sport/${safeSportName}/players`);
   if (apiData) return apiData;
 
-  return sportDataMap[safeSportName]?.players || null;
+  return null;
 }
 
 export async function saveSportPlayers(sportName: string, players: any[]): Promise<boolean> {
@@ -148,7 +116,7 @@ export async function loadSportTeams(sportName: string): Promise<any[] | null> {
   const safeSportName = sportName.toLowerCase().replace(/\s+/g, '-');
   const apiData = await fetchFromApi(`/api/sport/${safeSportName}/teams`);
   if (apiData) return apiData;
-  return sportDataMap[safeSportName]?.teams || null;
+  return null;
 }
 
 export async function saveSportTeams(sportName: string, teams: any[]): Promise<boolean> {
@@ -168,7 +136,7 @@ export async function loadSportMatches(sportName: string): Promise<any[] | null>
   const safeSportName = sportName.toLowerCase().replace(/\s+/g, '-');
   const apiData = await fetchFromApi(`/api/sport/${safeSportName}/matches`);
   if (apiData) return apiData;
-  return sportDataMap[safeSportName]?.matches || null;
+  return null;
 }
 
 export async function saveSportMatches(sportName: string, matches: any[]): Promise<boolean> {
@@ -193,16 +161,20 @@ const sportTypeMap: any = {
 // Load complete sport data (matches with players and teams)
 export async function loadCompleteSportData(sportName: string): Promise<any | null> {
   const safeSportName = sportName.toLowerCase().replace(/\s+/g, '-');
-  const sportData = sportDataMap[safeSportName];
   
-  if (!sportData || !sportData.matches || sportData.matches.length === 0) {
+  // Try API first
+  const apiMatches = await fetchFromApi(`/api/sport/${safeSportName}/matches`);
+  if (!apiMatches || apiMatches.length === 0) {
     return null;
   }
 
+  const apiPlayers = await fetchFromApi(`/api/sport/${safeSportName}/players`);
+  const apiTeams = await fetchFromApi(`/api/sport/${safeSportName}/teams`);
+
   // Combine data: add players and teams to their respective matches
-  const matchesWithData = sportData.matches.map((match: any) => {
-    const matchPlayers = sportData.players.filter((p: any) => p.matchId === match.id);
-    const matchTeams = sportData.teams.filter((t: any) => t.matchId === match.id);
+  const matchesWithData = apiMatches.map((match: any) => {
+    const matchPlayers = apiPlayers?.filter((p: any) => p.matchId === match.id) || [];
+    const matchTeams = apiTeams?.filter((t: any) => t.matchId === match.id) || [];
     
     return {
       ...match,
@@ -210,6 +182,12 @@ export async function loadCompleteSportData(sportName: string): Promise<any | nu
       teams: matchTeams
     };
   });
+
+  const sportTypeMap: any = {
+    'cricket': 'Cricket',
+    'football': 'Football',
+    'kabaddi': 'Kabaddi'
+  };
 
   const properSportType = sportTypeMap[safeSportName] || sportName;
   return {
@@ -219,21 +197,23 @@ export async function loadCompleteSportData(sportName: string): Promise<any | nu
   };
 }
 
-// Load all sports from JSON files
+// Load all sports data
 export async function loadAllSportsFromDB(): Promise<any[]> {
-  const sportsList = ['cricket', 'football', 'kabaddi'];
-  const sportsData = await Promise.all(
-    sportsList.map(sport => loadCompleteSportData(sport))
-  );
-  
-  return sportsData.filter(sport => sport !== null);
+  const apiResponse = await fetchFromApi('/api/sports');
+  // The API returns { success: true, message, data: [...] }
+  if (apiResponse && apiResponse.data && Array.isArray(apiResponse.data)) {
+    return apiResponse.data;
+  }
+  return [];
 }
 
 // All Sports Data Management (for compatibility)
 export async function loadSportsData(): Promise<any[] | null> {
   // Try API first (reads/assembles all sports from disk)
-  const apiData = await fetchFromApi('/api/sports');
-  if (apiData) return apiData;
+  const apiResponse = await fetchFromApi('/api/sports');
+  if (apiResponse && apiResponse.data && Array.isArray(apiResponse.data)) {
+    return apiResponse.data;
+  }
 
   const stored = safeGetItem(STORAGE_KEYS.sportsData);
   if (stored) {
