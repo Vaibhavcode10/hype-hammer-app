@@ -230,9 +230,32 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       }, ...prev]);
     });
 
+    // Player updated (live changes from auctioneer)
+    socket.on('PLAYER_UPDATED', async (data: { playerId: string; player: Player }) => {
+      console.log('PLAYER_UPDATED received:', data);
+      
+      // If this is the current user's player data, update it
+      if (data.player.email === currentUser.email) {
+        setPlayerData(data.player);
+        
+        // Add notification about the update
+        setNotifications(prev => [{
+          id: Date.now().toString(),
+          message: `Your player profile was updated`,
+          time: new Date().toLocaleTimeString(),
+          read: false
+        }, ...prev]);
+      }
+      
+      // If this player is currently being auctioned, update the bidding player
+      if (currentBiddingPlayer && data.playerId === currentBiddingPlayer.id) {
+        setCurrentBiddingPlayer(data.player);
+      }
+    });
+    
     // Player sold
-    socket.on('PLAYER_SOLD', (data: { player: Player; team: Team; finalPrice: number }) => {
-      const soldMessage = `${data.player.name} SOLD to ${data.team.name} for ₹${(data.finalPrice / 100000).toFixed(1)}L`;
+    socket.on('PLAYER_SOLD', async (data: { playerId: string; playerName: string; sold: boolean; finalAmount: number; teamId: string; teamName: string }) => {
+      const soldMessage = `${data.playerName} SOLD to ${data.teamName} for ₹${(data.finalAmount / 100000).toFixed(1)}L`;
       
       setActivityFeed(prev => [{
         id: Date.now().toString(),
@@ -249,14 +272,28 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
         read: false
       }, ...prev]);
       
-      // Check if it's this player
-      if (data.player.email === currentUser.email) {
-        setFinalResult({
-          sold: true,
-          teamName: data.team.name,
-          price: data.finalPrice,
-          time: new Date().toLocaleTimeString()
-        });
+      // Refetch player data to get updated status
+      try {
+        const playerResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}&email=${currentUser.email}`);
+        if (playerResponse.ok) {
+          const playerDataResponse = await playerResponse.json();
+          const player = playerDataResponse.data?.find((p: Player) => p.email === currentUser.email);
+          if (player) {
+            setPlayerData(player);
+            
+            // Check if it's this player
+            if (data.playerId === player.id) {
+              setFinalResult({
+                sold: true,
+                teamName: data.teamName,
+                price: data.finalAmount,
+                time: new Date().toLocaleTimeString()
+              });
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to refetch player data:', error);
       }
       
       setCurrentBiddingPlayer(null);
@@ -265,20 +302,34 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
     });
 
     // Player unsold
-    socket.on('PLAYER_UNSOLD', (data: { player: Player }) => {
+    socket.on('PLAYER_UNSOLD', async (data: { playerId: string; playerName: string }) => {
       setActivityFeed(prev => [{
         id: Date.now().toString(),
-        message: `${data.player.name} went UNSOLD`,
+        message: `${data.playerName} went UNSOLD`,
         time: new Date().toLocaleTimeString(),
         type: 'unsold'
       }, ...prev]);
       
-      // Check if it's this player
-      if (data.player.email === currentUser.email) {
-        setFinalResult({
-          sold: false,
-          time: new Date().toLocaleTimeString()
-        });
+      // Refetch player data to get updated status
+      try {
+        const playerResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}&email=${currentUser.email}`);
+        if (playerResponse.ok) {
+          const playerDataResponse = await playerResponse.json();
+          const player = playerDataResponse.data?.find((p: Player) => p.email === currentUser.email);
+          if (player) {
+            setPlayerData(player);
+            
+            // Check if it's this player
+            if (data.playerId === player.id) {
+              setFinalResult({
+                sold: false,
+                time: new Date().toLocaleTimeString()
+              });
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to refetch player data:', error);
       }
       
       setCurrentBiddingPlayer(null);

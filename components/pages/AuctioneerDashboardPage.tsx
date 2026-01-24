@@ -173,8 +173,15 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       setBidHistory(prev => [data, ...prev]);
     });
 
+    // Listen to player updated
+    socketService.onPlayerUpdated((data) => {
+      console.log('Player updated:', data);
+      // Update the player in the players list
+      setPlayers(prev => prev.map(p => p.id === data.playerId ? data.player : p));
+    });
+
     // Listen to player sold
-    socketService.onPlayerSold((data) => {
+    socketService.onPlayerSold(async (data) => {
       console.log('Player sold:', data);
       setAuctionState(prev => ({
         ...prev,
@@ -182,8 +189,21 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         currentPlayerId: null,
         currentPlayerName: null
       }));
+      // Refresh players list and teams to see updated budgets
+      await Promise.all([fetchPlayers(), fetchTeams()]);
+    });
+
+    // Listen to player unsold
+    socketService.onPlayerUnsold(async (data) => {
+      console.log('Player unsold:', data);
+      setAuctionState(prev => ({
+        ...prev,
+        biddingActive: false,
+        currentPlayerId: null,
+        currentPlayerName: null
+      }));
       // Refresh players list
-      fetchPlayers();
+      await fetchPlayers();
     });
 
     // Listen to approval events

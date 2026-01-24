@@ -740,14 +740,27 @@ def update_player(player_id):
         
         # Check if player exists
         player_ref = db.collection('players').document(player_id)
-        if not player_ref.get().exists:
+        player_doc = player_ref.get()
+        if not player_doc.exists:
             return error_response(f"Player {player_id} not found", 404)
+        
+        player_data = serialize_firestore_doc(player_doc)
         
         data['updatedAt'] = datetime.now().isoformat()
         player_ref.update(data)
         updated_doc = player_ref.get()
+        updated_player = serialize_firestore_doc(updated_doc)
         
-        return success_response(serialize_firestore_doc(updated_doc), "Player updated successfully")
+        # Broadcast player update to all connected clients in the season room
+        match_id = player_data.get('matchId')
+        if match_id:
+            socketio.emit('PLAYER_UPDATED', {
+                'playerId': player_id,
+                'player': updated_player,
+                'timestamp': datetime.now().isoformat()
+            }, room=f'season_{match_id}')
+        
+        return success_response(updated_player, "Player updated successfully")
     except Exception as e:
         return error_response(f"Failed to update player: {str(e)}")
 

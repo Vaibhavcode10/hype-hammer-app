@@ -167,6 +167,19 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
 
     // Real-time bidding updates (view-only)
 
+    // Player updated (live changes from auctioneer)
+    socket.on('PLAYER_UPDATED', (data: { playerId: string; player: Player }) => {
+      console.log('PLAYER_UPDATED received:', data);
+      
+      // Update in allPlayers list
+      setAllPlayers(prev => prev.map(p => p.id === data.playerId ? data.player : p));
+      
+      // If this player is currently being auctioned, update the bidding player
+      if (currentBiddingPlayer && data.playerId === currentBiddingPlayer.id) {
+        setCurrentBiddingPlayer(data.player);
+      }
+    });
+
     // Player bidding started
     socket.on('PLAYER_BIDDING_STARTED', (data: { player: Player; basePrice: number }) => {
       console.log('PLAYER_BIDDING_STARTED received:', data);
@@ -225,12 +238,12 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
     });
 
     // Player sold
-    socket.on('PLAYER_SOLD', (data: { player: Player; team: Team; finalPrice: number }) => {
-      const wonPlayer = data.team.id === teamId;
+    socket.on('PLAYER_SOLD', async (data: { playerId: string; playerName: string; teamId: string; teamName: string; finalAmount: number }) => {
+      const wonPlayer = data.teamId === teamId;
       
       const soldMessage = wonPlayer
-        ? `🎉 You won ${data.player.name} for ₹${(data.finalPrice / 100000).toFixed(1)}L!`
-        : `${data.player.name} sold to ${data.team.name} for ₹${(data.finalPrice / 100000).toFixed(1)}L`;
+        ? `🎉 You won ${data.playerName} for ₹${(data.finalAmount / 100000).toFixed(1)}L!`
+        : `${data.playerName} sold to ${data.teamName} for ₹${(data.finalAmount / 100000).toFixed(1)}L`;
       
       setActivityFeed(prev => [{
         id: Date.now().toString(),
@@ -248,21 +261,34 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       
       if (wonPlayer) {
         setMyBids(prev => [{
-          playerId: data.player.id,
-          playerName: data.player.name,
-          amount: data.finalPrice,
+          playerId: data.playerId,
+          playerName: data.playerName,
+          amount: data.finalAmount,
           time: new Date().toLocaleTimeString(),
           won: true
         }, ...prev]);
-        
-        // Update team data
-        if (teamData) {
-          setTeamData({
-            ...teamData,
-            budget: teamData.budget - data.finalPrice,
-            playerIds: [...(teamData.playerIds || []), data.player.id]
-          });
+      }
+      
+      // Refetch team and player data to get live updates
+      try {
+        // Refetch team data
+        const teamResponse = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
+        if (teamResponse.ok) {
+          const teamDataResponse = await teamResponse.json();
+          const team = teamDataResponse.data?.find((t: Team) => t.email === currentUser.email);
+          if (team) {
+            setTeamData(team);
+          }
         }
+        
+        // Refetch all players
+        const playersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
+        if (playersResponse.ok) {
+          const playersData = await playersResponse.json();
+          setAllPlayers(playersData.data || []);
+        }
+      } catch (error) {
+        console.error('Failed to refetch data:', error);
       }
       
       setCurrentBiddingPlayer(null);
@@ -272,13 +298,24 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
     });
 
     // Player unsold
-    socket.on('PLAYER_UNSOLD', (data: { player: Player }) => {
+    socket.on('PLAYER_UNSOLD', async (data: { playerId: string; playerName: string }) => {
       setActivityFeed(prev => [{
         id: Date.now().toString(),
-        message: `${data.player.name} went UNSOLD`,
+        message: `${data.playerName} went UNSOLD`,
         time: new Date().toLocaleTimeString(),
         type: 'system'
       }, ...prev]);
+      
+      // Refetch player data to get live updates
+      try {
+        const playersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
+        if (playersResponse.ok) {
+          const playersData = await playersResponse.json();
+          setAllPlayers(playersData.data || []);
+        }
+      } catch (error) {
+        console.error('Failed to refetch player data:', error);
+      }
       
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);

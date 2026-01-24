@@ -178,6 +178,14 @@ class SocketService {
   }
 
   /**
+   * Listen to player updated event
+   */
+  onPlayerUpdated(callback: (data: any) => void) {
+    if (!this.socket) return;
+    this.socket.on('PLAYER_UPDATED', callback);
+  }
+
+  /**
    * Listen to player sold event
    */
   onPlayerSold(callback: (data: any) => void) {
