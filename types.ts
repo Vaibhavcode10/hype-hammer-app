@@ -168,6 +168,7 @@ export interface Player {
   teamId?: string;
   soldPrice?: number;
   imageUrl?: string;
+  email?: string; // For matching with user
   // Real-world extensions
   age?: number;
   nationality?: string;
@@ -226,4 +227,80 @@ export interface AppState {
   sports: SportData[];
   currentSport: string | null; // sport identifier (SportType or custom name)
   currentMatchId: string | null;
+}
+
+// ========================
+// LIVE AUCTION ROOM TYPES
+// ========================
+
+export enum LiveAuctionStatus {
+  READY = 'READY',
+  LIVE = 'LIVE',
+  PAUSED = 'PAUSED',
+  ENDED = 'ENDED'
+}
+
+export interface BidHistoryItem {
+  teamId: string;
+  teamName: string;
+  amount: number;
+  timestamp: string;
+}
+
+export interface LiveAuctionState {
+  id: string;
+  seasonId: string;
+  status: LiveAuctionStatus;
+  startTime: string;
+  endTime: string;
+  currentPlayerId: string | null;
+  currentPlayerName: string | null;
+  currentBid: number;
+  leadingTeamId: string | null;
+  leadingTeamName: string | null;
+  biddingActive: boolean;
+  playerQueue: string[];
+  completedPlayers: string[];
+  bidHistory: BidHistoryItem[];
+  bidStartTime?: string;
+  lastBidTime?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BidIncrement {
+  label: string;
+  value: number;
+}
+
+export interface AuctioneerControls {
+  canStartBidding: boolean;
+  canCloseBidding: boolean;
+  canPauseAuction: boolean;
+  canResumeAuction: boolean;
+  hasMicAccess: boolean;
+}
+
+export interface AdminControls {
+  canStartAuction: boolean;
+  canPauseAuction: boolean;
+  canEndAuction: boolean;
+  canOverride: boolean;
+  canAdjustSettings: boolean;
+}
+
+export interface TeamControls {
+  canBid: boolean;
+  remainingBudget: number;
+  squadSize: number;
+  maxSquadSize: number;
+}
+
+export interface LiveRoomPermissions {
+  role: UserRole;
+  canBid: boolean;
+  canSpeak: boolean;
+  canControl: boolean;
+  canOverride: boolean;
+  canViewAll: boolean;
 }

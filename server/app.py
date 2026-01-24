@@ -460,7 +460,7 @@ def register_player():
             'previousTeams': data.get('previousTeams', ''),
             'playerCategory': data.get('playerCategory', ''),
             'availability': data.get('availability', 'Yes'),
-            'imageUrl': data.get('imageUrl', ''),
+            'imageUrl': data.get('imageUrl', ''),  # Firebase Storage download URL
             'bio': data.get('bio', ''),
             'stats': data.get('stats', ''),
             'createdAt': datetime.now().isoformat(),
@@ -523,9 +523,17 @@ def register_guest():
 
 @app.route('/api/teams', methods=['GET'])
 def get_teams():
-    """Get all teams"""
+    """Get all teams, optionally filtered by matchId"""
     try:
-        docs = db.collection('teams').stream()
+        match_id = request.args.get('matchId')
+        
+        if match_id:
+            # Filter teams by matchId
+            docs = db.collection('teams').where('matchId', '==', match_id).stream()
+        else:
+            # Get all teams if no filter
+            docs = db.collection('teams').stream()
+        
         teams = serialize_firestore_docs(docs)
         
         return success_response(teams, f"Retrieved {len(teams)} teams")
@@ -655,6 +663,8 @@ def get_players():
         status = request.args.get('status')
         sport = request.args.get('sport')
         auction_id = request.args.get('auctionId')
+        match_id = request.args.get('matchId')
+        email = request.args.get('email')
         
         query = db.collection('players')
         
@@ -662,6 +672,10 @@ def get_players():
             query = query.where('status', '==', status)
         if sport:
             query = query.where('sport', '==', sport)
+        if email:
+            query = query.where('email', '==', email)
+        if match_id:
+            query = query.where('matchId', '==', match_id)
         
         docs = query.stream()
         players = serialize_firestore_docs(docs)
@@ -2250,6 +2264,184 @@ def handle_leave_season(data):
     if season_id:
         leave_room(f'season_{season_id}')
         print(f'Client left season_{season_id}')
+
+
+# ========================
+# WEBRTC AUDIO SIGNALING
+# ========================
+
+# Track active auctioneer audio sessions
+active_audio_sessions = {}
+
+@socketio.on('auctioneer_audio_start')
+def handle_auctioneer_audio_start(data):
+    """Auctioneer starts audio streaming"""
+    season_id = data.get('seasonId')
+    user_id = data.get('userId')
+    
+    if not season_id or not user_id:
+        emit('error', {'message': 'seasonId and userId required'})
+        return
+    
+    # Store active session
+    active_audio_sessions[season_id] = {
+        'auctioneerId': user_id,
+        'socketId': request.sid,
+        'startTime': datetime.now().isoformat(),
+        'muted': False
+    }
+    
+    print(f'🎙️ Auctioneer {user_id} started audio for season {season_id}')
+    
+    # Notify all listeners in the room
+    socketio.emit('auctioneer_audio_started', {
+        'seasonId': season_id,
+        'auctioneerId': user_id
+    }, room=f'season_{season_id}')
+
+
+@socketio.on('auctioneer_audio_stop')
+def handle_auctioneer_audio_stop(data):
+    """Auctioneer stops audio streaming"""
+    season_id = data.get('seasonId')
+    user_id = data.get('userId')
+    
+    if season_id in active_audio_sessions:
+        del active_audio_sessions[season_id]
+    
+    print(f'🎙️ Auctioneer {user_id} stopped audio for season {season_id}')
+    
+    # Notify all listeners
+    socketio.emit('auctioneer_audio_stopped', {
+        'seasonId': season_id,
+        'auctioneerId': user_id
+    }, room=f'season_{season_id}')
+
+
+@socketio.on('auctioneer_audio_mute')
+def handle_auctioneer_audio_mute(data):
+    """Auctioneer mutes/unmutes"""
+    season_id = data.get('seasonId')
+    user_id = data.get('userId')
+    muted = data.get('muted', False)
+    
+    if season_id in active_audio_sessions:
+        active_audio_sessions[season_id]['muted'] = muted
+    
+    print(f'🎙️ Auctioneer {user_id} {"muted" if muted else "unmuted"}')
+    
+    # Notify all listeners
+    socketio.emit('auctioneer_audio_muted', {
+        'seasonId': season_id,
+        'auctioneerId': user_id,
+        'muted': muted
+    }, room=f'season_{season_id}')
+
+
+@socketio.on('audio_listener_join')
+def handle_audio_listener_join(data):
+    """Listener joins to receive audio"""
+    season_id = data.get('seasonId')
+    user_id = data.get('userId')
+    
+    if not season_id or not user_id:
+        emit('error', {'message': 'seasonId and userId required'})
+        return
+    
+    # Check if auctioneer is streaming
+    if season_id not in active_audio_sessions:
+        emit('error', {'message': 'No active audio stream'})
+        return
+    
+    session = active_audio_sessions[season_id]
+    
+    print(f'📻 Listener {user_id} joining audio for season {season_id}')
+    
+    # Notify auctioneer of new listener
+    socketio.emit('audio_listener_joined', {
+        'listenerId': user_id,
+        'socketId': request.sid
+    }, room=session['socketId'])
+
+
+@socketio.on('audio_offer')
+def handle_audio_offer(data):
+    """Forward WebRTC offer from auctioneer to listener"""
+    season_id = data.get('seasonId')
+    to = data.get('to')
+    offer = data.get('offer')
+    
+    if not all([season_id, to, offer]):
+        emit('error', {'message': 'Missing required fields'})
+        return
+    
+    # Forward to specific listener
+    socketio.emit('audio_offer', {
+        'from': request.sid,
+        'offer': offer
+    }, room=f'user_{to}')
+
+
+@socketio.on('audio_answer')
+def handle_audio_answer(data):
+    """Forward WebRTC answer from listener to auctioneer"""
+    season_id = data.get('seasonId')
+    to = data.get('to')
+    answer = data.get('answer')
+    
+    if not all([season_id, to, answer]):
+        emit('error', {'message': 'Missing required fields'})
+        return
+    
+    # Forward to auctioneer
+    socketio.emit('audio_answer', {
+        'from': request.sid,
+        'answer': answer
+    }, room=to)
+
+
+@socketio.on('audio_ice_candidate')
+def handle_audio_ice_candidate(data):
+    """Forward ICE candidate between peers"""
+    season_id = data.get('seasonId')
+    to = data.get('to')
+    candidate = data.get('candidate')
+    
+    if not all([season_id, to, candidate]):
+        emit('error', {'message': 'Missing required fields'})
+        return
+    
+    # Check if sending to user or socket
+    if to.startswith('user_'):
+        room = to
+    else:
+        room = to
+    
+    # Forward ICE candidate
+    event_name = 'audio_ice_candidate_auctioneer' if 'auctioneer' in str(data.get('from', '')) else 'audio_ice_candidate_listener'
+    socketio.emit(event_name, {
+        'from': request.sid,
+        'candidate': candidate
+    }, room=room)
+
+
+@socketio.on('audio_check_status')
+def handle_audio_check_status(data):
+    """Check if auctioneer is currently streaming"""
+    season_id = data.get('seasonId')
+    
+    if season_id in active_audio_sessions:
+        session = active_audio_sessions[season_id]
+        emit('auctioneer_audio_started', {
+            'seasonId': season_id,
+            'auctioneerId': session['auctioneerId'],
+            'muted': session.get('muted', False)
+        })
+    else:
+        emit('audio_status', {
+            'seasonId': season_id,
+            'streaming': False
+        })
 
 
 # ========================

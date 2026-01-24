@@ -19,6 +19,8 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
   onCreateSeason,
   currentUserRole
 }) => {
+  console.log('🏪 MarketplacePage render - allSports length:', allSports.length);
+  
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   const [isLoading, setIsLoading] = useState(true);
@@ -31,13 +33,16 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
   }, [allSports]);
 
   // Flatten all matches from all sports with their sport context (memoized to prevent recalculation)
-  const allMatches = useMemo(() => allSports.flatMap(sport =>
-    sport.matches.map(match => ({
-      ...match,
-      sportType: sport.sportType,
-      sportName: sport.customSportName || sport.sportType
-    }))
-  ), [allSports]);
+  const allMatches = useMemo(() => {
+    console.log('📊 Recalculating allMatches from allSports');
+    return allSports.flatMap(sport =>
+      sport.matches.map(match => ({
+        ...match,
+        sportType: sport.sportType,
+        sportName: sport.customSportName || sport.sportType
+      }))
+    );
+  }, [allSports]);
 
   // Filter matches based on search and status (memoized)
   const filteredMatches = useMemo(() => allMatches.filter(match => {

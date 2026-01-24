@@ -18,3 +18,5 @@ export { AdminDashboardPage } from './AdminDashboardPage';
 export { AuctioneerDashboardPage } from './AuctioneerDashboardPage';
 export { TeamRepDashboardPage } from './TeamRepDashboardPage';
 export { GuestDashboardPage } from './GuestDashboardPage';
+export { LiveAuctionPage } from './LiveAuctionPage';
+

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { BrowserRouter, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, Settings, Gavel, 
@@ -13,6 +13,7 @@ import { INITIAL_CONFIG, SPORT_DEFAULTS } from './constants';
 import { getAuctionInsights } from './services/geminiService';
 import { loadAppState, saveAppState, loadSportsData, saveSportsData, loadAllSportsFromDB } from './services/storageService';
 import { registerAuctioneer, registerTeam, registerPlayer, registerGuest } from './services/apiService';
+import { uploadPlayerPhoto, uploadTeamLogo, uploadDocument } from './services/firebaseStorageService';
 
 // Import Components
 import {
@@ -171,6 +172,13 @@ const AppContent: React.FC = () => {
   const [playerSearch, setPlayerSearch] = useState('');
   const [teamSearch, setTeamSearch] = useState('');
   const [aiInsights, setAiInsights] = useState<string[]>([]);
+
+  // Ref to track last synced state to prevent unnecessary updates
+  const lastSyncedState = useRef<{
+    players: string;
+    teams: string;
+    history: string;
+  }>({ players: '', teams: '', history: '' });
 
   const [isPlayerModalOpen, setIsPlayerModalOpen] = useState(false);
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
@@ -352,33 +360,51 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     if (!currentMatch || !currentSportData) return;
 
-    // Avoid infinite loops by only writing when something actually changed
+    // Serialize current state
+    const currentPlayersStr = JSON.stringify(players);
+    const currentTeamsStr = JSON.stringify(teams);
+    const currentHistoryStr = JSON.stringify(history);
+
+    console.log('🔍 Checking for state changes...');
+    console.log('  Players changed:', lastSyncedState.current.players !== currentPlayersStr);
+    console.log('  Teams changed:', lastSyncedState.current.teams !== currentTeamsStr);
+    console.log('  History changed:', lastSyncedState.current.history !== currentHistoryStr);
+
+    // Check if state actually changed since last sync
+    if (
+      lastSyncedState.current.players === currentPlayersStr &&
+      lastSyncedState.current.teams === currentTeamsStr &&
+      lastSyncedState.current.history === currentHistoryStr
+    ) {
+      console.log('✅ No changes detected, skipping allSports update');
+      return; // No change, skip update
+    }
+
+    console.log('🔄 State changed, updating allSports...');
+
+    // Update the ref with new state
+    lastSyncedState.current = {
+      players: currentPlayersStr,
+      teams: currentTeamsStr,
+      history: currentHistoryStr
+    };
+
+    // Now update allSports
     setAllSports(prev => prev.map(sport => {
       if (sport.sportType === currentSportData.sportType && 
           sport.customSportName === currentSportData.customSportName) {
         return {
           ...sport,
-          matches: sport.matches.map(match => {
-            if (match.id !== currentMatch.id) return match;
-
-            const isSamePlayers = JSON.stringify(match.players) === JSON.stringify(players);
-            const isSameTeams = JSON.stringify(match.teams) === JSON.stringify(teams);
-            const isSameHistory = JSON.stringify(match.history) === JSON.stringify(history);
-
-            if (isSamePlayers && isSameTeams && isSameHistory) return match; // no-op
-
-            return {
-              ...match,
-              players,
-              teams,
-              history
-            };
-          })
+          matches: sport.matches.map(match => 
+            match.id === currentMatch.id 
+              ? { ...match, players, teams, history }
+              : match
+          )
         };
       }
       return sport;
     }));
-  }, [players, teams, history, currentMatch, currentSport]);
+  }, [players, teams, history, currentMatch, currentSportData]);
 
   // Multi-sport/match management functions
   const handleSelectSport = (sportType: SportType, customName?: string) => {
@@ -909,73 +935,114 @@ const AppContent: React.FC = () => {
             return false;
           }
           
+          // Upload files to Firebase Storage and get download URLs
+          const processedData = { ...registrationData };
+          
+          try {
+            // Upload team logo to Firebase Storage
+            if (registrationData.teamLogo && registrationData.teamLogo instanceof File) {
+              console.log('📤 Uploading team logo to Firebase Storage...');
+              const logoUrl = await uploadTeamLogo(registrationData.teamLogo);
+              processedData.teamLogo = logoUrl;
+              console.log('✅ Team logo uploaded:', logoUrl);
+            }
+            
+            // Upload player photo to Firebase Storage
+            if (registrationData.playerPhoto && registrationData.playerPhoto instanceof File) {
+              console.log('📤 Uploading player photo to Firebase Storage...');
+              const photoUrl = await uploadPlayerPhoto(registrationData.playerPhoto);
+              processedData.imageUrl = photoUrl;  // Map to imageUrl field for backend
+              delete processedData.playerPhoto;
+              console.log('✅ Player photo uploaded:', photoUrl);
+            }
+            
+            // Upload documents
+            if (registrationData.authorizationLetter && registrationData.authorizationLetter instanceof File) {
+              console.log('📤 Uploading authorization letter...');
+              const letterUrl = await uploadDocument(registrationData.authorizationLetter, 'authorization-letters');
+              processedData.authorizationLetter = letterUrl;
+              console.log('✅ Authorization letter uploaded:', letterUrl);
+            }
+            
+            if (registrationData.governmentIdFile && registrationData.governmentIdFile instanceof File) {
+              console.log('📤 Uploading government ID...');
+              const idUrl = await uploadDocument(registrationData.governmentIdFile, 'government-ids');
+              processedData.governmentIdFile = idUrl;
+              console.log('✅ Government ID uploaded:', idUrl);
+            }
+          } catch (uploadError: any) {
+            console.error('❌ File upload error:', uploadError);
+            alert(`File upload failed: ${uploadError.message}`);
+            return false;
+          }
+          
           let result = null;
           
           // Call appropriate registration endpoint
-          switch (registrationData.role) {
+          switch (processedData.role) {
             case UserRole.AUCTIONEER:
-              result = await registerAuctioneer(registrationData);
+              result = await registerAuctioneer(processedData);
               if (result) {
                 setCurrentUser({
-                  name: registrationData.fullName,
-                  email: registrationData.email,
+                  name: processedData.fullName,
+                  email: processedData.email,
                   avatar: undefined,
                   role: UserRole.AUCTIONEER
                 });
-                setCurrentMatchId(registrationData.seasonId);
+                setCurrentMatchId(processedData.seasonId);
                 setPendingDashboardStatus(AuctionStatus.AUCTIONEER_DASHBOARD);
                 return true;
               }
               break;
               
             case UserRole.TEAM_REP:
-              result = await registerTeam(registrationData);
+              result = await registerTeam(processedData);
               if (result) {
                 setCurrentUser({
-                  name: registrationData.fullName,
-                  email: registrationData.email,
+                  name: processedData.fullName,
+                  email: processedData.email,
                   avatar: undefined,
                   role: UserRole.TEAM_REP
                 });
-                setCurrentMatchId(registrationData.seasonId);
+                setCurrentMatchId(processedData.seasonId);
                 setPendingDashboardStatus(AuctionStatus.TEAM_REP_DASHBOARD);
                 return true;
               }
               break;
               
             case UserRole.PLAYER:
-              result = await registerPlayer(registrationData);
+              result = await registerPlayer(processedData);
               if (result && result.playerId) {
                 setCurrentUser({
-                  name: registrationData.fullName,
-                  email: registrationData.email,
+                  name: processedData.fullName,
+                  email: processedData.email,
                   avatar: undefined,
                   role: UserRole.PLAYER,
                   playerId: result.playerId
                 });
-                setCurrentMatchId(registrationData.seasonId);
+                setCurrentMatchId(processedData.seasonId);
                 setPendingDashboardStatus(AuctionStatus.PLAYER_DASHBOARD);
                 return true;
               }
               break;
               
             case UserRole.GUEST:
-              result = await registerGuest(registrationData);
+              result = await registerGuest(processedData);
               if (result) {
                 setCurrentUser({
-                  name: registrationData.fullName,
-                  email: registrationData.email,
+                  name: processedData.fullName,
+                  email: processedData.email,
                   avatar: undefined,
                   role: UserRole.GUEST
                 });
-                setCurrentMatchId(registrationData.seasonId);
+                setCurrentMatchId(processedData.seasonId);
                 setPendingDashboardStatus(AuctionStatus.GUEST_DASHBOARD);
                 return true;
               }
               break;
               
             default:
-              console.error('Unknown role:', registrationData.role);
+              console.error('Unknown role:', processedData.role);
               alert('Invalid role selected');
               return false;
           }

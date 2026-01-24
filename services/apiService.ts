@@ -62,6 +62,88 @@ async function apiCall<T = any>(
   }
 }
 
+/**
+ * Generic GET request
+ */
+async function get<T = any>(path: string): Promise<ApiResponse<T>> {
+  try {
+    const response = await fetch(`${API_ENDPOINT}${path}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const data: ApiResponse<T> = await response.json();
+    return data;
+  } catch (error) {
+    console.error(`GET ${path} failed:`, error);
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Generic POST request
+ */
+async function post<T = any>(path: string, body?: any): Promise<ApiResponse<T>> {
+  try {
+    const response = await fetch(`${API_ENDPOINT}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body)
+    });
+
+    const data: ApiResponse<T> = await response.json();
+    return data;
+  } catch (error) {
+    console.error(`POST ${path} failed:`, error);
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Generic PUT request
+ */
+async function put<T = any>(path: string, body?: any): Promise<ApiResponse<T>> {
+  try {
+    const response = await fetch(`${API_ENDPOINT}${path}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body)
+    });
+
+    const data: ApiResponse<T> = await response.json();
+    return data;
+  } catch (error) {
+    console.error(`PUT ${path} failed:`, error);
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Generic DELETE request
+ */
+async function del<T = any>(path: string): Promise<ApiResponse<T>> {
+  try {
+    const response = await fetch(`${API_ENDPOINT}${path}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const data: ApiResponse<T> = await response.json();
+    return data;
+  } catch (error) {
+    console.error(`DELETE ${path} failed:`, error);
+    return { success: false, error: String(error) };
+  }
+}
+
 // ========================
 // STATE MANAGEMENT
 // ========================
@@ -379,6 +461,12 @@ export async function saveMatchesToBackend(sportName: string, matches: any) {
 }
 
 export default {
+  // Generic HTTP methods
+  get,
+  post,
+  put,
+  delete: del,
+  
   // State
   getAppState,
   saveAppState,

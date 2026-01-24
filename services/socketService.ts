@@ -226,6 +226,143 @@ class SocketService {
   }
 
   /**
+   * Listen to auctioneer microphone ON event
+   */
+  onAuctioneerMicOn(callback: (data: any) => void) {
+    if (!this.socket) return;
+    this.socket.on('AUCTIONEER_MIC_ON', callback);
+  }
+
+  /**
+   * Listen to auctioneer microphone OFF event
+   */
+  onAuctioneerMicOff(callback: (data: any) => void) {
+    if (!this.socket) return;
+    this.socket.on('AUCTIONEER_MIC_OFF', callback);
+  }
+
+  /**
+   * Listen to auctioneer microphone MUTE event
+   */
+  onAuctioneerMicMute(callback: (data: any) => void) {
+    if (!this.socket) return;
+    this.socket.on('AUCTIONEER_MIC_MUTE', callback);
+  }
+
+  /**
+   * Listen to auctioneer announcement
+   */
+  onAuctioneerAnnouncement(callback: (data: { message: string; timestamp: string }) => void) {
+    if (!this.socket) return;
+    this.socket.on('AUCTIONEER_ANNOUNCEMENT', callback);
+  }
+
+  /**
+   * Listen to WebRTC audio offer (for receiving auctioneer audio)
+   */
+  onAudioOffer(callback: (data: { offer: RTCSessionDescriptionInit; auctioneerId: string }) => void) {
+    if (!this.socket) return;
+    this.socket.on('audio_offer', callback);
+  }
+
+  /**
+   * Listen to WebRTC audio answer
+   */
+  onAudioAnswer(callback: (data: { answer: RTCSessionDescriptionInit }) => void) {
+    if (!this.socket) return;
+    this.socket.on('audio_answer', callback);
+  }
+
+  /**
+   * Listen to WebRTC ICE candidate
+   */
+  onAudioIceCandidate(callback: (data: { candidate: RTCIceCandidateInit }) => void) {
+    if (!this.socket) return;
+    this.socket.on('audio_ice_candidate', callback);
+  }
+
+  /**
+   * Emit audio offer (auctioneer broadcasts to listeners)
+   */
+  emitAudioOffer(seasonId: string, offer: RTCSessionDescriptionInit) {
+    if (!this.socket) return;
+    this.socket.emit('audio_offer', { seasonId, offer });
+  }
+
+  /**
+   * Emit audio answer (listener responds to auctioneer)
+   */
+  emitAudioAnswer(seasonId: string, auctioneerId: string, answer: RTCSessionDescriptionInit) {
+    if (!this.socket) return;
+    this.socket.emit('audio_answer', { seasonId, auctioneerId, answer });
+  }
+
+  /**
+   * Emit ICE candidate
+   */
+  emitAudioIceCandidate(seasonId: string, targetId: string, candidate: RTCIceCandidateInit) {
+    if (!this.socket) return;
+    this.socket.emit('audio_ice_candidate', { seasonId, targetId, candidate });
+  }
+
+  /**
+   * Notify that auctioneer started microphone
+   */
+  emitAuctioneerMicOn(seasonId: string) {
+    if (!this.socket) return;
+    this.socket.emit('auctioneer_audio_start', { seasonId });
+  }
+
+  /**
+   * Notify that auctioneer stopped microphone
+   */
+  emitAuctioneerMicOff(seasonId: string) {
+    if (!this.socket) return;
+    this.socket.emit('auctioneer_audio_stop', { seasonId });
+  }
+
+  /**
+   * Notify that auctioneer muted/unmuted microphone
+   */
+  emitAuctioneerMicMute(seasonId: string, muted: boolean) {
+    if (!this.socket) return;
+    this.socket.emit('auctioneer_audio_mute', { seasonId, muted });
+  }
+
+  /**
+   * Join as audio listener (non-auctioneer)
+   */
+  joinAsAudioListener(seasonId: string, userId: string, role: string) {
+    if (!this.socket) return;
+    this.socket.emit('audio_listener_join', { seasonId, userId, role });
+  }
+
+  /**
+   * Place a bid (Team Rep action)
+   */
+  async placeBid(seasonId: string, teamId: string, amount: number): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await fetch('http://localhost:5000/api/auction/bid', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          seasonId,
+          teamId,
+          amount
+        })
+      });
+
+      const result = await response.json();
+      return { success: response.ok, message: result.message || result.error };
+    } catch (error) {
+      console.error('Failed to place bid:', error);
+      return { success: false, message: 'Network error' };
+    }
+  }
+
+  /**
    * Remove all listeners (cleanup on unmount)
    */
   removeAllListeners() {
