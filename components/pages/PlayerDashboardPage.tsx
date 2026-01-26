@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import { User, Trophy, Clock, DollarSign, Bell, LogOut, Users, Activity, Award, Radio, Shield, AlertCircle, CheckCircle, XCircle, ChevronDown, X, Calendar, MapPin, Mail } from 'lucide-react';
 import { AuctionStatus, MatchData, UserRole, Player, Team } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
+import { PlayersPage } from './PlayersPage';
 import { socketService } from '../../services/socketService';
 import { useAudioListener } from '../../services/useAudioListener';
 
@@ -42,6 +43,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
   // UI state
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showPlayersPage, setShowPlayersPage] = useState(false);
   const [notifications, setNotifications] = useState<Array<{ id: string; message: string; time: string; read: boolean }>>([]);
 
   const userId = currentUser.email;
@@ -149,7 +151,8 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
     });
 
     // Auction state updates
-    socket.on('AUCTION_STARTED', () => {
+    socket.on('AUCTION_STARTED', (data: any) => {
+      console.log('🚀 AUCTION_STARTED received:', data);
       setAuctionStatus('live');
       setActivityFeed(prev => [{
         id: Date.now().toString(),
@@ -159,7 +162,8 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       }, ...prev]);
     });
 
-    socket.on('AUCTION_PAUSED', () => {
+    socket.on('AUCTION_PAUSED', (data: any) => {
+      console.log('⏸️ AUCTION_PAUSED received:', data);
       setAuctionStatus('paused');
       setActivityFeed(prev => [{
         id: Date.now().toString(),
@@ -169,7 +173,8 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       }, ...prev]);
     });
 
-    socket.on('AUCTION_RESUMED', () => {
+    socket.on('AUCTION_RESUMED', (data: any) => {
+      console.log('▶️ AUCTION_RESUMED received:', data);
       setAuctionStatus('live');
       setActivityFeed(prev => [{
         id: Date.now().toString(),
@@ -216,6 +221,8 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
 
     // New bid
     socket.on('NEW_BID', (data: { playerId: string; amount: number; teamId: string; teamName: string }) => {
+      console.log('💰 NEW_BID received:', data);
+      console.log('   → Updating current bid to:', data.amount);
       setCurrentBid(data.amount);
       const team = teams.find(t => t.id === data.teamId);
       if (team) {
@@ -531,6 +538,14 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
             </div>
 
             <button
+              onClick={() => setShowPlayersPage(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-600 text-white font-bold text-sm transition-all shadow-lg"
+            >
+              <Users size={16} />
+              Players
+            </button>
+
+            <button
               onClick={() => setActiveSection('liveRoom')}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-sm transition-all shadow-lg hover:shadow-xl"
             >
@@ -657,35 +672,55 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
           </div>
         ) : (
           <div className="grid grid-cols-12 gap-4 h-full overflow-hidden">
-            {/* Left Panel: Player Profile + Queue Info */}
-            <div className="col-span-3 grid grid-rows-[auto_auto_1fr] gap-3 overflow-hidden">
+            {/* Left Panel: Player Profile + Queue Info + Live Activity Feed */}
+            <div className="col-span-3 flex flex-col gap-3 overflow-y-auto pr-2">
               {/* Player Profile */}
               <div className="bg-white/90 backdrop-blur-lg rounded-2xl border-2 border-cyan-200 shadow-xl overflow-hidden">
-                <div className="h-20 bg-gradient-to-br from-cyan-100 via-blue-100 to-purple-100"></div>
-                <div className="relative px-5 pb-4 -mt-10">
-                  <div className="w-20 h-20 rounded-2xl overflow-hidden border-4 border-white shadow-2xl mx-auto bg-slate-200 flex items-center justify-center">
+                <div className="h-16 bg-gradient-to-br from-cyan-100 via-blue-100 to-purple-100"></div>
+                <div className="relative px-4 pb-3 -mt-8">
+                  <div className="w-16 h-16 rounded-xl overflow-hidden border-3 border-white shadow-xl mx-auto bg-slate-200 flex items-center justify-center">
                     {playerData.imageUrl ? (
                       <img src={playerData.imageUrl} alt="Player" className="w-full h-full object-cover" />
                     ) : (
-                      <User size={32} className="text-slate-400" />
+                      <User size={24} className="text-slate-400" />
                     )}
                   </div>
-                  <h3 className="text-lg font-black text-center mt-3 text-slate-800 uppercase leading-tight">{playerData.name}</h3>
-                  <p className="text-xs text-gray-600 text-center uppercase tracking-wider font-bold">{playerData.roleId}</p>
+                  <h3 className="text-base font-black text-center mt-2 text-slate-800 uppercase leading-tight">{playerData.name}</h3>
+                  <p className="text-[10px] text-gray-600 text-center uppercase tracking-wider font-bold">{playerData.roleId}</p>
                   
                   {/* Status Badge */}
-                  <div className="mt-3 flex items-center justify-center">
-                    <div className={`flex items-center gap-2 px-3 py-1 rounded-full border-2 ${getPlayerStatus(playerData).color}`}>
+                  <div className="mt-2 flex items-center justify-center">
+                    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border-2 ${getPlayerStatus(playerData).color}`}>
                       {getPlayerStatus(playerData).icon}
-                      <span className="text-[10px] font-bold uppercase">{getPlayerStatus(playerData).label}</span>
+                      <span className="text-[9px] font-bold uppercase">{getPlayerStatus(playerData).label}</span>
                     </div>
                   </div>
                   
-                  {/* Base Price */}
-                  <div className="mt-3 p-3 bg-gradient-to-r from-cyan-50 to-blue-50 rounded-xl border border-cyan-200">
-                    <p className="text-[9px] text-gray-600 uppercase tracking-wider font-bold text-center mb-0.5">Base Price</p>
-                    <p className="text-xl font-black text-center text-cyan-600">₹{((playerData.basePrice || 0) / 100000).toFixed(1)}L</p>
-                  </div>
+                  {/* Sold Information */}
+                  {(playerData.status?.toLowerCase() === 'sold' || playerData.soldTo) && playerData.soldTo && (
+                    <div className="mt-2 p-2 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="text-center">
+                          <p className="text-[8px] text-gray-600 uppercase font-bold">Sold To</p>
+                          <p className="text-[10px] font-black text-green-600 truncate">{teams.find(t => t.id === playerData.soldTo)?.name || 'Team'}</p>
+                        </div>
+                        {playerData.soldAmount && (
+                          <div className="text-center">
+                            <p className="text-[8px] text-gray-600 uppercase font-bold">Price</p>
+                            <p className="text-sm font-black text-green-600">₹{((playerData.soldAmount || 0) / 100000).toFixed(1)}L</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Base Price - Show only when not sold */}
+                  {!(playerData.status?.toLowerCase() === 'sold' || playerData.soldTo) && (
+                    <div className="mt-2 p-2 bg-gradient-to-r from-cyan-50 to-blue-50 rounded-lg border border-cyan-200">
+                      <p className="text-[8px] text-gray-600 uppercase tracking-wider font-bold text-center">Base Price</p>
+                      <p className="text-lg font-black text-center text-cyan-600">₹{((playerData.basePrice || 0) / 100000).toFixed(1)}L</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -723,6 +758,45 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
                   </div>
                 </div>
               )}
+
+              {/* Live Activity Feed */}
+              <div className="bg-white/90 rounded-2xl border-2 border-green-200 shadow-xl overflow-hidden">
+                <div className="bg-gradient-to-r from-green-100 to-emerald-100 px-6 py-4 border-b-2 border-green-200">
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <Activity size={16} className="text-green-600" />
+                    Live Activity Feed
+                  </h3>
+                </div>
+                <div className="overflow-y-auto p-4 space-y-2 h-64">
+                  {activityFeed.length === 0 ? (
+                    <div className="flex items-center justify-center py-8">
+                      <p className="text-gray-400 text-sm">No activity yet</p>
+                    </div>
+                  ) : (
+                    activityFeed.map(item => (
+                      <div
+                        key={item.id}
+                        className={`flex items-start gap-3 p-3 rounded-xl border-2 ${
+                          item.type === 'bid'
+                            ? 'bg-blue-50 border-blue-300'
+                            : item.type === 'sold'
+                            ? 'bg-green-50 border-green-300'
+                            : 'bg-gray-50 border-gray-300'
+                        }`}
+                      >
+                        <div className={`w-2 h-2 rounded-full mt-1.5 ${
+                          item.type === 'bid' ? 'bg-blue-500' :
+                          item.type === 'sold' ? 'bg-green-500' : 'bg-gray-500'
+                        }`}></div>
+                        <div className="flex-1">
+                          <p className="text-sm font-bold text-slate-800">{item.message}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{item.time}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
 
             {/* Center: Live Auction Room */}
@@ -837,17 +911,51 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
                 /* No Active Auction */
                 <div className="bg-white/90 rounded-2xl border-2 border-cyan-200 shadow-xl h-full flex items-center justify-center overflow-hidden">
                   <div className="text-center">
-                    <Clock size={48} className="text-yellow-400 mb-3 animate-bounce mx-auto" />
-                    <h3 className="text-2xl font-black text-slate-800 mb-2">Auction Starting Soon</h3>
-                    <p className="text-sm text-gray-600 max-w-md font-semibold mb-4">
-                      {auctionStatus === 'completed' 
-                        ? 'The auction has been completed.'
-                        : 'Get ready! The auctioneer is preparing to start the auction.'}
-                    </p>
-                    <div className="flex items-center justify-center gap-3">
-                      <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></div>
-                      <span className="text-yellow-600 font-bold text-sm">Waiting for auctioneer to start...</span>
-                    </div>
+                    {auctionStatus === 'live' ? (
+                      <>
+                        <Radio size={48} className="text-green-500 mb-3 animate-pulse mx-auto" />
+                        <h3 className="text-2xl font-black text-green-600 mb-2">Auction is Live!</h3>
+                        <p className="text-sm text-gray-600 max-w-md font-semibold mb-4">
+                          The auction is running. Waiting for next player...
+                        </p>
+                        <div className="flex items-center justify-center gap-3">
+                          <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
+                          <span className="text-green-600 font-bold text-sm">Ready for bidding</span>
+                        </div>
+                      </>
+                    ) : auctionStatus === 'paused' ? (
+                      <>
+                        <Clock size={48} className="text-orange-400 mb-3 mx-auto" />
+                        <h3 className="text-2xl font-black text-orange-600 mb-2">Auction Paused</h3>
+                        <p className="text-sm text-gray-600 max-w-md font-semibold mb-4">
+                          The auctioneer has paused the auction temporarily.
+                        </p>
+                        <div className="flex items-center justify-center gap-3">
+                          <div className="w-2 h-2 rounded-full bg-orange-400 animate-pulse"></div>
+                          <span className="text-orange-600 font-bold text-sm">Waiting to resume...</span>
+                        </div>
+                      </>
+                    ) : auctionStatus === 'completed' ? (
+                      <>
+                        <Trophy size={48} className="text-blue-500 mb-3 mx-auto" />
+                        <h3 className="text-2xl font-black text-blue-600 mb-2">Auction Completed</h3>
+                        <p className="text-sm text-gray-600 max-w-md font-semibold mb-4">
+                          The auction has been completed. Check results below.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <Clock size={48} className="text-yellow-400 mb-3 animate-bounce mx-auto" />
+                        <h3 className="text-2xl font-black text-slate-800 mb-2">Auction Starting Soon</h3>
+                        <p className="text-sm text-gray-600 max-w-md font-semibold mb-4">
+                          Get ready! The auctioneer is preparing to start the auction.
+                        </p>
+                        <div className="flex items-center justify-center gap-3">
+                          <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></div>
+                          <span className="text-yellow-600 font-bold text-sm">Waiting for auctioneer to start...</span>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -921,6 +1029,14 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
           </div>
         )}
       </main>
+
+      {/* Players Page Overlay */}
+      {showPlayersPage && (
+        <PlayersPage 
+          onClose={() => setShowPlayersPage(false)} 
+          currentMatch={currentMatch}
+        />
+      )}
     </div>
   );
 };

@@ -362,6 +362,10 @@ export async function updateMatch(matchId: string, matchData: any) {
   return apiCall(`/matches/${matchId}`, 'PUT', matchData);
 }
 
+export async function updateMatchStatus(matchId: string) {
+  return apiCall(`/matches/${matchId}/status`, 'PUT');
+}
+
 export async function deleteMatch(matchId: string) {
   return apiCall(`/matches/${matchId}`, 'DELETE');
 }
@@ -515,6 +519,7 @@ export default {
   getMatchById,
   createMatch,
   updateMatch,
+  updateMatchStatus,
   deleteMatch,
   
   // Logs

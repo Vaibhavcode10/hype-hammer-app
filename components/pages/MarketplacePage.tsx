@@ -32,7 +32,8 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
     }
   }, [allSports]);
 
-  // Flatten all matches from all sports with their sport context (memoized to prevent recalculation)
+  // Flatten all matches from all sports with their sport context
+  // Status is computed by the backend, so we trust it
   const allMatches = useMemo(() => {
     console.log('📊 Recalculating allMatches from allSports');
     return allSports.flatMap(sport =>
@@ -116,26 +117,6 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
             <span>{match.place}</span>
           </div>
         )}
-        <div className="flex items-center gap-2 text-sm text-slate-600">
-          <Users className="w-4 h-4 text-blue-500" />
-          <span>{match.teams.length} Teams</span>
-        </div>
-        <div className="flex items-center gap-2 text-sm text-slate-600">
-          <Trophy className="w-4 h-4 text-orange-500" />
-          <span>{totalPlayers} Players</span>
-        </div>
-      </div>
-
-      {/* Auction Stats */}
-      <div className="bg-slate-50 rounded-lg p-3 mb-4">
-        <div className="flex justify-between text-xs">
-          <span className="text-slate-600">Budget Pool</span>
-          <span className="font-bold text-slate-900">₹{budgetPool}Cr</span>
-        </div>
-        <div className="flex justify-between text-xs mt-2">
-          <span className="text-slate-600">Players Sold</span>
-          <span className="font-bold text-green-600">{playersSold} / {totalPlayers}</span>
-        </div>
       </div>
 
       {/* Action Button */}

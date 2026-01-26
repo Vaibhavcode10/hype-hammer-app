@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { DollarSign, Users, Trophy, TrendingDown, Bell, User, LogOut, Shield, Activity, Clock, Radio, AlertCircle, CheckCircle, XCircle, ChevronDown, X, Calendar, Mail, Award, TrendingUp, Filter, Search, Eye } from 'lucide-react';
 import { AuctionStatus, MatchData, UserRole, Team, Player } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
+import { PlayersPage } from './PlayersPage';
 import { socketService } from '../../services/socketService';
 
 const formatCurrency = (num: number): string => {
@@ -16,6 +17,7 @@ interface TeamRepDashboardPageProps {
 
 export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom'>('dashboard');
+  const [showPlayersPage, setShowPlayersPage] = useState(false);
   const [teamData, setTeamData] = useState<Team | null>(null);
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,9 +73,14 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         const teamResponse = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
         if (teamResponse.ok) {
           const teamDataResponse = await teamResponse.json();
+          console.log('📊 Fetched teams data:', teamDataResponse.data);
           // Find team where the owner's email matches current user's email
           const team = teamDataResponse.data?.find((t: Team) => t.email === currentUser.email);
           if (team) {
+            console.log('✅ Found my team:', team);
+            console.log('   → Budget:', team.budget);
+            console.log('   → Remaining Budget:', team.remainingBudget);
+            console.log('   → Initial Budget:', team.initialBudget);
             setTeamData(team);
           }
         }
@@ -135,7 +142,8 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
     });
 
     // Auction state updates
-    socket.on('AUCTION_STARTED', () => {
+    socket.on('AUCTION_STARTED', (data: any) => {
+      console.log('🚀 AUCTION_STARTED received:', data);
       setAuctionStatus('live');
       setActivityFeed(prev => [{
         id: Date.now().toString(),
@@ -145,7 +153,8 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       }, ...prev]);
     });
 
-    socket.on('AUCTION_PAUSED', () => {
+    socket.on('AUCTION_PAUSED', (data: any) => {
+      console.log('⏸️ AUCTION_PAUSED received:', data);
       setAuctionStatus('paused');
       setActivityFeed(prev => [{
         id: Date.now().toString(),
@@ -155,7 +164,8 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       }, ...prev]);
     });
 
-    socket.on('AUCTION_RESUMED', () => {
+    socket.on('AUCTION_RESUMED', (data: any) => {
+      console.log('▶️ AUCTION_RESUMED received:', data);
       setAuctionStatus('live');
       setActivityFeed(prev => [{
         id: Date.now().toString(),
@@ -199,6 +209,8 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
 
     // New bid
     socket.on('NEW_BID', (data: { playerId: string; amount: number; teamId: string; teamName: string }) => {
+      console.log('💰 NEW_BID received:', data);
+      console.log('   → Updating current bid to:', data.amount);
       setCurrentBid(data.amount);
       
       const isMyBid = data.teamId === teamId;
@@ -342,8 +354,11 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
     });
 
     // Team data updated (budget/players changed)
-    socket.on('TEAM_UPDATED', (data: { team: Team }) => {
-      if (data.team.id === teamId) {
+    socket.on('TEAM_UPDATED', (data: { teamId?: string; team: Team }) => {
+      console.log('💰 TEAM_UPDATED received:', data);
+      // Check if this update is for the current team
+      if (data.team.id === teamId || data.teamId === teamId) {
+        console.log('   → Updating team data:', data.team);
         setTeamData(data.team);
       }
     });
@@ -395,7 +410,10 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
 
   const getBudgetPercentage = () => {
     if (!teamData) return 0;
-    return ((teamData.budget / (teamData.initialBudget || teamData.budget)) * 100);
+    const totalBudget = teamData.budget || 0; // Initial/Total budget
+    const currentBudget = teamData.remainingBudget !== undefined ? teamData.remainingBudget : totalBudget;
+    if (totalBudget === 0) return 0;
+    return ((currentBudget / totalBudget) * 100);
   };
 
   const getBudgetColor = () => {
@@ -500,6 +518,35 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                       <X size={18} />
                     </button>
                   </div>
+                  
+                  {/* Alerts Section */}
+                  {(getBudgetPercentage() < 30 || isLeadingBid || (teamData.playerIds?.length || 0) > 20) && (
+                    <div className="px-6 py-4 border-b-2 border-yellow-200 bg-yellow-50">
+                      <h4 className="text-xs font-black text-slate-800 uppercase mb-3 flex items-center gap-2">
+                        <AlertCircle size={14} className="text-yellow-600" />
+                        Alerts
+                      </h4>
+                      <div className="space-y-2">
+                        {getBudgetPercentage() < 30 && (
+                          <div className="p-2 bg-red-50 border border-red-300 rounded-lg">
+                            <p className="text-xs font-bold text-red-700">⚠️ Low Budget Warning!</p>
+                          </div>
+                        )}
+                        {isLeadingBid && (
+                          <div className="p-2 bg-green-50 border border-green-300 rounded-lg">
+                            <p className="text-xs font-bold text-green-700">✓ You are leading!</p>
+                          </div>
+                        )}
+                        {(teamData.playerIds?.length || 0) > 20 && (
+                          <div className="p-2 bg-yellow-50 border border-yellow-300 rounded-lg">
+                            <p className="text-xs font-bold text-yellow-700">⚠️ Squad almost full</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Notifications List */}
                   <div>
                     {notifications.length === 0 ? (
                       <div className="px-6 py-8 text-center">
@@ -518,6 +565,14 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                 </div>
               )}
             </div>
+
+            <button
+              onClick={() => setShowPlayersPage(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-600 text-white font-bold text-sm transition-all shadow-lg"
+            >
+              <Users size={16} />
+              Players
+            </button>
 
             <button
               onClick={() => setActiveSection('liveRoom')}
@@ -622,7 +677,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                 <div className="space-y-4">
                   <div>
                     <p className="text-xs text-gray-600 uppercase font-bold mb-2">Remaining Budget</p>
-                    <p className="text-3xl font-black text-purple-600">₹{((teamData.budget || 0) / 10000000).toFixed(1)}Cr</p>
+                    <p className="text-3xl font-black text-purple-600">{formatCurrency(teamData.remainingBudget !== undefined ? teamData.remainingBudget : (teamData.budget || 0))}</p>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-3">
                     <div 
@@ -633,66 +688,57 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                   <div className="grid grid-cols-2 gap-3">
                     <div className="text-center p-3 bg-green-50 rounded-lg border border-green-200">
                       <p className="text-xs text-gray-600 uppercase font-bold">Total</p>
-                      <p className="text-sm font-black text-green-600">₹{((teamData.initialBudget || teamData.budget) / 10000000).toFixed(1)}Cr</p>
+                      <p className="text-sm font-black text-green-600">{formatCurrency(teamData.budget || 0)}</p>
                     </div>
                     <div className="text-center p-3 bg-red-50 rounded-lg border border-red-200">
                       <p className="text-xs text-gray-600 uppercase font-bold">Used</p>
-                      <p className="text-sm font-black text-red-600">₹{(((teamData.initialBudget || teamData.budget) - teamData.budget) / 10000000).toFixed(1)}Cr</p>
+                      <p className="text-sm font-black text-red-600">{formatCurrency((teamData.budget || 0) - (teamData.remainingBudget !== undefined ? teamData.remainingBudget : (teamData.budget || 0)))}</p>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Squad Card */}
-              <div className="bg-white/90 rounded-2xl border-2 border-blue-200 shadow-xl p-6">
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <Users size={16} className="text-blue-600" />
-                  Squad Status
-                </h3>
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-gray-600 uppercase font-bold">Players</span>
-                    <span className="text-xl font-black text-blue-600">{teamData.playerIds?.length || 0}</span>
-                  </div>
-                  <div className="h-px bg-blue-200"></div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-gray-600 uppercase font-bold">Max Squad</span>
-                    <span className="text-lg font-black text-slate-800">25</span>
-                  </div>
-                  <div className="h-px bg-blue-200"></div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-gray-600 uppercase font-bold">Slots Left</span>
-                    <span className="text-lg font-black text-slate-800">{25 - (teamData.playerIds?.length || 0)}</span>
-                  </div>
+              {/* Live Activity Feed */}
+              <div className="bg-white/90 rounded-2xl border-2 border-green-200 shadow-xl overflow-hidden">
+                <div className="bg-gradient-to-r from-green-100 to-emerald-100 px-6 py-4 border-b-2 border-green-200">
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <Activity size={16} className="text-green-600" />
+                    Live Activity Feed
+                  </h3>
+                </div>
+                <div className="overflow-y-auto p-4 space-y-2 h-64">
+                  {activityFeed.length === 0 ? (
+                    <div className="flex items-center justify-center py-8">
+                      <p className="text-gray-400 text-sm">No activity yet</p>
+                    </div>
+                  ) : (
+                    activityFeed.map(item => (
+                      <div
+                        key={item.id}
+                        className={`flex items-start gap-3 p-3 rounded-xl border-2 ${
+                          item.type === 'my-bid'
+                            ? 'bg-green-50 border-green-300'
+                            : item.type === 'other-bid'
+                            ? 'bg-red-50 border-red-300'
+                            : item.type === 'sold'
+                            ? 'bg-blue-50 border-blue-300'
+                            : 'bg-gray-50 border-gray-300'
+                        }`}
+                      >
+                        <div className={`w-2 h-2 rounded-full mt-1.5 ${
+                          item.type === 'my-bid' ? 'bg-green-500' :
+                          item.type === 'other-bid' ? 'bg-red-500' :
+                          item.type === 'sold' ? 'bg-blue-500' : 'bg-gray-500'
+                        }`}></div>
+                        <div className="flex-1">
+                          <p className="text-sm font-bold text-slate-800">{item.message}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{item.time}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
-
-              {/* Alerts Card */}
-              {(getBudgetPercentage() < 30 || isLeadingBid || (teamData.playerIds?.length || 0) > 20) && (
-                <div className="bg-white/90 rounded-2xl border-2 border-yellow-200 shadow-xl p-6">
-                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-2">
-                    <AlertCircle size={16} className="text-yellow-600" />
-                    Alerts
-                  </h3>
-                  <div className="space-y-2">
-                    {getBudgetPercentage() < 30 && (
-                      <div className="p-3 bg-red-50 border-2 border-red-300 rounded-lg">
-                        <p className="text-xs font-bold text-red-700">⚠️ Low Budget Warning!</p>
-                      </div>
-                    )}
-                    {isLeadingBid && (
-                      <div className="p-3 bg-green-50 border-2 border-green-300 rounded-lg">
-                        <p className="text-xs font-bold text-green-700">✓ You are leading!</p>
-                      </div>
-                    )}
-                    {(teamData.playerIds?.length || 0) > 20 && (
-                      <div className="p-3 bg-yellow-50 border-2 border-yellow-300 rounded-lg">
-                        <p className="text-xs font-bold text-yellow-700">⚠️ Squad almost full</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Center + Right: Auction & Bid Controls */}
@@ -736,63 +782,77 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                 ) : (
                   <div className="bg-white/90 rounded-2xl border-2 border-purple-200 shadow-xl p-4 h-full flex items-center justify-center overflow-hidden">
                     <div className="text-center">
-                      <Clock size={48} className="text-yellow-400 mb-3 animate-bounce mx-auto" />
-                      <h3 className="text-2xl font-black text-slate-800 mb-2">Auction Starting Soon</h3>
-                      <p className="text-sm text-gray-600 max-w-md font-semibold mb-4">
-                        {auctionStatus === 'completed' 
-                          ? 'The auction has been completed.'
-                          : 'Get ready! The auctioneer will start the auction shortly.'}
-                      </p>
-                      <div className="flex items-center justify-center gap-3">
-                        <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></div>
-                        <span className="text-yellow-600 font-bold text-sm">Waiting for auctioneer to start...</span>
-                      </div>
+                      {auctionStatus === 'live' ? (
+                        <>
+                          <Radio size={48} className="text-green-500 mb-3 animate-pulse mx-auto" />
+                          <h3 className="text-2xl font-black text-green-600 mb-2">Auction is Live!</h3>
+                          <p className="text-sm text-gray-600 max-w-md font-semibold mb-4">
+                            The auction is running. Waiting for next player to be auctioned...
+                          </p>
+                          <div className="flex items-center justify-center gap-3">
+                            <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
+                            <span className="text-green-600 font-bold text-sm">Ready to bid</span>
+                          </div>
+                        </>
+                      ) : auctionStatus === 'paused' ? (
+                        <>
+                          <Clock size={48} className="text-orange-400 mb-3 mx-auto" />
+                          <h3 className="text-2xl font-black text-orange-600 mb-2">Auction Paused</h3>
+                          <p className="text-sm text-gray-600 max-w-md font-semibold mb-4">
+                            The auctioneer has temporarily paused the auction.
+                          </p>
+                          <div className="flex items-center justify-center gap-3">
+                            <div className="w-2 h-2 rounded-full bg-orange-400 animate-pulse"></div>
+                            <span className="text-orange-600 font-bold text-sm">Waiting to resume...</span>
+                          </div>
+                        </>
+                      ) : auctionStatus === 'completed' ? (
+                        <>
+                          <Trophy size={48} className="text-blue-500 mb-3 mx-auto" />
+                          <h3 className="text-2xl font-black text-blue-600 mb-2">Auction Completed</h3>
+                          <p className="text-sm text-gray-600 max-w-md font-semibold mb-4">
+                            The auction has been completed. Review your squad below.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <Clock size={48} className="text-yellow-400 mb-3 animate-bounce mx-auto" />
+                          <h3 className="text-2xl font-black text-slate-800 mb-2">Auction Starting Soon</h3>
+                          <p className="text-sm text-gray-600 max-w-md font-semibold mb-4">
+                            Get ready! The auctioneer will start the auction shortly.
+                          </p>
+                          <div className="flex items-center justify-center gap-3">
+                            <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></div>
+                            <span className="text-yellow-600 font-bold text-sm">Waiting for auctioneer to start...</span>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Right: Live Activity Feed + Player Queue */}
+              {/* Right: Squad Status + Player Queue */}
               <div className="col-span-5 flex flex-col gap-4 overflow-y-auto">
-                {/* Live Activity Feed */}
-                <div className="bg-white/90 rounded-2xl border-2 border-green-200 shadow-xl overflow-hidden flex-1">
-                  <div className="bg-gradient-to-r from-green-100 to-emerald-100 px-6 py-4 border-b-2 border-green-200">
-                    <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                      <Activity size={16} className="text-green-600" />
-                      Live Activity Feed
+                {/* Squad Status */}
+                <div className="bg-white/90 rounded-2xl border-2 border-blue-200 shadow-xl p-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                      <Users size={14} className="text-blue-600" />
+                      Squad Status
                     </h3>
+                    <span className="text-xs text-gray-600">Max: 25</span>
                   </div>
-                  <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                    {activityFeed.length === 0 ? (
-                      <div className="flex items-center justify-center py-8">
-                        <p className="text-gray-400 text-sm">No activity yet</p>
-                      </div>
-                    ) : (
-                      activityFeed.map(item => (
-                        <div
-                          key={item.id}
-                          className={`flex items-start gap-3 p-3 rounded-xl border-2 ${
-                            item.type === 'my-bid'
-                              ? 'bg-green-50 border-green-300'
-                              : item.type === 'other-bid'
-                              ? 'bg-red-50 border-red-300'
-                              : item.type === 'sold'
-                              ? 'bg-blue-50 border-blue-300'
-                              : 'bg-gray-50 border-gray-300'
-                          }`}
-                        >
-                          <div className={`w-2 h-2 rounded-full mt-1.5 ${
-                            item.type === 'my-bid' ? 'bg-green-500' :
-                            item.type === 'other-bid' ? 'bg-red-500' :
-                            item.type === 'sold' ? 'bg-blue-500' : 'bg-gray-500'
-                          }`}></div>
-                          <div className="flex-1">
-                            <p className="text-sm font-bold text-slate-800">{item.message}</p>
-                            <p className="text-xs text-gray-500 mt-0.5">{item.time}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
+                  <div className="flex items-center justify-around mt-3">
+                    <div className="text-center">
+                      <p className="text-xs text-gray-600">Players</p>
+                      <p className="text-xl font-bold text-blue-600">{teamData.playerIds?.length || 0}</p>
+                    </div>
+                    <div className="h-8 w-px bg-gray-300"></div>
+                    <div className="text-center">
+                      <p className="text-xs text-gray-600">Slots Left</p>
+                      <p className="text-xl font-bold text-slate-800">{25 - (teamData.playerIds?.length || 0)}</p>
+                    </div>
                   </div>
                 </div>
 
@@ -850,6 +910,14 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
           </div>
         )}
       </main>
+
+      {/* Players Page Overlay */}
+      {showPlayersPage && (
+        <PlayersPage 
+          onClose={() => setShowPlayersPage(false)} 
+          currentMatch={currentMatch}
+        />
+      )}
     </div>
     </>
   );

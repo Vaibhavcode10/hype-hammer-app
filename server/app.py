@@ -136,6 +136,70 @@ def success_response(data: Any = None, message: str = "Success", status_code: in
     return response, status_code
 
 
+def compute_match_status(match_data: Dict, players: List[Dict] = None, history: List[Dict] = None) -> str:
+    """Compute the actual status of a match/auction based on multiple factors"""
+    
+    # If already marked as COMPLETED, keep it completed
+    if match_data.get('status') == 'COMPLETED':
+        return 'COMPLETED'
+    
+    # Get current time
+    now = datetime.now()
+    
+    # Get match/auction date
+    match_date = match_data.get('matchDate')
+    created_at = match_data.get('createdAt')
+    
+    # Parse date
+    auction_date = None
+    if match_date:
+        if isinstance(match_date, (int, float)):
+            auction_date = datetime.fromtimestamp(match_date / 1000 if match_date > 10000000000 else match_date)
+        elif isinstance(match_date, str):
+            try:
+                auction_date = datetime.fromisoformat(match_date.replace('Z', '+00:00'))
+            except:
+                pass
+    
+    if not auction_date and created_at:
+        if isinstance(created_at, (int, float)):
+            auction_date = datetime.fromtimestamp(created_at / 1000 if created_at > 10000000000 else created_at)
+        elif isinstance(created_at, str):
+            try:
+                auction_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            except:
+                pass
+    
+    # Check if all players are processed
+    has_sold_players = False
+    if players is not None:
+        total_players = len(players)
+        processed_players = sum(1 for p in players if p.get('status') in ['SOLD', 'UNSOLD'])
+        sold_players = sum(1 for p in players if p.get('status') == 'SOLD')
+        has_sold_players = sold_players > 0
+        all_players_processed = total_players > 0 and processed_players == total_players
+        
+        # If all players processed, auction is completed
+        if all_players_processed:
+            return 'COMPLETED'
+    
+    # Check if auction has started based on history, sold players, or ONGOING status
+    has_history = history and len(history) > 0
+    is_ongoing = match_data.get('status') == 'ONGOING'
+    has_activity = has_history or has_sold_players
+    
+    # If auction date has passed
+    if auction_date and auction_date < now:
+        # If auction was started (has history, sold players, or marked ongoing), it's live
+        if is_ongoing or has_activity:
+            return 'ONGOING'
+        # If date passed but never started, still show as SETUP
+        return 'SETUP'
+    
+    # Auction date hasn't arrived yet or no date set
+    return 'SETUP'
+
+
 # ========================
 # ERROR HANDLERS
 # ========================
@@ -521,6 +585,40 @@ def register_guest():
 # TEAM MANAGEMENT ROUTES
 # ========================
 
+def sync_team_player_ids(team_id: str):
+    """Synchronize team's playerIds from players marked as SOLD to that team"""
+    try:
+        # Find all players sold to this team
+        print(f'Syncing playerIds for team: {team_id}')
+        
+        # First, get all players sold to this team with status SOLD
+        players_query = db.collection('players').where('soldTo', '==', team_id)
+        all_players = list(players_query.stream())
+        
+        print(f'  Found {len(all_players)} players with soldTo={team_id}')
+        for p in all_players:
+            p_data = p.to_dict()
+            print(f'    Player {p.id}: status={p_data.get("status")}, soldTo={p_data.get("soldTo")}')
+        
+        # Filter to only SOLD status
+        sold_players = [p for p in all_players if p.to_dict().get('status') == 'SOLD']
+        sold_player_ids = [p.id for p in sold_players]
+        
+        print(f'  Filtered to {len(sold_player_ids)} SOLD players: {sold_player_ids}')
+        
+        # Update team's playerIds
+        db.collection('teams').document(team_id).update({
+            'playerIds': sold_player_ids
+        })
+        print(f'  Updated team {team_id}: playerIds = {sold_player_ids}')
+        
+        return sold_player_ids
+    except Exception as e:
+        print(f'Error syncing team playerIds for {team_id}: {e}')
+        import traceback
+        traceback.print_exc()
+        return []
+
 @app.route('/api/teams', methods=['GET'])
 def get_teams():
     """Get all teams, optionally filtered by matchId"""
@@ -535,6 +633,16 @@ def get_teams():
             docs = db.collection('teams').stream()
         
         teams = serialize_firestore_docs(docs)
+        
+        # Sync playerIds for each team from players collection
+        for team in teams:
+            team_id = team.get('id')
+            sold_player_ids = sync_team_player_ids(team_id)
+            team['playerIds'] = sold_player_ids
+        
+        print(f'GET /api/teams - Retrieved {len(teams)} teams')
+        for team in teams:
+            print(f'  Team: {team.get("name")} - playerIds: {team.get("playerIds", [])} (count: {len(team.get("playerIds", []))})')
         
         return success_response(teams, f"Retrieved {len(teams)} teams")
     except Exception as e:
@@ -578,6 +686,7 @@ def create_team():
             'id': team_id,
             'remainingBudget': data['budget'],
             'players': [],
+            'playerIds': [],
             'createdAt': datetime.now().isoformat(),
             'updatedAt': datetime.now().isoformat()
         }
@@ -617,6 +726,56 @@ def delete_team(team_id):
         return success_response(None, "Team deleted successfully")
     except Exception as e:
         return error_response(f"Failed to delete team: {str(e)}")
+
+
+@app.route('/api/debug/sync-all-teams', methods=['POST'])
+def debug_sync_all_teams():
+    """DEBUG: Force sync all teams with their sold players"""
+    try:
+        teams_docs = db.collection('teams').stream()
+        all_teams = serialize_firestore_docs(teams_docs)
+        
+        results = []
+        for team in all_teams:
+            team_id = team.get('id')
+            sold_player_ids = sync_team_player_ids(team_id)
+            results.append({
+                'teamId': team_id,
+                'teamName': team.get('name'),
+                'playerCount': len(sold_player_ids),
+                'playerIds': sold_player_ids
+            })
+        
+        return success_response(results, "Synced all teams")
+    except Exception as e:
+        print(f'Error in debug sync: {e}')
+        import traceback
+        traceback.print_exc()
+        return error_response(f"Debug sync failed: {str(e)}")
+
+
+@app.route('/api/debug/all-players', methods=['GET'])
+def debug_all_players():
+    """DEBUG: Get all SOLD players with their team assignments"""
+    try:
+        # Get all SOLD players
+        players_query = db.collection('players').where('status', '==', 'SOLD')
+        players = list(players_query.stream())
+        
+        player_list = []
+        for p in players:
+            p_data = p.to_dict()
+            player_list.append({
+                'playerId': p.id,
+                'playerName': p_data.get('name'),
+                'status': p_data.get('status'),
+                'soldTo': p_data.get('soldTo'),
+                'soldAmount': p_data.get('soldAmount')
+            })
+        
+        return success_response(player_list, f"Found {len(player_list)} sold players")
+    except Exception as e:
+        return error_response(f"Failed to get players: {str(e)}")
 
 
 @app.route('/api/teams/<team_id>/budget', methods=['PUT'])
@@ -1146,6 +1305,49 @@ def update_match(match_id):
         return error_response(f"Failed to update match: {str(e)}")
 
 
+@app.route('/api/matches/<match_id>/status', methods=['PUT'])
+def update_match_status(match_id):
+    """Update match status (or compute it dynamically)"""
+    try:
+        match_ref = db.collection('matches').document(match_id)
+        match_doc = match_ref.get()
+        
+        if not match_doc.exists:
+            return error_response(f"Match {match_id} not found", 404)
+        
+        match_data = serialize_firestore_doc(match_doc)
+        
+        # Get players and history
+        players_docs = db.collection('players').where('matchId', '==', match_id).stream()
+        players = [serialize_firestore_doc(p) for p in players_docs]
+        
+        bids_docs = db.collection('bids').where('matchId', '==', match_id).stream()
+        history = [serialize_firestore_doc(b) for b in bids_docs]
+        
+        # Compute actual status
+        computed_status = compute_match_status(match_data, players, history)
+        
+        # Update in database
+        match_ref.update({
+            'status': computed_status,
+            'updatedAt': datetime.now().isoformat()
+        })
+        
+        updated_doc = match_ref.get()
+        updated_match = serialize_firestore_doc(updated_doc)
+        
+        # Emit websocket event for real-time update
+        socketio.emit('MATCH_STATUS_UPDATED', {
+            'matchId': match_id,
+            'status': computed_status,
+            'timestamp': datetime.now().isoformat()
+        }, room=f'match_{match_id}')
+        
+        return success_response(updated_match, f"Match status updated to {computed_status}")
+    except Exception as e:
+        return error_response(f"Failed to update match status: {str(e)}")
+
+
 @app.route('/api/matches/<match_id>', methods=['DELETE'])
 def delete_match(match_id):
     """Delete a match and all associated data (cascade delete)"""
@@ -1242,7 +1444,7 @@ def update_app_state():
 
 @app.route('/api/sports', methods=['GET'])
 def get_all_sports():
-    """Get all sports data aggregated from Firestore"""
+    """Get all sports data aggregated from Firestore with computed auction status"""
     try:
         sports_data = []
         
@@ -1260,10 +1462,25 @@ def get_all_sports():
             teams_docs = db.collection('teams').where('matchId', '==', match_doc.id).stream()
             teams = [serialize_firestore_doc(t) for t in teams_docs]
             
-            # Add players and teams to match data
+            # Get bid history for this match
+            bids_docs = db.collection('bids').where('matchId', '==', match_doc.id).stream()
+            history = [serialize_firestore_doc(b) for b in bids_docs]
+            
+            # Compute actual status based on date, players, and history
+            computed_status = compute_match_status(match_data, players, history)
+            
+            # Update status in database if it changed
+            if computed_status != match_data.get('status'):
+                db.collection('matches').document(match_doc.id).update({
+                    'status': computed_status,
+                    'updatedAt': datetime.now().isoformat()
+                })
+                match_data['status'] = computed_status
+            
+            # Add players, teams, and history to match data
             match_data['players'] = players
             match_data['teams'] = teams
-            match_data['history'] = []  # TODO: fetch from history collection if needed
+            match_data['history'] = history
             
             # Group by sport
             sport_type = match_data.get('sport', 'CUSTOM')
@@ -1839,12 +2056,20 @@ def start_auction():
         
         update_auction_state(season_id, updates)
         
-        # Broadcast to all dashboards
+        # Get updated state
+        updated_state = get_auction_state(season_id)
+        
+        # Broadcast to all dashboards with status
         socketio.emit('AUCTION_STARTED', {
             'seasonId': season_id,
+            'status': 'LIVE',
             'message': 'Auction is now LIVE!',
             'timestamp': datetime.now().isoformat()
         }, room=f'season_{season_id}')
+        
+        # Also send full state update
+        if updated_state:
+            socketio.emit('AUCTION_STATE_UPDATE', updated_state, room=f'season_{season_id}')
         
         # Start server timer
         start_auction_timer(season_id)
@@ -1868,10 +2093,18 @@ def pause_auction():
         
         update_auction_state(season_id, updates)
         
+        # Get updated state
+        updated_state = get_auction_state(season_id)
+        
         socketio.emit('AUCTION_PAUSED', {
             'seasonId': season_id,
+            'status': 'PAUSED',
             'timestamp': datetime.now().isoformat()
         }, room=f'season_{season_id}')
+        
+        # Also send full state update
+        if updated_state:
+            socketio.emit('AUCTION_STATE_UPDATE', updated_state, room=f'season_{season_id}')
         
         return success_response(None, "Auction paused")
     except Exception as e:
@@ -1892,10 +2125,18 @@ def resume_auction():
         
         update_auction_state(season_id, updates)
         
+        # Get updated state
+        updated_state = get_auction_state(season_id)
+        
         socketio.emit('AUCTION_RESUMED', {
             'seasonId': season_id,
+            'status': 'LIVE',
             'timestamp': datetime.now().isoformat()
         }, room=f'season_{season_id}')
+        
+        # Also send full state update
+        if updated_state:
+            socketio.emit('AUCTION_STATE_UPDATE', updated_state, room=f'season_{season_id}')
         
         return success_response(None, "Auction resumed")
     except Exception as e:
@@ -1965,12 +2206,15 @@ def start_player_bidding():
         update_auction_state(season_id, updates)
         
         # Broadcast to all dashboards
+        room_name = f'season_{season_id}'
+        print(f'🔔 Emitting PLAYER_BIDDING_STARTED to room: {room_name}')
+        print(f'   Player: {player.get("name")}, Base Price: {base_price}')
         socketio.emit('PLAYER_BIDDING_STARTED', {
             'seasonId': season_id,
             'player': player,
             'basePrice': base_price,
             'timestamp': datetime.now().isoformat()
-        }, room=f'season_{season_id}')
+        }, room=room_name)
         
         return success_response(None, "Player bidding started")
     except Exception as e:
@@ -2054,14 +2298,22 @@ def place_bid():
         db.collection('bids').document(bid_id).set(bid_data)
         
         # Broadcast to ALL dashboards - EVERYONE SEES SAME BID
-        socketio.emit('NEW_BID', {
+        bid_broadcast = {
             'seasonId': season_id,
             'playerId': state['currentPlayerId'],
             'teamId': team_id,
             'teamName': team.get('name'),
             'amount': amount,
             'timestamp': datetime.now().isoformat()
-        }, room=f'season_{season_id}')
+        }
+        
+        print(f'💰 Broadcasting NEW_BID to season_{season_id}: {team.get("name")} bid {amount}')
+        socketio.emit('NEW_BID', bid_broadcast, room=f'season_{season_id}')
+        
+        # Also send updated auction state
+        updated_state = get_auction_state(season_id)
+        if updated_state:
+            socketio.emit('AUCTION_STATE_UPDATE', updated_state, room=f'season_{season_id}')
         
         return success_response(None, "Bid placed successfully")
     except Exception as e:
@@ -2092,6 +2344,8 @@ def close_player_bidding():
         final_amount = state.get('currentBid', 0)
         winning_team_id = state.get('leadingTeamId')
         
+        print(f'[CLOSE_BIDDING] Player: {player_id}, Sold: {sold}, Winning Team: {winning_team_id}, Amount: {final_amount}')
+        
         result_data = {
             'playerId': player_id,
             'playerName': state.get('currentPlayerName'),
@@ -2103,6 +2357,7 @@ def close_player_bidding():
         }
         
         if sold and winning_team_id:
+            print(f'[CLOSE_BIDDING] Marking player {player_id} as SOLD to team {winning_team_id}')
             # Update player status
             db.collection('players').document(player_id).update({
                 'status': 'SOLD',
@@ -2115,16 +2370,31 @@ def close_player_bidding():
             team_doc = db.collection('teams').document(winning_team_id).get()
             if team_doc.exists:
                 team = serialize_firestore_doc(team_doc)
-                new_budget = team.get('remainingBudget', 0) - final_amount
-                players_list = team.get('players', [])
-                players_list.append(player_id)
+                # Get current budget (try both field names for backwards compatibility)
+                current_budget = team.get('budget', team.get('remainingBudget', 0))
+                new_budget = current_budget - final_amount
+                # Use playerIds array (the correct field name)
+                player_ids_list = team.get('playerIds', [])
+                if player_id not in player_ids_list:
+                    player_ids_list.append(player_id)
                 
+                print(f'[CLOSE_BIDDING] Updating team {winning_team_id}: budget {current_budget} -> {new_budget}, playerIds: {player_ids_list}')
                 db.collection('teams').document(winning_team_id).update({
-                    'remainingBudget': new_budget,
-                    'players': players_list,
+                    'budget': new_budget,
+                    'remainingBudget': new_budget,  # Keep for backwards compatibility
+                    'playerIds': player_ids_list,
                     'updatedAt': datetime.now().isoformat()
                 })
+                print(f'Updated team {winning_team_id}: added player {player_id}, playerIds count: {len(player_ids_list)}')
+                
+                # Emit TEAM_UPDATED event for real-time budget updates
+                updated_team = serialize_firestore_doc(db.collection('teams').document(winning_team_id).get())
+                socketio.emit('TEAM_UPDATED', {
+                    'teamId': winning_team_id,
+                    'team': updated_team
+                }, room=f'season_{season_id}')
         else:
+            print(f'[CLOSE_BIDDING] Marking player {player_id} as UNSOLD (sold={sold}, winning_team={winning_team_id})')
             # Mark player as unsold
             db.collection('players').document(player_id).update({
                 'status': 'UNSOLD',
@@ -2257,7 +2527,8 @@ def handle_join_season(data):
     if user_id:
         join_room(f'user_{user_id}')
     
-    print(f'User {user_id} ({role}) joined season_{season_id}')
+    room_name = f'season_{season_id}'
+    print(f'✅ User {user_id} ({role}) joined room: {room_name}')
     
     # Send current auction state
     state = get_auction_state(season_id)

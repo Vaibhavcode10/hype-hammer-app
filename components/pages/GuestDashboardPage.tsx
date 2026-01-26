@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { AuctionStatus, MatchData, UserRole, Team, Player } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
+import { PlayersPage } from './PlayersPage';
 import { useAudioListener } from '../../services/useAudioListener';
 import socketService from '../../services/socketService';
 
@@ -18,6 +19,7 @@ interface GuestDashboardPageProps {
 
 export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom'>('dashboard');
+  const [showPlayersPage, setShowPlayersPage] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,6 +27,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
   const [currentBid, setCurrentBid] = useState<number>(0);
   const [leadingTeam, setLeadingTeam] = useState<string>('');
   const [countdown, setCountdown] = useState<number>(0);
+  const [auctionStatus, setAuctionStatus] = useState<'READY' | 'LIVE' | 'PAUSED' | 'ENDED'>('READY');
   const [activityFeed, setActivityFeed] = useState<Array<{ id: string; message: string; timestamp: Date; type: 'bid' | 'sold' | 'unsold' }>>([]);
   const [auctioneerMicOn, setAuctioneerMicOn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -44,12 +47,20 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       return;
     }
 
-    const socket = socketService.connect();
+    // Connect to server
+    socketService.connect('http://localhost:5000');
+
+    // Join season room
+    socketService.joinSeason(currentMatch.id, currentUser.email, UserRole.GUEST);
+
+    const socket = socketService.getSocket();
     
-    socket.on('connect', () => {
-      console.log('✅ Guest connected to auction');
-      socketService.joinSeason(currentMatch.id, currentUser.email, UserRole.GUEST);
-    });
+    if (!socket) {
+      console.error('Socket not available');
+      return;
+    }
+
+    console.log('✅ Guest setting up socket listeners for season:', currentMatch.id);
 
     // Listen for timer updates from backend
     socket.on('AUCTION_TIMER_UPDATE', (data: any) => {
@@ -58,19 +69,29 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
 
     // Listen for auction state updates
     socket.on('AUCTION_STATE_UPDATE', (data: any) => {
-      console.log('AUCTION_STATE_UPDATE received:', data);
+      console.log('📡 AUCTION_STATE_UPDATE received:', data);
+      if (data.status) {
+        console.log('   → Setting auction status to:', data.status);
+        setAuctionStatus(data.status);
+      }
       if (data.remainingSeconds !== undefined) {
         setCountdown(data.remainingSeconds);
       }
       // If there's a current player being auctioned, set it
       if (data.currentPlayerId && data.biddingActive) {
+        console.log('   → Looking for player:', data.currentPlayerId);
         const player = players.find(p => p.id === data.currentPlayerId);
+        
         if (player) {
+          console.log('   → Setting current bidding player:', player.name);
           setCurrentBiddingPlayer(player);
           setCurrentBid(data.currentBid || player.basePrice || 0);
           setLeadingTeam(data.leadingTeamId || '');
+        } else {
+          console.error('   ✗ Player not found:', data.currentPlayerId);
         }
       } else if (!data.biddingActive) {
+        console.log('   → No active bidding, clearing current player');
         setCurrentBiddingPlayer(null);
         setCurrentBid(0);
         setLeadingTeam('');
@@ -87,27 +108,55 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
     });
 
     // Auction state updates
-    socket.on('AUCTION_STARTED', () => {
+    socket.on('AUCTION_STARTED', (data: any) => {
+      console.log('🚀 AUCTION_STARTED received:', data);
+      setAuctionStatus('LIVE');
       addActivity('🚀 Auction has started!', 'bid');
     });
 
-    socket.on('AUCTION_PAUSED', () => {
+    socket.on('AUCTION_PAUSED', (data: any) => {
+      console.log('⏸️ AUCTION_PAUSED received:', data);
+      setAuctionStatus('PAUSED');
       addActivity('⏸️ Auction paused', 'bid');
     });
 
-    socket.on('AUCTION_RESUMED', () => {
+    socket.on('AUCTION_RESUMED', (data: any) => {
+      console.log('▶️ AUCTION_RESUMED received:', data);
+      setAuctionStatus('LIVE');
       addActivity('▶️ Auction resumed', 'bid');
+    });
+
+    socket.on('AUCTION_ENDED', (data: any) => {
+      console.log('🏁 AUCTION_ENDED received:', data);
+      setAuctionStatus('ENDED');
+      addActivity('🏁 Auction has ended', 'bid');
     });
 
     // Listen for bidding events
     socket.on('PLAYER_BIDDING_STARTED', (data: any) => {
-      console.log('PLAYER_BIDDING_STARTED received:', data);
+      console.log('🔨 PLAYER_BIDDING_STARTED received:', data);
+      console.log('   → Player object:', data.player);
+      console.log('   → Base price:', data.basePrice);
       // Backend sends { player: {...}, basePrice: number }
       if (data.player) {
+        console.log('   → Setting current bidding player to:', data.player.name);
         setCurrentBiddingPlayer(data.player);
         setCurrentBid(data.basePrice || data.player.basePrice || 0);
         setLeadingTeam('');
+        setAuctionStatus('LIVE'); // Ensure status is set to LIVE
         addActivity(`🔨 Bidding started for ${data.player.name}`, 'bid');
+        
+        // Update players list if player exists
+        setPlayers(prev => {
+          const exists = prev.some(p => p.id === data.player.id);
+          if (exists) {
+            return prev.map(p => p.id === data.player.id ? data.player : p);
+          } else {
+            return [...prev, data.player];
+          }
+        });
+      } else {
+        console.error('   ❌ No player object in PLAYER_BIDDING_STARTED event!');
       }
     });
 
@@ -119,21 +168,27 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       setPlayers(prev => prev.map(p => p.id === data.playerId ? data.player : p));
       
       // If this player is currently being auctioned, update the bidding player
-      if (currentBiddingPlayer && data.playerId === currentBiddingPlayer.id) {
-        setCurrentBiddingPlayer(data.player);
-      }
+      setCurrentBiddingPlayer(prev => {
+        if (prev && data.playerId === prev.id) {
+          return data.player;
+        }
+        return prev;
+      });
     });
 
     socket.on('NEW_BID', (data: any) => {
+      console.log('💰 NEW_BID received:', data);
+      console.log('   → Updating current bid to:', data.amount);
       setCurrentBid(data.amount);
       setLeadingTeam(data.teamId);
-      const team = teams.find(t => t.id === data.teamId);
-      addActivity(`📈 ${team?.name || 'Team'} bid ${formatCurrency(data.amount)}`, 'bid');
+      // Use team name from data instead of finding from teams array
+      const bidMessage = `📈 ${data.teamName || 'Team'} bid ${formatCurrency(data.amount)}`;
+      addActivity(bidMessage, 'bid');
     });
 
     socket.on('PLAYER_SOLD', async (data: any) => {
-      const team = teams.find(t => t.id === data.teamId);
-      addActivity(`✅ ${data.playerName} sold to ${team?.name || 'Team'} for ${formatCurrency(data.finalAmount)}`, 'sold');
+      // Use team name from data instead of finding from teams array
+      addActivity(`✅ ${data.playerName} sold to ${data.teamName || 'Team'} for ${formatCurrency(data.finalAmount)}`, 'sold');
       
       // Refetch player and team data to get live updates
       try {
@@ -188,12 +243,14 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       socket.off('AUCTION_STARTED');
       socket.off('AUCTION_PAUSED');
       socket.off('AUCTION_RESUMED');
+      socket.off('AUCTION_ENDED');
       socket.off('PLAYER_BIDDING_STARTED');
+      socket.off('PLAYER_UPDATED');
       socket.off('NEW_BID');
       socket.off('PLAYER_SOLD');
       socket.off('PLAYER_UNSOLD');
     };
-  }, [currentMatch?.id, currentUser.email, players, teams]);
+  }, [currentMatch?.id, currentUser.email, players]);
 
   // Add activity to feed
   const addActivity = (message: string, type: 'bid' | 'sold' | 'unsold') => {
@@ -237,27 +294,54 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
         
         // Fetch teams for this match
         const teamsResponse = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
-        if (teamsResponse.ok) {
-          const teamsData = await teamsResponse.json();
-          setTeams(teamsData.data || []);
-        }
+        const teamsData = teamsResponse.ok ? await teamsResponse.json() : { data: [] };
+        setTeams(teamsData.data || []);
         
         // Fetch players for this match
         const playersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
-        if (playersResponse.ok) {
-          const playersData = await playersResponse.json();
-          setPlayers(playersData.data || []);
-        }
+        const playersData = playersResponse.ok ? await playersResponse.json() : { data: [] };
+        const fetchedPlayers = playersData.data || [];
+        setPlayers(fetchedPlayers);
 
         // Fetch auction state with timer from backend
         const auctionStateResponse = await fetch(`http://localhost:5000/api/auction/state/${currentMatch.id}`);
         if (auctionStateResponse.ok) {
           const auctionStateData = await auctionStateResponse.json();
-          if (auctionStateData.data && auctionStateData.data.endTime) {
-            const endTime = new Date(auctionStateData.data.endTime).getTime();
-            const now = Date.now();
-            const remainingSeconds = Math.max(0, Math.floor((endTime - now) / 1000));
-            setCountdown(remainingSeconds);
+          const state = auctionStateData.data;
+          
+          if (state) {
+            console.log('📊 Initial auction state:', state);
+            
+            // Set timer countdown
+            if (state.endTime) {
+              const endTime = new Date(state.endTime).getTime();
+              const now = Date.now();
+              const remainingSeconds = Math.max(0, Math.floor((endTime - now) / 1000));
+              setCountdown(remainingSeconds);
+            }
+            
+            // Set auction status
+            if (state.status) {
+              console.log('   → Setting auction status to:', state.status);
+              setAuctionStatus(state.status);
+            }
+            
+            // Set current bidding player if active
+            if (state.currentPlayerId && state.biddingActive) {
+              const player = fetchedPlayers.find((p: Player) => p.id === state.currentPlayerId);
+              if (player) {
+                console.log('🎯 Setting initial current bidding player:', player.name);
+                console.log('   → Current bid:', state.currentBid);
+                console.log('   → Leading team:', state.leadingTeamId);
+                setCurrentBiddingPlayer(player);
+                setCurrentBid(state.currentBid || player.basePrice || 0);
+                setLeadingTeam(state.leadingTeamId || '');
+              } else {
+                console.log('⚠️ Player not found in players list:', state.currentPlayerId);
+              }
+            } else {
+              console.log('   → No active bidding (biddingActive:', state.biddingActive, ')');
+            }
           }
         }
       } catch (error) {
@@ -271,6 +355,14 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       fetchData();
     }
   }, [currentMatch?.id]);
+
+  // Debug: Monitor currentBiddingPlayer state
+  useEffect(() => {
+    console.log('🔍 Current Bidding Player State Changed:', currentBiddingPlayer);
+    console.log('   → Current Bid:', currentBid);
+    console.log('   → Leading Team:', leadingTeam);
+    console.log('   → Auction Status:', auctionStatus);
+  }, [currentBiddingPlayer, currentBid, leadingTeam, auctionStatus]);
 
   // Helper functions
   const formatCurrency = (amount: number): string => {
@@ -343,11 +435,11 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
           <div className="flex items-center gap-6">
             {/* LIVE Status */}
             <div className={`px-6 py-2 rounded-full font-black uppercase text-sm tracking-wider flex items-center gap-2 ${
-              currentMatch.auctionStatus === 'LIVE' 
+              auctionStatus === 'LIVE' 
                 ? 'bg-red-100 text-red-600 border-2 border-red-300 animate-pulse' 
                 : 'bg-gray-100 text-gray-600 border-2 border-gray-300'
             }`}>
-              {currentMatch.auctionStatus === 'LIVE' ? (
+              {auctionStatus === 'LIVE' ? (
                 <>
                   <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
                   LIVE AUCTION
@@ -355,7 +447,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
               ) : (
                 <>
                   <Clock size={14} />
-                  {currentMatch.auctionStatus || 'NOT STARTED'}
+                  {auctionStatus === 'READY' ? 'READY' : auctionStatus === 'PAUSED' ? 'PAUSED' : auctionStatus === 'ENDED' ? 'ENDED' : 'NOT STARTED'}
                 </>
               )}
             </div>
@@ -365,14 +457,6 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
               <div className="px-4 py-2 bg-green-100 border-2 border-green-300 rounded-full flex items-center gap-2 animate-pulse">
                 <Mic size={16} className="text-green-600" />
                 <span className="text-xs font-black text-green-700 uppercase tracking-wider">Auctioneer Speaking</span>
-              </div>
-            )}
-
-            {/* Countdown */}
-            {countdown >= 0 && (
-              <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white border-2 border-cyan-300 shadow-md">
-                <Timer size={16} className="text-cyan-600" />
-                <span className="font-mono font-bold text-slate-800 text-sm">{formatTime(countdown)}</span>
               </div>
             )}
           </div>
@@ -448,6 +532,15 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                 </div>
               )}
             </div>
+
+            {/* Players Button */}
+            <button
+              onClick={() => setShowPlayersPage(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-600 text-white font-bold text-sm transition-all shadow-lg"
+            >
+              <Users size={16} />
+              Players
+            </button>
 
             {/* Live Room Toggle */}
             <button
@@ -609,10 +702,28 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
               ) : (
                 <div className="text-center">
                   <div className="w-20 h-20 mx-auto mb-3 rounded-full bg-white border-3 border-cyan-200 flex items-center justify-center shadow-lg">
-                    <Zap size={40} className="text-gray-400" />
+                    {auctionStatus === 'LIVE' ? (
+                      <Radio size={40} className="text-orange-500 animate-pulse" />
+                    ) : auctionStatus === 'PAUSED' ? (
+                      <Clock size={40} className="text-yellow-500" />
+                    ) : auctionStatus === 'ENDED' ? (
+                      <Trophy size={40} className="text-green-500" />
+                    ) : (
+                      <Zap size={40} className="text-gray-400" />
+                    )}
                   </div>
-                  <p className="text-lg font-black text-gray-600 mb-1">No Active Bidding</p>
-                  <p className="text-xs text-gray-500">Waiting for auction to start</p>
+                  <p className="text-lg font-black text-gray-600 mb-1">
+                    {auctionStatus === 'LIVE' ? 'Auction is Live!' : 
+                     auctionStatus === 'PAUSED' ? 'Auction Paused' :
+                     auctionStatus === 'ENDED' ? 'Auction Ended' : 
+                     'No Active Bidding'}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {auctionStatus === 'LIVE' ? 'Waiting for next player...' :
+                     auctionStatus === 'PAUSED' ? 'Auction is paused by the auctioneer' :
+                     auctionStatus === 'ENDED' ? 'All players have been auctioned' :
+                     'Waiting for auction to start'}
+                  </p>
                 </div>
               )}
             </div>
@@ -684,6 +795,14 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
             onClose={() => setActiveSection('dashboard')}
           />
         </div>
+      )}
+
+      {/* Players Page Overlay */}
+      {showPlayersPage && (
+        <PlayersPage 
+          onClose={() => setShowPlayersPage(false)} 
+          currentMatch={currentMatch}
+        />
       )}
     </div>
   );

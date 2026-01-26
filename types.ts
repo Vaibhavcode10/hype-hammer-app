@@ -164,11 +164,18 @@ export interface Player {
   roleId: string;
   basePrice: number;
   isOverseas: boolean;
-  status: 'UNSOLD' | 'SOLD' | 'PENDING';
+  status: 'UNSOLD' | 'SOLD' | 'PENDING' | 'AVAILABLE';
   teamId?: string;
   soldPrice?: number;
+  soldAmount?: number; // Backend field for sold price
+  soldTo?: string; // Backend field for team ID
+  soldAt?: string; // Backend field for sold timestamp
+  finalPrice?: number; // Alternative price field
+  currentBid?: number; // Current bid amount
+  teamName?: string; // Team name if available
   imageUrl?: string;
   email?: string; // For matching with user
+  role?: string; // Alternative field for roleId
   // Real-world extensions
   age?: number;
   nationality?: string;
@@ -183,10 +190,14 @@ export interface Team {
   budget: number;
   remainingBudget: number;
   players: string[]; // Player IDs
+  playerIds?: string[]; // Backend field for player IDs
+  squadSize?: number; // Calculated field for display
   // Real-world extensions
   owner?: string;
   homeCity?: string;
   foundationYear?: number;
+  repName?: string; // Team representative name
+  initialBudget?: number; // Alternative budget field name
 }
 
 export interface Bid {

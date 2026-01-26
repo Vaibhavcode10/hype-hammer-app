@@ -250,6 +250,14 @@ class SocketService {
   }
 
   /**
+   * Listen to match/auction status updates
+   */
+  onMatchStatusUpdated(callback: (data: { matchId: string; status: string; timestamp: string }) => void) {
+    if (!this.socket) return;
+    this.socket.on('MATCH_STATUS_UPDATED', callback);
+  }
+
+  /**
    * Listen to auctioneer microphone MUTE event
    */
   onAuctioneerMicMute(callback: (data: any) => void) {
