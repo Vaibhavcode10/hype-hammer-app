@@ -766,7 +766,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     
     try {
       setReportLoading(true);
-      const response = await fetch(`http://localhost:5000/api/bids/${currentMatch.id}/player/${playerId}/history`);
+      // Use matchId query parameter instead of auction_id in URL
+      const response = await fetch(`http://localhost:5000/api/bids?playerId=${playerId}`);
       
       if (response.ok) {
         const result = await response.json();
@@ -774,9 +775,26 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         // Handle both result.data and result.bids or direct array
         const bids = result.data || result.bids || result || [];
         console.log('Extracted bids:', bids);
+        
+        // Sort by timestamp descending (most recent first)
+        const sortedBids = Array.isArray(bids) ? bids.sort((a, b) => {
+          const timeA = new Date(a.timestamp).getTime();
+          const timeB = new Date(b.timestamp).getTime();
+          return timeA - timeB; // Ascending order (oldest first, chronological)
+        }) : [];
+        
+        // Enrich bids with team names
+        const enrichedBids = sortedBids.map(bid => {
+          const team = teams.find(t => t.id === bid.teamId);
+          return {
+            ...bid,
+            teamName: team?.name || 'Unknown Team'
+          };
+        });
+        
         setBiddingHistory(prev => ({
           ...prev,
-          [playerId]: Array.isArray(bids) ? bids : []
+          [playerId]: enrichedBids
         }));
       }
     } catch (error) {
@@ -1520,12 +1538,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                   </div>
                 </div>
 
-                <div className="grid gap-4">
+                <div className="grid gap-3">
                   {filteredPlayers.map((player) => (
-                    <div key={player.id} className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all">
+                    <div key={player.id} className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-xl p-4 shadow-lg hover:shadow-xl transition-all">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center text-white font-black text-2xl overflow-hidden">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center text-white font-black text-lg overflow-hidden flex-shrink-0">
                             {player.imageUrl ? (
                               <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover" />
                             ) : (
@@ -1533,28 +1551,28 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                             )}
                           </div>
                           <div>
-                            <h3 className="text-xl font-black text-slate-800">{player.name}</h3>
-                            <p className="text-sm text-slate-600">{player.role || 'N/A'}</p>
+                            <h3 className="text-base font-black text-slate-800">{player.name}</h3>
+                            <p className="text-xs text-slate-600">{player.role || 'N/A'}</p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-6">
+                        <div className="flex items-center gap-4">
                           <div className="text-right">
-                            <p className="text-xs text-slate-500 uppercase tracking-wider font-bold">Base Price</p>
-                            <p className="text-lg font-black text-slate-800">₹{((player.basePrice || 0) / 100000).toFixed(1)}L</p>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Base Price</p>
+                            <p className="text-sm font-black text-slate-800">₹{((player.basePrice || 0) / 100000).toFixed(1)}L</p>
                           </div>
                           {player.status === 'SOLD' && (
                             <>
                               <div className="text-right">
-                                <p className="text-xs text-slate-500 uppercase tracking-wider font-bold">Sold Price</p>
-                                <p className="text-lg font-black text-green-600">₹{((player.soldAmount || player.soldPrice || player.finalPrice || player.currentBid || player.basePrice || 0) / 100000).toFixed(1)}L</p>
+                                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Sold Price</p>
+                                <p className="text-sm font-black text-green-600">₹{((player.soldAmount || player.soldPrice || player.finalPrice || player.currentBid || player.basePrice || 0) / 100000).toFixed(1)}L</p>
                               </div>
-                              <div className="text-right">
-                                <p className="text-xs text-slate-500 uppercase tracking-wider font-bold">Team</p>
-                                <p className="text-lg font-black text-purple-600">{teams.find(t => t.id === player.soldTo)?.name || player.teamName || player.teamId || 'N/A'}</p>
+                              <div className="text-right min-w-[100px]">
+                                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Team</p>
+                                <p className="text-sm font-black text-purple-600 truncate">{teams.find(t => t.id === player.soldTo)?.name || player.teamName || player.teamId || 'N/A'}</p>
                               </div>
                             </>
                           )}
-                          <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase ${
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
                             player.status === 'SOLD' ? 'bg-green-100 text-green-700' :
                             player.status === 'UNSOLD' ? 'bg-red-100 text-red-700' :
                             'bg-blue-100 text-blue-700'
@@ -1562,20 +1580,20 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                             {player.status || 'AVAILABLE'}
                           </span>
                           {currentMatch?.status === 'SETUP' && (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
                               <button
                                 onClick={() => handleEditPlayerPrice(player.id)}
-                                className="p-2 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-600 transition-colors"
+                                className="p-1.5 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-600 transition-colors"
                                 title="Edit Price"
                               >
-                                <Edit size={16} />
+                                <Edit size={14} />
                               </button>
                               <button
                                 onClick={() => handleRemovePlayer(player.id)}
-                                className="p-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 transition-colors"
+                                className="p-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 transition-colors"
                                 title="Remove Player"
                               >
-                                <Trash2 size={16} />
+                                <Trash2 size={14} />
                               </button>
                             </div>
                           )}
@@ -1627,12 +1645,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                     <p className="text-slate-500">Waiting for team registrations...</p>
                   </div>
                 ) : (
-                  <div className="grid gap-4">
+                  <div className="grid gap-3">
                     {filteredTeams.map((team) => (
-                    <div key={team.id} className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all">
+                    <div key={team.id} className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-xl p-4 shadow-lg hover:shadow-xl transition-all">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-black text-2xl overflow-hidden">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-black text-lg overflow-hidden flex-shrink-0">
                             {team.logo ? (
                               <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
                             ) : (
@@ -1640,43 +1658,43 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                             )}
                           </div>
                           <div>
-                            <h3 className="text-xl font-black text-slate-800">{team.name}</h3>
-                            <p className="text-sm text-slate-600">{team.repName || 'No Rep'}</p>
+                            <h3 className="text-base font-black text-slate-800">{team.name}</h3>
+                            <p className="text-xs text-slate-600">{team.repName || 'No Rep'}</p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-6">
+                        <div className="flex items-center gap-4">
                           <div className="text-right">
-                            <p className="text-xs text-slate-500 uppercase tracking-wider font-bold">Budget</p>
-                            <p className="text-lg font-black text-slate-800">₹{((team.budget || team.initialBudget || 0) / 1000000).toFixed(1)}M</p>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Budget</p>
+                            <p className="text-sm font-black text-slate-800">₹{((team.budget || team.initialBudget || 0) / 1000000).toFixed(1)}M</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-xs text-slate-500 uppercase tracking-wider font-bold">Remaining</p>
-                            <p className="text-lg font-black text-green-600">₹{((team.remainingBudget !== undefined ? team.remainingBudget : (team.budget || team.initialBudget || 0)) / 1000000).toFixed(1)}M</p>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Remaining</p>
+                            <p className="text-sm font-black text-green-600">₹{((team.remainingBudget !== undefined ? team.remainingBudget : (team.budget || team.initialBudget || 0)) / 1000000).toFixed(1)}M</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-xs text-slate-500 uppercase tracking-wider font-bold">Squad</p>
-                            <p className="text-lg font-black text-purple-600">{team.squadSize || 0} Players</p>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Squad</p>
+                            <p className="text-sm font-black text-purple-600">{team.squadSize || 0} Players</p>
                           </div>
-                          <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase ${
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
                             (team.squadSize || 0) > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
                           }`}>
                             {(team.squadSize || 0) > 0 ? 'ACTIVE' : 'INACTIVE'}
                           </span>
                           {currentMatch?.status === 'SETUP' && (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
                               <button
                                 onClick={() => handleEditTeamBudget(team.id)}
-                                className="p-2 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-600 transition-colors"
+                                className="p-1.5 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-600 transition-colors"
                                 title="Edit Budget"
                               >
-                                <Edit size={16} />
+                                <Edit size={14} />
                               </button>
                               <button
                                 onClick={() => handleDisableTeam(team.id)}
-                                className="p-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 transition-colors"
+                                className="p-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 transition-colors"
                                 title="Disable Team"
                               >
-                                <Trash2 size={16} />
+                                <Trash2 size={14} />
                               </button>
                             </div>
                           )}
