@@ -5,6 +5,8 @@ import { LiveAuctionPage } from './LiveAuctionPage';
 import { PlayersPage } from './PlayersPage';
 import { socketService } from '../../services/socketService';
 
+const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+
 const formatCurrency = (num: number): string => {
   return num.toLocaleString('en-IN', { maximumFractionDigits: 0 });
 };
@@ -70,7 +72,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         setLoading(true);
         
         // Fetch team data for this match - match by user's email
-        const teamResponse = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
+        const teamResponse = await fetch(`${API_BASE}/teams?matchId=${currentMatch.id}`);
         if (teamResponse.ok) {
           const teamDataResponse = await teamResponse.json();
           console.log('📊 Fetched teams data:', teamDataResponse.data);
@@ -86,7 +88,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         }
         
         // Fetch all players
-        const playersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
+        const playersResponse = await fetch(`${API_BASE}/players?matchId=${currentMatch.id}`);
         if (playersResponse.ok) {
           const playersData = await playersResponse.json();
           setAllPlayers(playersData.data || []);
@@ -103,25 +105,86 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
     }
   }, [currentMatch?.id, currentUser?.email]);
 
+  // Real-time Firestore listeners for live updates
+  useEffect(() => {
+    if (!currentMatch?.id || !teamData?.id) return;
+
+    console.log('🔥 Setting up real-time listeners for Team Rep dashboard');
+
+    // Join season
+    socketService.joinSeason(currentMatch.id, teamData.id, UserRole.TEAM_REP);
+
+    // Listen to players for live bidding updates
+    const playersUnsubscribe = socketService.onPlayersUpdate(currentMatch.id, (updatedPlayers) => {
+      console.log('🔥 Players live update:', updatedPlayers.length);
+      setAllPlayers(updatedPlayers);
+
+      // Check if there's a live player being auctioned
+      const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE');
+      if (livePlayer) {
+        console.log('🔥 Live player:', livePlayer.name, 'Bid:', livePlayer.currentBid);
+        setCurrentBiddingPlayer(livePlayer);
+        setCurrentBid(livePlayer.currentBid || livePlayer.basePrice || 0);
+        setLeadingTeam(livePlayer.leadingTeamId || null);
+        setIsLeadingBid(livePlayer.leadingTeamId === teamData.id);
+        setAuctionStatus('live');
+      } else {
+        setCurrentBiddingPlayer(null);
+      }
+    });
+
+    // Listen to teams for budget updates
+    const teamsUnsubscribe = socketService.onTeamsUpdate(currentMatch.id, (updatedTeams) => {
+      console.log('🔥 Teams live update:', updatedTeams.length);
+      const myTeam = updatedTeams.find((t: any) => t.id === teamData.id);
+      if (myTeam) {
+        console.log('🔥 My team budget updated:', myTeam.budget);
+        setTeamData(myTeam);
+      }
+    });
+
+    // Listen to bid events
+    const bidUnsubscribe = socketService.onNewBid((bidData) => {
+      console.log('🔥 New bid event:', bidData);
+      
+      if (!bidData.amount) {
+        console.error('❌ Bid missing amount:', bidData);
+        return;
+      }
+      
+      setCurrentBid(bidData.amount);
+      setLeadingTeam(bidData.teamId);
+      setIsLeadingBid(bidData.teamId === teamData.id);
+      
+      // Add to activity feed
+      setActivityFeed(prev => [{
+        id: bidData.bidId || Date.now().toString(),
+        message: `${bidData.teamName} bid ₹${(bidData.amount / 100000).toFixed(1)}L for ${bidData.playerName}`,
+        time: new Date().toLocaleTimeString(),
+        type: bidData.teamId === teamData.id ? 'success' : 'info'
+      }, ...prev].slice(0, 50));
+    });
+
+    return () => {
+      console.log('🔥 Cleaning up Team Rep real-time listeners');
+      playersUnsubscribe();
+      teamsUnsubscribe();
+      bidUnsubscribe();
+    };
+  }, [currentMatch?.id, teamData?.id]);
+
   // Socket connection and listeners
   useEffect(() => {
     if (!seasonId || !userId || !teamId) return;
 
-    // Connect to server
-    socketService.connect('http://localhost:5000');
-
     // Join season room
     socketService.joinSeason(seasonId, userId, UserRole.TEAM_REP);
 
-    const socket = socketService.getSocket();
-    
-    if (!socket) {
-      console.error('Socket not available');
-      return;
-    }
+    // Store unsubscribe functions for cleanup
+    const unsubscribers: (() => void)[] = [];
 
     // Listen for auction state updates (includes current player if auction is in progress)
-    socket.on('AUCTION_STATE_UPDATE', (data: any) => {
+    unsubscribers.push(socketService.onAuctionStateUpdate((data: any) => {
       console.log('AUCTION_STATE_UPDATE received:', data);
       // If there's a current player being auctioned, set it
       if (data.currentPlayerId && data.biddingActive) {
@@ -139,10 +202,10 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         setLeadingTeam(null);
         setIsLeadingBid(false);
       }
-    });
+    }));
 
     // Auction state updates
-    socket.on('AUCTION_STARTED', (data: any) => {
+    unsubscribers.push(socketService.onAuctionStarted((data: any) => {
       console.log('🚀 AUCTION_STARTED received:', data);
       setAuctionStatus('live');
       setActivityFeed(prev => [{
@@ -151,9 +214,9 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         time: new Date().toLocaleTimeString(),
         type: 'system'
       }, ...prev]);
-    });
+    }));
 
-    socket.on('AUCTION_PAUSED', (data: any) => {
+    unsubscribers.push(socketService.onAuctionPaused((data: any) => {
       console.log('⏸️ AUCTION_PAUSED received:', data);
       setAuctionStatus('paused');
       setActivityFeed(prev => [{
@@ -162,9 +225,9 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         time: new Date().toLocaleTimeString(),
         type: 'system'
       }, ...prev]);
-    });
+    }));
 
-    socket.on('AUCTION_RESUMED', (data: any) => {
+    unsubscribers.push(socketService.onAuctionResumed((data: any) => {
       console.log('▶️ AUCTION_RESUMED received:', data);
       setAuctionStatus('live');
       setActivityFeed(prev => [{
@@ -173,12 +236,12 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         time: new Date().toLocaleTimeString(),
         type: 'system'
       }, ...prev]);
-    });
+    }));
 
     // Real-time bidding updates (view-only)
 
     // Player updated (live changes from auctioneer)
-    socket.on('PLAYER_UPDATED', (data: { playerId: string; player: Player }) => {
+    unsubscribers.push(socketService.onPlayerUpdated((data: { playerId: string; player: Player }) => {
       console.log('PLAYER_UPDATED received:', data);
       
       // Update in allPlayers list
@@ -188,13 +251,21 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       if (currentBiddingPlayer && data.playerId === currentBiddingPlayer.id) {
         setCurrentBiddingPlayer(data.player);
       }
-    });
+    }));
 
     // Player bidding started
-    socket.on('PLAYER_BIDDING_STARTED', (data: { player: Player; basePrice: number }) => {
+    unsubscribers.push(socketService.onPlayerBiddingStarted((data: { player: Player; basePrice: number } | null) => {
       console.log('PLAYER_BIDDING_STARTED received:', data);
+      if (!data || !(data as any)?.player) {
+        setCurrentBiddingPlayer(null);
+        setCurrentBid(0);
+        setLeadingTeam(null);
+        setIsLeadingBid(false);
+        setAuctionStatus('upcoming');
+        return;
+      }
       setCurrentBiddingPlayer(data.player);
-      setCurrentBid(data.basePrice || data.player.basePrice);
+      setCurrentBid((data.player as any)?.currentBid || data.basePrice || data.player.basePrice || 0);
       setLeadingTeam(null);
       setIsLeadingBid(false);
       setAuctionStatus('live');
@@ -205,10 +276,10 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         time: new Date().toLocaleTimeString(),
         type: 'system'
       }, ...prev]);
-    });
+    }));
 
     // New bid
-    socket.on('NEW_BID', (data: { playerId: string; amount: number; teamId: string; teamName: string }) => {
+    unsubscribers.push(socketService.onNewBid((data: { playerId: string; amount: number; teamId: string; teamName: string }) => {
       console.log('💰 NEW_BID received:', data);
       console.log('   → Updating current bid to:', data.amount);
       setCurrentBid(data.amount);
@@ -247,10 +318,10 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
           }, ...prev]);
         }
       }
-    });
+    }));
 
     // Player sold
-    socket.on('PLAYER_SOLD', async (data: { playerId: string; playerName: string; teamId: string; teamName: string; finalAmount: number }) => {
+    unsubscribers.push(socketService.onPlayerSold(async (data: { playerId: string; playerName: string; teamId: string; teamName: string; finalAmount: number }) => {
       const wonPlayer = data.teamId === teamId;
       
       const soldMessage = wonPlayer
@@ -294,7 +365,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         }
         
         // Refetch all players
-        const playersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
+        const playersResponse = await fetch(`${API_BASE}/players?matchId=${currentMatch.id}`);
         if (playersResponse.ok) {
           const playersData = await playersResponse.json();
           setAllPlayers(playersData.data || []);
@@ -307,10 +378,10 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       setCurrentBid(0);
       setLeadingTeam(null);
       setIsLeadingBid(false);
-    });
+    }));
 
     // Player unsold
-    socket.on('PLAYER_UNSOLD', async (data: { playerId: string; playerName: string }) => {
+    unsubscribers.push(socketService.onPlayerUnsold(async (data: { playerId: string; playerName: string }) => {
       setActivityFeed(prev => [{
         id: Date.now().toString(),
         message: `${data.playerName} went UNSOLD`,
@@ -320,7 +391,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       
       // Refetch player data to get live updates
       try {
-        const playersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
+        const playersResponse = await fetch(`${API_BASE}/players?matchId=${currentMatch.id}`);
         if (playersResponse.ok) {
           const playersData = await playersResponse.json();
           setAllPlayers(playersData.data || []);
@@ -333,49 +404,31 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       setCurrentBid(0);
       setLeadingTeam(null);
       setIsLeadingBid(false);
-    });
+    }));
 
     // Timer update
-    socket.on('TIMER_UPDATE', (data: { timeLeft: number }) => {
-      setCountdown(data.timeLeft);
-    });
+    unsubscribers.push(socketService.onTimerUpdate((data: { remainingSeconds: number }) => {
+      setCountdown(data.remainingSeconds);
+    }));
 
-    // Auction status
-    socket.on('AUCTION_STARTED', () => {
-      setAuctionStatus('live');
-    });
-
-    socket.on('AUCTION_PAUSED', () => {
-      setAuctionStatus('paused');
-    });
-
-    socket.on('AUCTION_COMPLETED', () => {
+    // Auction ended
+    unsubscribers.push(socketService.onAuctionEnded(() => {
       setAuctionStatus('completed');
-    });
+    }));
 
     // Team data updated (budget/players changed)
-    socket.on('TEAM_UPDATED', (data: { teamId?: string; team: Team }) => {
+    unsubscribers.push(socketService.onTeamUpdated((data: { teamId?: string; team: Team }) => {
       console.log('💰 TEAM_UPDATED received:', data);
       // Check if this update is for the current team
       if (data.team.id === teamId || data.teamId === teamId) {
         console.log('   → Updating team data:', data.team);
         setTeamData(data.team);
       }
-    });
+    }));
 
     return () => {
-      // Cleanup event listeners
-      socket.off('PLAYER_BIDDING_STARTED');
-      socket.off('NEW_BID');
-      socket.off('PLAYER_SOLD');
-      socket.off('PLAYER_UNSOLD');
-      socket.off('TIMER_UPDATE');
-      socket.off('AUCTION_STARTED');
-      socket.off('AUCTION_PAUSED');
-      socket.off('AUCTION_COMPLETED');
-      socket.off('TEAM_UPDATED');
-      socket.off('AUCTION_STATE_UPDATE');
-      socket.off('AUCTION_RESUMED');
+      // Cleanup all event listeners
+      unsubscribers.forEach(unsubscribe => unsubscribe());
     };
   }, [seasonId, userId, teamId, allPlayers]);
 
@@ -634,7 +687,11 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                     </div>
                   </div>
                   <button
-                    onClick={() => setStatus(AuctionStatus.HOME)}
+                    onClick={() => {
+                      sessionStorage.clear();
+                      localStorage.clear();
+                      setStatus(AuctionStatus.HOME);
+                    }}
                     className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-sm"
                   >
                     <LogOut size={16} />

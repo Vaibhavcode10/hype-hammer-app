@@ -1,7 +1,7 @@
 import { UserRegistration } from '../types';
 
 // Optional API base (defaults to Flask backend on port 5000)
-const API_BASE = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:5000';
+const API_BASE = (import.meta as any)?.env?.VITE_API_URL || 'https://us-central1-axilam.cloudfunctions.net/auction';
 
 // Local storage keys
 const STORAGE_KEYS = {
@@ -59,7 +59,7 @@ export interface AppState {
 // App State Management
 export async function loadAppState(): Promise<AppState | null> {
   // Try API first
-  const apiState = await fetchFromApi('/api/state');
+  const apiState = await fetchFromApi('/state');
   if (apiState) return apiState as AppState;
 
   // Then localStorage
@@ -77,7 +77,7 @@ export async function loadAppState(): Promise<AppState | null> {
 
 export async function saveAppState(state: AppState): Promise<boolean> {
   // Try API
-  const apiSaved = await fetchFromApi('/api/state', {
+  const apiSaved = await fetchFromApi('/state', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(state)
@@ -199,7 +199,7 @@ export async function loadCompleteSportData(sportName: string): Promise<any | nu
 
 // Load all sports data
 export async function loadAllSportsFromDB(): Promise<any[]> {
-  const apiResponse = await fetchFromApi('/api/sports');
+  const apiResponse = await fetchFromApi('/sports');
   // The API returns { success: true, message, data: [...] }
   if (apiResponse && apiResponse.data && Array.isArray(apiResponse.data)) {
     return apiResponse.data;
@@ -210,7 +210,7 @@ export async function loadAllSportsFromDB(): Promise<any[]> {
 // All Sports Data Management (for compatibility)
 export async function loadSportsData(): Promise<any[] | null> {
   // Try API first (reads/assembles all sports from disk)
-  const apiResponse = await fetchFromApi('/api/sports');
+  const apiResponse = await fetchFromApi('/sports');
   if (apiResponse && apiResponse.data && Array.isArray(apiResponse.data)) {
     return apiResponse.data;
   }
@@ -228,7 +228,7 @@ export async function loadSportsData(): Promise<any[] | null> {
 
 export async function saveSportsData(data: any[]): Promise<boolean> {
   // Try API write to real JSON files on disk via local server
-  const apiSaved = await fetchFromApi('/api/sports', {
+  const apiSaved = await fetchFromApi('/sports', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -246,7 +246,7 @@ export async function registerUser(userData: UserRegistration): Promise<boolean>
   userData.id = userData.id || `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   // Try API first
-  const apiSaved = await fetchFromApi('/api/auth/register', {
+  const apiSaved = await fetchFromApi('/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(userData)
@@ -276,7 +276,7 @@ export async function registerUser(userData: UserRegistration): Promise<boolean>
 
 export async function loginUser(email: string, password: string): Promise<UserRegistration | null> {
   // Try API first
-  const apiResponse = await fetchFromApi('/api/auth/login', {
+  const apiResponse = await fetchFromApi('/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password })
@@ -318,7 +318,7 @@ export async function logoutUser(): Promise<boolean> {
 
 export async function getAllUsers(): Promise<UserRegistration[]> {
   // Try API first
-  const apiData = await fetchFromApi('/api/auth/users');
+  const apiData = await fetchFromApi('/auth/users');
   if (apiData && Array.isArray(apiData)) return apiData;
 
   // Fallback to localStorage
@@ -365,7 +365,7 @@ export async function completeOAuthProfile(userData: UserRegistration): Promise<
   userData.profileComplete = true;
   
   // Try API first
-  const apiSaved = await fetchFromApi('/api/auth/complete-profile', {
+  const apiSaved = await fetchFromApi('/auth/complete-profile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(userData)

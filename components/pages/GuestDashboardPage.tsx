@@ -53,22 +53,18 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
     // Join season room
     socketService.joinSeason(currentMatch.id, currentUser.email, UserRole.GUEST);
 
-    const socket = socketService.getSocket();
-    
-    if (!socket) {
-      console.error('Socket not available');
-      return;
-    }
+    // Store unsubscribe functions for cleanup
+    const unsubscribers: (() => void)[] = [];
 
     console.log('✅ Guest setting up socket listeners for season:', currentMatch.id);
 
     // Listen for timer updates from backend
-    socket.on('AUCTION_TIMER_UPDATE', (data: any) => {
+    unsubscribers.push(socketService.onTimerUpdate((data: { remainingSeconds: number }) => {
       setCountdown(data.remainingSeconds);
-    });
+    }));
 
     // Listen for auction state updates
-    socket.on('AUCTION_STATE_UPDATE', (data: any) => {
+    unsubscribers.push(socketService.onAuctionStateUpdate((data: any) => {
       console.log('📡 AUCTION_STATE_UPDATE received:', data);
       if (data.status) {
         console.log('   → Setting auction status to:', data.status);
@@ -77,71 +73,60 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       if (data.remainingSeconds !== undefined) {
         setCountdown(data.remainingSeconds);
       }
-      // If there's a current player being auctioned, set it
-      if (data.currentPlayerId && data.biddingActive) {
-        console.log('   → Looking for player:', data.currentPlayerId);
-        const player = players.find(p => p.id === data.currentPlayerId);
-        
-        if (player) {
-          console.log('   → Setting current bidding player:', player.name);
-          setCurrentBiddingPlayer(player);
-          setCurrentBid(data.currentBid || player.basePrice || 0);
-          setLeadingTeam(data.leadingTeamId || '');
-        } else {
-          console.error('   ✗ Player not found:', data.currentPlayerId);
-        }
-      } else if (!data.biddingActive) {
-        console.log('   → No active bidding, clearing current player');
-        setCurrentBiddingPlayer(null);
-        setCurrentBid(0);
-        setLeadingTeam('');
-      }
-    });
+      // Current player + bid are driven by the Firestore players listener.
+      // Keeping this handler minimal avoids stale state bugs and re-subscribe loops.
+    }));
 
-    // Listen for auctioneer mic events
-    socket.on('AUCTIONEER_MIC_ON', () => {
+    // Listen for auctioneer mic events (stubs for compatibility)
+    unsubscribers.push(socketService.onAuctioneerMicOn(() => {
       setAuctioneerMicOn(true);
-    });
+    }));
 
-    socket.on('AUCTIONEER_MIC_OFF', () => {
+    unsubscribers.push(socketService.onAuctioneerMicOff(() => {
       setAuctioneerMicOn(false);
-    });
+    }));
 
     // Auction state updates
-    socket.on('AUCTION_STARTED', (data: any) => {
+    unsubscribers.push(socketService.onAuctionStarted((data: any) => {
       console.log('🚀 AUCTION_STARTED received:', data);
       setAuctionStatus('LIVE');
       addActivity('🚀 Auction has started!', 'bid');
-    });
+    }));
 
-    socket.on('AUCTION_PAUSED', (data: any) => {
+    unsubscribers.push(socketService.onAuctionPaused((data: any) => {
       console.log('⏸️ AUCTION_PAUSED received:', data);
       setAuctionStatus('PAUSED');
       addActivity('⏸️ Auction paused', 'bid');
-    });
+    }));
 
-    socket.on('AUCTION_RESUMED', (data: any) => {
+    unsubscribers.push(socketService.onAuctionResumed((data: any) => {
       console.log('▶️ AUCTION_RESUMED received:', data);
       setAuctionStatus('LIVE');
       addActivity('▶️ Auction resumed', 'bid');
-    });
+    }));
 
-    socket.on('AUCTION_ENDED', (data: any) => {
+    unsubscribers.push(socketService.onAuctionEnded((data: any) => {
       console.log('🏁 AUCTION_ENDED received:', data);
       setAuctionStatus('ENDED');
       addActivity('🏁 Auction has ended', 'bid');
-    });
+    }));
 
     // Listen for bidding events
-    socket.on('PLAYER_BIDDING_STARTED', (data: any) => {
+    unsubscribers.push(socketService.onPlayerBiddingStarted((data: any) => {
       console.log('🔨 PLAYER_BIDDING_STARTED received:', data);
-      console.log('   → Player object:', data.player);
-      console.log('   → Base price:', data.basePrice);
+      console.log('   → Player object:', data?.player);
+      console.log('   → Base price:', data?.basePrice);
       // Backend sends { player: {...}, basePrice: number }
+      if (!data || !data.player) {
+        setCurrentBiddingPlayer(null);
+        setCurrentBid(0);
+        setLeadingTeam('');
+        return;
+      }
       if (data.player) {
         console.log('   → Setting current bidding player to:', data.player.name);
         setCurrentBiddingPlayer(data.player);
-        setCurrentBid(data.basePrice || data.player.basePrice || 0);
+        setCurrentBid(data.player?.currentBid || data.basePrice || data.player.basePrice || 0);
         setLeadingTeam('');
         setAuctionStatus('LIVE'); // Ensure status is set to LIVE
         addActivity(`🔨 Bidding started for ${data.player.name}`, 'bid');
@@ -158,10 +143,10 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       } else {
         console.error('   ❌ No player object in PLAYER_BIDDING_STARTED event!');
       }
-    });
+    }));
 
     // Player updated (live changes from auctioneer)
-    socket.on('PLAYER_UPDATED', (data: { playerId: string; player: Player }) => {
+    unsubscribers.push(socketService.onPlayerUpdated((data: { playerId: string; player: Player }) => {
       console.log('PLAYER_UPDATED received:', data);
       
       // Update in players list
@@ -174,9 +159,9 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
         }
         return prev;
       });
-    });
+    }));
 
-    socket.on('NEW_BID', (data: any) => {
+    unsubscribers.push(socketService.onNewBid((data: any) => {
       console.log('💰 NEW_BID received:', data);
       console.log('   → Updating current bid to:', data.amount);
       setCurrentBid(data.amount);
@@ -184,9 +169,9 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       // Use team name from data instead of finding from teams array
       const bidMessage = `📈 ${data.teamName || 'Team'} bid ${formatCurrency(data.amount)}`;
       addActivity(bidMessage, 'bid');
-    });
+    }));
 
-    socket.on('PLAYER_SOLD', async (data: any) => {
+    unsubscribers.push(socketService.onPlayerSold(async (data: any) => {
       // Use team name from data instead of finding from teams array
       addActivity(`✅ ${data.playerName} sold to ${data.teamName || 'Team'} for ${formatCurrency(data.finalAmount)}`, 'sold');
       
@@ -210,9 +195,9 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);
       setLeadingTeam('');
-    });
+    }));
 
-    socket.on('PLAYER_UNSOLD', async (data: any) => {
+    unsubscribers.push(socketService.onPlayerUnsold(async (data: any) => {
       addActivity(`❌ ${data.playerName} went unsold`, 'unsold');
       
       // Refetch player data to get live updates
@@ -229,28 +214,53 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);
       setLeadingTeam('');
+    }));
+
+    return () => {
+      // Clean up all socket listeners
+      unsubscribers.forEach(unsubscribe => unsubscribe());
+    };
+  }, [currentMatch?.id, currentUser.email]);
+
+  // Set up Firebase real-time listeners
+  useEffect(() => {
+    if (!currentMatch?.id) return;
+
+    console.log('🔥 Guest: Setting up real-time listeners');
+
+    // Listen to players collection
+    const playersUnsubscribe = socketService.onPlayersUpdate(currentMatch.id, (updatedPlayers) => {
+      setPlayers(updatedPlayers);
+
+      const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE');
+      if (livePlayer) {
+        setCurrentBiddingPlayer(livePlayer);
+        setCurrentBid(livePlayer.currentBid || livePlayer.basePrice);
+        setAuctionLive(true);
+      } else {
+        setCurrentBiddingPlayer(null);
+        setAuctionLive(false);
+      }
+    });
+
+    // Listen to teams collection
+    const teamsUnsubscribe = socketService.onTeamsUpdate(currentMatch.id, (updatedTeams) => {
+      setTeams(updatedTeams);
+    });
+
+    // Listen to bid events
+    const bidUnsubscribe = socketService.onNewBid((bidData) => {
+      console.log('🔥 Guest: New bid:', bidData);
+      setCurrentBid(bidData.amount);
+      addActivity(`${bidData.teamName} bid ₹${(bidData.amount / 100000).toFixed(1)}L`, 'bid');
     });
 
     return () => {
-      if (currentMatch?.id) {
-        socketService.leaveSeason(currentMatch.id);
-      }
-      // Clean up all socket listeners
-      socket.off('AUCTION_TIMER_UPDATE');
-      socket.off('AUCTION_STATE_UPDATE');
-      socket.off('AUCTIONEER_MIC_ON');
-      socket.off('AUCTIONEER_MIC_OFF');
-      socket.off('AUCTION_STARTED');
-      socket.off('AUCTION_PAUSED');
-      socket.off('AUCTION_RESUMED');
-      socket.off('AUCTION_ENDED');
-      socket.off('PLAYER_BIDDING_STARTED');
-      socket.off('PLAYER_UPDATED');
-      socket.off('NEW_BID');
-      socket.off('PLAYER_SOLD');
-      socket.off('PLAYER_UNSOLD');
+      playersUnsubscribe();
+      teamsUnsubscribe();
+      bidUnsubscribe();
     };
-  }, [currentMatch?.id, currentUser.email, players]);
+  }, [currentMatch?.id]);
 
   // Add activity to feed
   const addActivity = (message: string, type: 'bid' | 'sold' | 'unsold') => {
@@ -594,7 +604,11 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                     </div>
                   </div>
                   <button
-                    onClick={() => setStatus(AuctionStatus.HOME)}
+                    onClick={() => {
+                      sessionStorage.clear();
+                      localStorage.clear();
+                      setStatus(AuctionStatus.HOME);
+                    }}
                     className="w-full px-4 py-3 bg-red-100 hover:bg-red-500 border-2 border-red-300 hover:border-red-500 text-red-600 hover:text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all"
                   >
                     <LogOut size={16} />

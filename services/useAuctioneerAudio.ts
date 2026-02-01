@@ -1,18 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Socket } from 'socket.io-client';
+import { firebaseRealtimeService } from './firebaseRealtimeService';
 
 /**
  * WebRTC Audio Hook for Auctioneer
  * 
- * Handles:
- * - Microphone access
- * - WebRTC peer connections
- * - Audio streaming to all listeners
- * - Signaling through Socket.IO
+ * Note: Audio streaming functionality is currently disabled as the platform
+ * migrated from Socket.IO to Firebase. WebRTC signaling through Firebase
+ * would require additional implementation.
+ * 
+ * This hook provides stub functionality for backward compatibility.
  */
 
 interface UseAuctioneerAudioProps {
-  socket: Socket | null;
+  socket?: any; // Kept for backward compatibility
   seasonId: string;
   userId: string;
   enabled: boolean;
@@ -28,7 +28,6 @@ interface UseAuctioneerAudioReturn {
 }
 
 export const useAuctioneerAudio = ({
-  socket,
   seasonId,
   userId,
   enabled
@@ -38,13 +37,13 @@ export const useAuctioneerAudio = ({
   const [error, setError] = useState<string | null>(null);
   
   const localStreamRef = useRef<MediaStream | null>(null);
-  const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
 
   /**
    * Start audio streaming
+   * Note: Full WebRTC implementation pending Firebase migration
    */
   const startStreaming = useCallback(async () => {
-    if (!enabled || !socket) {
+    if (!enabled) {
       setError('Not authorized to stream audio');
       return;
     }
@@ -65,19 +64,16 @@ export const useAuctioneerAudio = ({
       setIsStreaming(true);
       setError(null);
 
-      // Notify server that auctioneer is live
-      socket.emit('auctioneer_audio_start', {
-        seasonId,
-        userId
-      });
+      // Notify via Firebase that auctioneer mic is on
+      await firebaseRealtimeService.emitAuctioneerMicOn(seasonId);
 
-      console.log('🎙️ Auctioneer audio streaming started');
+      console.log('🎙️ Auctioneer audio streaming started (local only)');
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to access microphone';
       setError(errorMessage);
       console.error('Microphone access error:', err);
     }
-  }, [enabled, socket, seasonId, userId]);
+  }, [enabled, seasonId, userId]);
 
   /**
    * Stop audio streaming
@@ -89,23 +85,14 @@ export const useAuctioneerAudio = ({
       localStreamRef.current = null;
     }
 
-    // Close all peer connections
-    peerConnectionsRef.current.forEach(pc => pc.close());
-    peerConnectionsRef.current.clear();
-
     setIsStreaming(false);
     setIsMuted(false);
 
-    // Notify server
-    if (socket) {
-      socket.emit('auctioneer_audio_stop', {
-        seasonId,
-        userId
-      });
-    }
+    // Notify via Firebase that auctioneer mic is off
+    firebaseRealtimeService.emitAuctioneerMicOff(seasonId);
 
     console.log('🎙️ Auctioneer audio streaming stopped');
-  }, [socket, seasonId, userId]);
+  }, [seasonId, userId]);
 
   /**
    * Toggle mute
@@ -117,110 +104,11 @@ export const useAuctioneerAudio = ({
         audioTrack.enabled = !audioTrack.enabled;
         setIsMuted(!audioTrack.enabled);
 
-        // Notify server
-        if (socket) {
-          socket.emit('auctioneer_audio_mute', {
-            seasonId,
-            userId,
-            muted: !audioTrack.enabled
-          });
-        }
+        // Notify via Firebase
+        firebaseRealtimeService.emitAuctioneerMicMute(seasonId, !audioTrack.enabled);
       }
     }
-  }, [socket, seasonId, userId]);
-
-  /**
-   * Handle WebRTC signaling for new listener
-   */
-  const handleNewListener = useCallback(async (listenerId: string) => {
-    if (!localStreamRef.current || !socket) return;
-
-    try {
-      // Create peer connection
-      const peerConnection = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
-      });
-
-      // Add audio track
-      localStreamRef.current.getTracks().forEach(track => {
-        peerConnection.addTrack(track, localStreamRef.current!);
-      });
-
-      // Handle ICE candidates
-      peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          socket.emit('audio_ice_candidate', {
-            seasonId,
-            to: listenerId,
-            candidate: event.candidate
-          });
-        }
-      };
-
-      // Create offer
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-
-      // Send offer to listener
-      socket.emit('audio_offer', {
-        seasonId,
-        to: listenerId,
-        offer: peerConnection.localDescription
-      });
-
-      peerConnectionsRef.current.set(listenerId, peerConnection);
-    } catch (err) {
-      console.error('Failed to create peer connection:', err);
-    }
-  }, [socket, seasonId]);
-
-  /**
-   * Handle answer from listener
-   */
-  const handleAnswer = useCallback(async (data: { from: string; answer: RTCSessionDescriptionInit }) => {
-    const peerConnection = peerConnectionsRef.current.get(data.from);
-    if (peerConnection) {
-      try {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-      } catch (err) {
-        console.error('Failed to set remote description:', err);
-      }
-    }
-  }, []);
-
-  /**
-   * Handle ICE candidate from listener
-   */
-  const handleIceCandidate = useCallback(async (data: { from: string; candidate: RTCIceCandidateInit }) => {
-    const peerConnection = peerConnectionsRef.current.get(data.from);
-    if (peerConnection) {
-      try {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-      } catch (err) {
-        console.error('Failed to add ICE candidate:', err);
-      }
-    }
-  }, []);
-
-  /**
-   * Socket event listeners
-   */
-  useEffect(() => {
-    if (!socket || !isStreaming) return;
-
-    socket.on('audio_listener_joined', handleNewListener);
-    socket.on('audio_answer', handleAnswer);
-    socket.on('audio_ice_candidate_listener', handleIceCandidate);
-
-    return () => {
-      socket.off('audio_listener_joined', handleNewListener);
-      socket.off('audio_answer', handleAnswer);
-      socket.off('audio_ice_candidate_listener', handleIceCandidate);
-    };
-  }, [socket, isStreaming, handleNewListener, handleAnswer, handleIceCandidate]);
+  }, [seasonId, userId]);
 
   /**
    * Cleanup on unmount

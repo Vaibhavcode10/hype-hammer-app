@@ -1,11 +1,11 @@
 """
 HypeHammer Flask Backend with Firebase Firestore
 Provides REST API endpoints for the React frontend
+Real-time updates via Firestore document writes (frontend uses onSnapshot)
 """
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit, join_room, leave_room
 import firebase_admin
 from firebase_admin import credentials, firestore
 from functools import wraps
@@ -32,9 +32,6 @@ CORS(app, resources={
     }
 })
 
-# Initialize SocketIO with CORS
-socketio = SocketIO(app, cors_allowed_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:*"])
-
 # ========================
 # FIREBASE INITIALIZATION
 # ========================
@@ -51,10 +48,118 @@ try:
     cred = credentials.Certificate(SERVICE_ACCOUNT_KEY_PATH)
     firebase_admin.initialize_app(cred)
     db = firestore.client()
+    firestore_db = db  # Alias for realtime helper functions
     print("✓ Firebase Firestore initialized successfully")
 except Exception as e:
     print(f"✗ Firebase initialization failed: {e}")
     raise
+
+# ========================
+# FIRESTORE REALTIME HELPER
+# ========================
+
+def emit_realtime_event(path: str, data: Dict[str, Any], **kwargs):
+    """
+    Emit event to Firestore
+    Path format: 'liveAuctions/{seasonId}/events/{eventType}'
+    Converts old Realtime DB paths to Firestore document paths
+    Note: **kwargs ignores 'room' parameter from old socketio calls
+    """
+    try:
+        # Parse the path and convert to Firestore format
+        # Old format: 'auctions/{season_id}/events/started'
+        # New format: 'liveAuctions' collection -> {season_id} doc -> 'events' subcollection -> 'started' doc
+        parts = path.split('/')
+        
+        if len(parts) >= 2:
+            # Handle different path patterns
+            if parts[0] == 'auctions':
+                season_id = parts[1]
+                
+                if len(parts) == 3:
+                    # 'auctions/{season_id}/state' -> liveAuctions/{season_id} document
+                    if parts[2] == 'state':
+                        doc_ref = firestore_db.collection('liveAuctions').document(season_id)
+                    # 'auctions/{season_id}/timer' -> liveAuctions/{season_id}/timer/current
+                    elif parts[2] == 'timer':
+                        doc_ref = firestore_db.collection('liveAuctions').document(season_id).collection('timer').document('current')
+                    # 'auctions/{season_id}/currentPlayer' -> liveAuctions/{season_id}/currentPlayer/active
+                    elif parts[2] == 'currentPlayer':
+                        doc_ref = firestore_db.collection('liveAuctions').document(season_id).collection('currentPlayer').document('active')
+                    else:
+                        doc_ref = firestore_db.collection('liveAuctions').document(season_id).collection(parts[2]).document('latest')
+                        
+                elif len(parts) == 4:
+                    # 'auctions/{season_id}/events/started' -> liveAuctions/{season_id}/events/started
+                    doc_ref = firestore_db.collection('liveAuctions').document(season_id).collection(parts[2]).document(parts[3])
+                    
+                elif len(parts) == 5:
+                    # 'auctions/{season_id}/bids/{bid_id}' -> liveAuctions/{season_id}/currentBid/latest
+                    if parts[2] == 'bids':
+                        doc_ref = firestore_db.collection('liveAuctions').document(season_id).collection('currentBid').document('latest')
+                    else:
+                        doc_ref = firestore_db.collection('liveAuctions').document(season_id).collection(parts[2]).document(parts[4])
+                else:
+                    doc_ref = firestore_db.collection('liveAuctions').document(season_id)
+                    
+            elif parts[0] == 'users':
+                # 'users/{user_id}/events/approved' -> userEvents/{user_id}/notifications/approved
+                user_id = parts[1]
+                if len(parts) >= 4:
+                    doc_ref = firestore_db.collection('userEvents').document(user_id).collection('notifications').document(parts[3])
+                else:
+                    doc_ref = firestore_db.collection('userEvents').document(user_id)
+                    
+            elif parts[0] == 'matches':
+                # 'matches/{match_id}/status' -> matches/{match_id}
+                match_id = parts[1]
+                doc_ref = firestore_db.collection('matches').document(match_id)
+                
+            else:
+                # Fallback: use path as collection/document
+                doc_ref = firestore_db.collection(parts[0]).document(parts[1] if len(parts) > 1 else 'default')
+        else:
+            doc_ref = firestore_db.collection('events').document(path)
+        
+        # Set the document with merge to update existing docs
+        doc_ref.set({
+            **data,
+            'timestamp': datetime.now().isoformat(),
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        }, merge=True)
+        
+        print(f"✅ Emitted to Firestore: {path}")
+    except Exception as e:
+        print(f"❌ Failed to emit to Firestore: {e}")
+        import traceback
+        traceback.print_exc()
+
+def emit_realtime_push(path: str, data: Dict[str, Any]):
+    """
+    Push new item to Firestore collection (auto-generate ID)
+    Used for bids history, announcements, etc.
+    """
+    try:
+        parts = path.split('/')
+        
+        if len(parts) >= 3 and parts[0] == 'auctions':
+            season_id = parts[1]
+            subcollection = parts[2]
+            collection_ref = firestore_db.collection('liveAuctions').document(season_id).collection(subcollection)
+        else:
+            collection_ref = firestore_db.collection(path.replace('/', '_'))
+        
+        collection_ref.add({
+            **data,
+            'timestamp': datetime.now().isoformat(),
+            'createdAt': firestore.SERVER_TIMESTAMP
+        })
+        
+        print(f"✅ Pushed to Firestore: {path}")
+    except Exception as e:
+        print(f"❌ Failed to push to Firestore: {e}")
+        import traceback
+        traceback.print_exc()
 
 # ========================
 # FIRESTORE SCHEMA DESIGN
@@ -910,10 +1015,10 @@ def update_player(player_id):
         updated_doc = player_ref.get()
         updated_player = serialize_firestore_doc(updated_doc)
         
-        # Broadcast player update to all connected clients in the season room
+        # Broadcast player update to all connected clients via Firebase
         match_id = player_data.get('matchId')
         if match_id:
-            socketio.emit('PLAYER_UPDATED', {
+            emit_realtime_event(f'auctions/{match_id}/events/playerUpdated', {
                 'playerId': player_id,
                 'player': updated_player,
                 'timestamp': datetime.now().isoformat()
@@ -1336,8 +1441,8 @@ def update_match_status(match_id):
         updated_doc = match_ref.get()
         updated_match = serialize_firestore_doc(updated_doc)
         
-        # Emit websocket event for real-time update
-        socketio.emit('MATCH_STATUS_UPDATED', {
+        # Emit Firebase event for real-time update
+        emit_realtime_event(f'matches/{match_id}/status', {
             'matchId': match_id,
             'status': computed_status,
             'timestamp': datetime.now().isoformat()
@@ -1843,7 +1948,7 @@ def approve_auctioneer():
         })
         
         # Emit real-time event to notify auctioneer
-        socketio.emit('AUCTIONEER_APPROVED', {
+        emit_realtime_event(f'users/{auctioneer_id}/events/approved', {
             'auctioneerId': auctioneer_id,
             'seasonId': season_id,
             'message': 'Your application has been approved! You can now access the auction dashboard.'
@@ -1877,7 +1982,7 @@ def reject_auctioneer():
         })
         
         # Emit real-time event
-        socketio.emit('AUCTIONEER_REJECTED', {
+        emit_realtime_event(f'users/{auctioneer_id}/events/rejected', {
             'auctioneerId': auctioneer_id,
             'seasonId': season_id,
             'reason': reason
@@ -1964,7 +2069,7 @@ def update_auction_state(season_id: str, updates: Dict):
         db.collection('auction_states').document(season_id).set(updates, merge=True)
         
         # Broadcast to all connected clients in this season room
-        socketio.emit('AUCTION_STATE_UPDATE', updates, room=f'season_{season_id}')
+        emit_realtime_event(f'auctions/{season_id}/state', updates)
         
         return True
     except Exception as e:
@@ -2025,7 +2130,7 @@ def initialize_auction():
         db.collection('auction_states').document(season_id).set(auction_state_data)
         
         # Broadcast to all dashboards
-        socketio.emit('AUCTION_INITIALIZED', auction_state_data, room=f'season_{season_id}')
+        emit_realtime_event(f'auctions/{season_id}/events/initialized', auction_state_data)
         
         return success_response(auction_state_data, "Auction initialized successfully")
     except Exception as e:
@@ -2060,16 +2165,16 @@ def start_auction():
         updated_state = get_auction_state(season_id)
         
         # Broadcast to all dashboards with status
-        socketio.emit('AUCTION_STARTED', {
+        emit_realtime_event(f'auctions/{season_id}/events/started', {
             'seasonId': season_id,
             'status': 'LIVE',
             'message': 'Auction is now LIVE!',
             'timestamp': datetime.now().isoformat()
-        }, room=f'season_{season_id}')
+})
         
         # Also send full state update
         if updated_state:
-            socketio.emit('AUCTION_STATE_UPDATE', updated_state, room=f'season_{season_id}')
+            emit_realtime_event(f'auctions/{season_id}/state', updated_state)
         
         # Start server timer
         start_auction_timer(season_id)
@@ -2096,15 +2201,15 @@ def pause_auction():
         # Get updated state
         updated_state = get_auction_state(season_id)
         
-        socketio.emit('AUCTION_PAUSED', {
+        emit_realtime_event(f'auctions/{season_id}/events/paused', {
             'seasonId': season_id,
             'status': 'PAUSED',
             'timestamp': datetime.now().isoformat()
-        }, room=f'season_{season_id}')
+})
         
         # Also send full state update
         if updated_state:
-            socketio.emit('AUCTION_STATE_UPDATE', updated_state, room=f'season_{season_id}')
+            emit_realtime_event(f'auctions/{season_id}/state', updated_state)
         
         return success_response(None, "Auction paused")
     except Exception as e:
@@ -2128,15 +2233,15 @@ def resume_auction():
         # Get updated state
         updated_state = get_auction_state(season_id)
         
-        socketio.emit('AUCTION_RESUMED', {
+        emit_realtime_event(f'auctions/{season_id}/events/resumed', {
             'seasonId': season_id,
             'status': 'LIVE',
             'timestamp': datetime.now().isoformat()
-        }, room=f'season_{season_id}')
+})
         
         # Also send full state update
         if updated_state:
-            socketio.emit('AUCTION_STATE_UPDATE', updated_state, room=f'season_{season_id}')
+            emit_realtime_event(f'auctions/{season_id}/state', updated_state)
         
         return success_response(None, "Auction resumed")
     except Exception as e:
@@ -2157,7 +2262,7 @@ def end_auction():
         
         update_auction_state(season_id, updates)
         
-        socketio.emit('AUCTION_ENDED', {
+        emit_realtime_event(f'auctions/{season_id}/events/ended', {
             'seasonId': season_id,
             'timestamp': datetime.now().isoformat()
         }, room=f'season_{season_id}')
@@ -2209,7 +2314,7 @@ def start_player_bidding():
         room_name = f'season_{season_id}'
         print(f'🔔 Emitting PLAYER_BIDDING_STARTED to room: {room_name}')
         print(f'   Player: {player.get("name")}, Base Price: {base_price}')
-        socketio.emit('PLAYER_BIDDING_STARTED', {
+        emit_realtime_event(f'auctions/{season_id}/currentPlayer', {
             'seasonId': season_id,
             'player': player,
             'basePrice': base_price,
@@ -2308,12 +2413,12 @@ def place_bid():
         }
         
         print(f'💰 Broadcasting NEW_BID to season_{season_id}: {team.get("name")} bid {amount}')
-        socketio.emit('NEW_BID', bid_broadcast, room=f'season_{season_id}')
+        emit_realtime_push(f'auctions/{season_id}/bids', bid_broadcast)
         
-        # Also send updated auction state
+        # Also send updated auction state via Firestore
         updated_state = get_auction_state(season_id)
         if updated_state:
-            socketio.emit('AUCTION_STATE_UPDATE', updated_state, room=f'season_{season_id}')
+            emit_realtime_event(f'auctions/{season_id}/state', updated_state)
         
         return success_response(None, "Bid placed successfully")
     except Exception as e:
@@ -2389,10 +2494,10 @@ def close_player_bidding():
                 
                 # Emit TEAM_UPDATED event for real-time budget updates
                 updated_team = serialize_firestore_doc(db.collection('teams').document(winning_team_id).get())
-                socketio.emit('TEAM_UPDATED', {
+                emit_realtime_event(f'auctions/{season_id}/events/teamUpdated', {
                     'teamId': winning_team_id,
                     'team': updated_team
-                }, room=f'season_{season_id}')
+                })
         else:
             print(f'[CLOSE_BIDDING] Marking player {player_id} as UNSOLD (sold={sold}, winning_team={winning_team_id})')
             # Mark player as unsold
@@ -2420,7 +2525,7 @@ def close_player_bidding():
         
         # Broadcast to all dashboards
         event_name = 'PLAYER_SOLD' if sold else 'PLAYER_UNSOLD'
-        socketio.emit(event_name, result_data, room=f'season_{season_id}')
+        emit_realtime_event(f'auctions/{season_id}/events/{event_name.lower()}', result_data)
         
         return success_response(result_data, "Player bidding closed")
     except Exception as e:
@@ -2449,18 +2554,18 @@ def auction_timer_thread(season_id: str, end_time_str: str):
             if remaining <= 0:
                 # Auction time ended
                 update_auction_state(season_id, {'status': 'ENDED'})
-                socketio.emit('AUCTION_TIME_ENDED', {
+                emit_realtime_event(f'auctions/{season_id}/events/timeEnded', {
                     'seasonId': season_id,
                     'timestamp': now.isoformat()
-                }, room=f'season_{season_id}')
+                })
                 break
             
             # Broadcast timer update every second
-            socketio.emit('AUCTION_TIMER_UPDATE', {
+            emit_realtime_event(f'auctions/{season_id}/timer', {
                 'seasonId': season_id,
                 'remainingSeconds': int(remaining),
                 'serverTime': now.isoformat()
-            }, room=f'season_{season_id}')
+            })
             
             time.sleep(1)
         
@@ -2494,225 +2599,11 @@ def start_auction_timer(season_id: str):
 
 
 # ========================
-# WEBSOCKET EVENT HANDLERS
+# WEBSOCKET EVENT HANDLERS (DEPRECATED - Now using Firebase Realtime Database)
 # ========================
-
-@socketio.on('connect')
-def handle_connect():
-    """Client connected"""
-    print(f'Client connected: {request.sid}')
-    emit('connection_response', {'status': 'connected', 'message': 'Connected to HypeHammer server'})
-
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    """Client disconnected"""
-    print(f'Client disconnected: {request.sid}')
-
-
-@socketio.on('join_season')
-def handle_join_season(data):
-    """Join a season room to receive real-time updates"""
-    season_id = data.get('seasonId')
-    user_id = data.get('userId')
-    role = data.get('role')
-    
-    if not season_id:
-        emit('error', {'message': 'seasonId required'})
-        return
-    
-    join_room(f'season_{season_id}')
-    
-    # Also join user-specific room for personal notifications
-    if user_id:
-        join_room(f'user_{user_id}')
-    
-    room_name = f'season_{season_id}'
-    print(f'✅ User {user_id} ({role}) joined room: {room_name}')
-    
-    # Send current auction state
-    state = get_auction_state(season_id)
-    if state:
-        emit('AUCTION_STATE_UPDATE', state)
-    
-    emit('joined_season', {
-        'seasonId': season_id,
-        'message': f'Joined season {season_id} successfully'
-    })
-
-
-@socketio.on('leave_season')
-def handle_leave_season(data):
-    """Leave a season room"""
-    season_id = data.get('seasonId')
-    if season_id:
-        leave_room(f'season_{season_id}')
-        print(f'Client left season_{season_id}')
-
-
-# ========================
-# WEBRTC AUDIO SIGNALING
-# ========================
-
-# Track active auctioneer audio sessions
-active_audio_sessions = {}
-
-@socketio.on('auctioneer_audio_start')
-def handle_auctioneer_audio_start(data):
-    """Auctioneer starts audio streaming"""
-    season_id = data.get('seasonId')
-    user_id = data.get('userId')
-    
-    if not season_id or not user_id:
-        emit('error', {'message': 'seasonId and userId required'})
-        return
-    
-    # Store active session
-    active_audio_sessions[season_id] = {
-        'auctioneerId': user_id,
-        'socketId': request.sid,
-        'startTime': datetime.now().isoformat(),
-        'muted': False
-    }
-    
-    print(f'🎙️ Auctioneer {user_id} started audio for season {season_id}')
-    
-    # Notify all listeners in the room
-    socketio.emit('auctioneer_audio_started', {
-        'seasonId': season_id,
-        'auctioneerId': user_id
-    }, room=f'season_{season_id}')
-
-
-@socketio.on('auctioneer_audio_stop')
-def handle_auctioneer_audio_stop(data):
-    """Auctioneer stops audio streaming"""
-    season_id = data.get('seasonId')
-    user_id = data.get('userId')
-    
-    if season_id in active_audio_sessions:
-        del active_audio_sessions[season_id]
-    
-    print(f'🎙️ Auctioneer {user_id} stopped audio for season {season_id}')
-    
-    # Notify all listeners
-    socketio.emit('auctioneer_audio_stopped', {
-        'seasonId': season_id,
-        'auctioneerId': user_id
-    }, room=f'season_{season_id}')
-
-
-@socketio.on('auctioneer_audio_mute')
-def handle_auctioneer_audio_mute(data):
-    """Auctioneer mutes/unmutes"""
-    season_id = data.get('seasonId')
-    user_id = data.get('userId')
-    muted = data.get('muted', False)
-    
-    if season_id in active_audio_sessions:
-        active_audio_sessions[season_id]['muted'] = muted
-    
-    print(f'🎙️ Auctioneer {user_id} {"muted" if muted else "unmuted"}')
-    
-    # Notify all listeners
-    socketio.emit('auctioneer_audio_muted', {
-        'seasonId': season_id,
-        'auctioneerId': user_id,
-        'muted': muted
-    }, room=f'season_{season_id}')
-
-
-@socketio.on('audio_listener_join')
-def handle_audio_listener_join(data):
-    """Listener joins to receive audio"""
-    season_id = data.get('seasonId')
-    user_id = data.get('userId')
-    
-    if not season_id or not user_id:
-        emit('error', {'message': 'seasonId and userId required'})
-        return
-    
-    # Check if auctioneer is streaming
-    if season_id not in active_audio_sessions:
-        emit('error', {'message': 'No active audio stream'})
-        return
-    
-    session = active_audio_sessions[season_id]
-    
-    print(f'📻 Listener {user_id} joining audio for season {season_id}')
-    
-    # Notify auctioneer of new listener
-    socketio.emit('audio_listener_joined', {
-        'listenerId': user_id,
-        'socketId': request.sid
-    }, room=session['socketId'])
-
-
-@socketio.on('audio_offer')
-def handle_audio_offer(data):
-    """Forward WebRTC offer from auctioneer to listener"""
-    season_id = data.get('seasonId')
-    to = data.get('to')
-    offer = data.get('offer')
-    
-    if not all([season_id, to, offer]):
-        emit('error', {'message': 'Missing required fields'})
-        return
-    
-    # Forward to specific listener
-    socketio.emit('audio_offer', {
-        'from': request.sid,
-        'offer': offer
-    }, room=f'user_{to}')
-
-
-@socketio.on('audio_answer')
-def handle_audio_answer(data):
-    """Forward WebRTC answer from listener to auctioneer"""
-    season_id = data.get('seasonId')
-    to = data.get('to')
-    answer = data.get('answer')
-    
-    if not all([season_id, to, answer]):
-        emit('error', {'message': 'Missing required fields'})
-        return
-    
-    # Forward to auctioneer
-    socketio.emit('audio_answer', {
-        'from': request.sid,
-        'answer': answer
-    }, room=to)
-
-
-@socketio.on('audio_ice_candidate')
-def handle_audio_ice_candidate(data):
-    """Forward ICE candidate between peers"""
-    season_id = data.get('seasonId')
-    to = data.get('to')
-    candidate = data.get('candidate')
-    
-    if not all([season_id, to, candidate]):
-        emit('error', {'message': 'Missing required fields'})
-        return
-    
-    # Check if sending to user or socket
-    if to.startswith('user_'):
-        room = to
-    else:
-        room = to
-    
-    # Forward ICE candidate
-    event_name = 'audio_ice_candidate_auctioneer' if 'auctioneer' in str(data.get('from', '')) else 'audio_ice_candidate_listener'
-    socketio.emit(event_name, {
-        'from': request.sid,
-        'candidate': candidate
-    }, room=room)
-
-
-@socketio.on('audio_check_status')
-def handle_audio_check_status(data):
-    """Check if auctioneer is currently streaming"""
-    season_id = data.get('seasonId')
+# All real-time functionality is now handled through Firebase Realtime Database
+# The frontend listens directly to Firebase for real-time updates
+# No need for WebSocket event handlers
     
     if season_id in active_audio_sessions:
         session = active_audio_sessions[season_id]
@@ -2759,7 +2650,7 @@ def admin_extend_timer():
         
         update_auction_state(season_id, updates)
         
-        socketio.emit('TIMER_EXTENDED', {
+        emit_realtime_event(f'auctions/{season_id}/events/timerExtended', {
             'seasonId': season_id,
             'newEndTime': new_end.isoformat(),
             'addedMinutes': additional_minutes
@@ -2805,7 +2696,7 @@ def admin_replace_auctioneer():
         })
         
         # Notify both
-        socketio.emit('AUCTIONEER_REPLACED', {
+        emit_realtime_event(f'auctions/{season_id}/events/auctioneerReplaced', {
             'seasonId': season_id,
             'oldAuctioneerId': old_auctioneer_id,
             'newAuctioneerId': new_auctioneer_id
@@ -2822,15 +2713,14 @@ def admin_replace_auctioneer():
 
 if __name__ == '__main__':
     print("🔥 HypeHammer Server Starting...")
-    print("✅ Flask + SocketIO initialized")
-    print("✅ Real-time bidding enabled")
+    print("✅ Flask + Firebase Realtime Database initialized")
+    print("✅ Real-time bidding enabled via Firebase")
     print("✅ Server-controlled auction system active")
     print(f"🌐 Server running on http://localhost:5000")
     
-    socketio.run(
-        app,
+    app.run(
         host='0.0.0.0',
         port=5000,
-        debug=True,
-        allow_unsafe_werkzeug=True
+        debug=True
     )
+

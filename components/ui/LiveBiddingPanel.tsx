@@ -54,48 +54,72 @@ export const LiveBiddingPanel: React.FC<LiveBiddingPanelProps> = ({
   const [bidding, setBidding] = useState(false);
   const [celebrationVisible, setCelebrationVisible] = useState(false);
 
-  // Connect to WebSocket
+  // Connect to Firebase Realtime for live updates
   useEffect(() => {
-    if (!socketService.isConnected()) {
-      socketService.connect('http://localhost:5000');
-    }
-
-    // Join season room
+    // Join season room (Firebase handles it automatically)
     socketService.joinSeason(seasonId, userId, userRole);
 
+    const unsubscribers: Array<() => void> = [];
+
     // Listen to auction state updates
-    socketService.onAuctionStateUpdate((state) => {
+    unsubscribers.push(socketService.onAuctionStateUpdate((state) => {
       setAuctionState(prev => ({ ...prev, ...state }));
-    });
+    }));
 
     // Listen to timer updates
-    socketService.onTimerUpdate((data) => {
+    unsubscribers.push(socketService.onTimerUpdate((data) => {
       setAuctionState(prev => ({ ...prev, remainingSeconds: data.remainingSeconds }));
-    });
+    }));
 
     // Listen to player bidding started
-    socketService.onPlayerBiddingStarted((data) => {
+    unsubscribers.push(socketService.onPlayerBiddingStarted((data) => {
+      if (!data || !data?.player) {
+        setCurrentPlayer(null);
+        setCurrentBid(0);
+        setLeadingTeam(null);
+        setAuctionState(prev => ({
+          ...prev,
+          currentPlayerId: null,
+          currentPlayerName: null,
+          currentBid: 0,
+          leadingTeamId: null,
+          leadingTeamName: null,
+          biddingActive: false
+        }));
+        setBidHistory([]);
+        return;
+      }
+
       setAuctionState(prev => ({
         ...prev,
         currentPlayerId: data.player.id,
         currentPlayerName: data.player.name,
-        currentBid: data.basePrice,
-        leadingTeamId: null,
-        leadingTeamName: null,
+        currentBid: data.player?.currentBid ?? data.basePrice ?? data.player.basePrice ?? 0,
+        leadingTeamId: data.player?.leadingTeamId ?? null,
+        leadingTeamName: data.player?.leadingTeamName ?? null,
         biddingActive: true
       }));
       setBidHistory([]);
-    });
+    }));
 
     // Listen to new bids - EVERYONE SEES THE SAME BID
-    socketService.onNewBid((data) => {
+    unsubscribers.push(socketService.onNewBid((data) => {
       console.log('🔨 New bid received:', data);
-      setAuctionState(prev => ({
-        ...prev,
-        currentBid: data.amount,
-        leadingTeamId: data.teamId,
-        leadingTeamName: data.teamName
-      }));
+
+      setAuctionState(prev => {
+        // Don't apply stale bids when no player is active.
+        if (!prev.currentPlayerId) return prev;
+
+        // Ignore stale bids from previous players.
+        if (data.playerId && data.playerId !== prev.currentPlayerId) return prev;
+
+        return {
+          ...prev,
+          currentBid: data.amount,
+          leadingTeamId: data.teamId,
+          leadingTeamName: data.teamName
+        };
+      });
       setBidHistory(prev => [data, ...prev]);
 
       // Show animation
@@ -103,10 +127,10 @@ export const LiveBiddingPanel: React.FC<LiveBiddingPanelProps> = ({
         // Outbid notification for team reps
         showOutbidNotification();
       }
-    });
+    }));
 
     // Listen to player sold
-    socketService.onPlayerSold((data) => {
+    unsubscribers.push(socketService.onPlayerSold((data) => {
       console.log('✅ Player sold:', data);
       setAuctionState(prev => ({
         ...prev,
@@ -116,10 +140,10 @@ export const LiveBiddingPanel: React.FC<LiveBiddingPanelProps> = ({
       }));
       setCelebrationVisible(true);
       setTimeout(() => setCelebrationVisible(false), 3000);
-    });
+    }));
 
     // Listen to player unsold
-    socketService.onPlayerUnsold((data) => {
+    unsubscribers.push(socketService.onPlayerUnsold((data) => {
       console.log('❌ Player unsold:', data);
       setAuctionState(prev => ({
         ...prev,
@@ -127,10 +151,10 @@ export const LiveBiddingPanel: React.FC<LiveBiddingPanelProps> = ({
         currentPlayerId: null,
         currentPlayerName: null
       }));
-    });
+    }));
 
     return () => {
-      socketService.leaveSeason(seasonId);
+      unsubscribers.forEach(unsub => unsub());
     };
   }, [seasonId, userId, userRole, teamId]);
 
@@ -143,7 +167,8 @@ export const LiveBiddingPanel: React.FC<LiveBiddingPanelProps> = ({
 
   const fetchTeamBudget = async () => {
     try {
-      const response = await fetch(`http://localhost:5000/api/teams/${teamId}`);
+      const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+      const response = await fetch(`${API_BASE}/teams/${teamId}`);
       if (response.ok) {
         const data = await response.json();
         setTeamBudget(data.data.remainingBudget || 0);
@@ -167,7 +192,8 @@ export const LiveBiddingPanel: React.FC<LiveBiddingPanelProps> = ({
     setBidding(true);
 
     try {
-      const response = await fetch('http://localhost:5000/api/auction/bid', {
+      const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+      const response = await fetch(`${API_BASE}/auction/bid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

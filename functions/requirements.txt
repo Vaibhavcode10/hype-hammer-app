@@ -1,0 +1,10 @@
+# Firebase Functions for Python
+firebase-functions>=0.4.0
+firebase-admin>=6.2.0
+
+# Web Framework
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# Utilities
+python-dotenv>=1.0.0

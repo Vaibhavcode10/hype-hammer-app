@@ -14,6 +14,8 @@ import { AuctionStatus, MatchData, UserRole, Player, Team } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
 import { socketService } from '../../services/socketService';
 
+const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+
 interface AdminDashboardPageProps {
   setStatus: (status: AuctionStatus) => void;
   currentMatch: MatchData | null;
@@ -32,6 +34,9 @@ interface SystemLog {
 export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   // Main navigation state
   const [activeSection, setActiveSection] = useState<'overview' | 'settings' | 'players' | 'teams' | 'auctioneers' | 'liveMonitor' | 'analytics' | 'reports'>('overview');
+  
+  // Resolved match state - if currentMatch is undefined, we'll fetch the first available match
+  const [resolvedMatch, setResolvedMatch] = useState<MatchData | null>(currentMatch);
   
   // Data states
   const [teams, setTeams] = useState<Team[]>([]);
@@ -99,6 +104,36 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   // Sidebar collapse state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // Auto-fetch first available match if currentMatch is undefined
+  useEffect(() => {
+    if (currentMatch) {
+      setResolvedMatch(currentMatch);
+      return;
+    }
+
+    // Fetch first available match for Admin
+    const fetchFirstMatch = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/matches`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.data && data.data.length > 0) {
+            const firstMatch = data.data[0];
+            console.log('✅ Admin: Auto-selected first match:', firstMatch.name);
+            setResolvedMatch(firstMatch);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch matches:', error);
+      }
+    };
+
+    fetchFirstMatch();
+  }, [currentMatch]);
+
+  // Use resolvedMatch for all operations
+  const activeMatch = resolvedMatch;
+
   // Scroll to top when section changes
   useEffect(() => {
     const contentDiv = document.querySelector('.admin-content-scroll');
@@ -147,7 +182,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         return;
       }
 
-      const response = await fetch(`http://localhost:5000/api/auctions/${currentMatch.id}`, {
+      const response = await fetch(`${API_BASE}/auctions/${currentMatch.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -327,7 +362,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     }
     
     try {
-      const response = await fetch('http://localhost:5000/api/auctioneer/reject', {
+      const response = await fetch(`${API_BASE}/auctioneer/reject`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -364,7 +399,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     try {
       switch (confirmAction.type) {
         case 'approveAuctioneer':
-          const response = await fetch('http://localhost:5000/api/auctioneer/approve', {
+          const response = await fetch(`${API_BASE}/auctioneer/approve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -423,283 +458,263 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   // Fetch season-specific data from API
   useEffect(() => {
     const fetchData = async () => {
-      if (!currentMatch?.id) {
-        setLoading(false);
-        return;
-      }
-      
       try {
+        console.log('🔄 AdminDashboard: Starting data fetch, activeMatch:', activeMatch?.id);
         setLoading(true);
+        
+        // Build query params - if there's a match, filter by it; otherwise get all data
+        const matchQuery = activeMatch?.id ? `?matchId=${activeMatch.id}` : '';
+        
+        console.log('📡 Fetching from:', `${API_BASE}/teams${matchQuery}`);
+        
         const [teamsRes, playersRes, auctioneersRes] = await Promise.all([
-          fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`),
-          fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`),
-          fetch(`http://localhost:5000/api/auctioneers?matchId=${currentMatch.id}`)
+          fetch(`${API_BASE}/teams${matchQuery}`),
+          fetch(`${API_BASE}/players${matchQuery}`),
+          fetch(`${API_BASE}/auctioneers${matchQuery}`)
         ]);
+
+        console.log('📊 Response status - Teams:', teamsRes.status, 'Players:', playersRes.status, 'Auctioneers:', auctioneersRes.status);
 
         if (teamsRes.ok) {
           const data = await teamsRes.json();
+          console.log('✅ Teams data:', data.data?.length || 0, 'teams');
           // Calculate squadSize from playerIds array length
           const teamsWithSquadSize = (data.data || []).map((team: Team) => ({
             ...team,
             squadSize: team.playerIds?.length || 0
           }));
           setTeams(teamsWithSquadSize);
+        } else {
+          console.error('❌ Teams fetch failed:', teamsRes.status, await teamsRes.text());
         }
 
         if (playersRes.ok) {
           const data = await playersRes.json();
+          console.log('✅ Players data:', data.data?.length || 0, 'players');
           setPlayers(data.data || []);
+        } else {
+          console.error('❌ Players fetch failed:', playersRes.status, await playersRes.text());
         }
 
         if (auctioneersRes.ok) {
           const data = await auctioneersRes.json();
+          console.log('✅ Auctioneers data:', data.data?.length || 0, 'auctioneers');
           setAuctioneers(data.data || []);
+          
+          // Initialize alerts count from auctioneers data
+          const pendingApprovals = (data.data || []).filter((a: any) => !a.status || a.status === 'pending').length;
+          setAlertsCount(pendingApprovals);
+        } else {
+          console.error('❌ Auctioneers fetch failed:', auctioneersRes.status, await auctioneersRes.text());
         }
-        
-        // Initialize alerts count
-        const pendingApprovals = (data.data || []).filter((a: any) => !a.status || a.status === 'pending').length;
-        setAlertsCount(pendingApprovals);
         
         // Add initial log
         addSystemLog('info', 'Admin dashboard loaded');
+        console.log('✅ AdminDashboard: Data fetch complete');
       } catch (error) {
-        console.error('Failed to fetch dashboard data:', error);
+        console.error('❌ Failed to fetch dashboard data:', error);
         addSystemLog('error', 'Failed to load dashboard data');
       } finally {
         setLoading(false);
+        console.log('✅ AdminDashboard: Loading state set to false');
       }
     };
 
     fetchData();
-  }, [currentMatch?.id]);
+  }, [activeMatch?.id]);
 
-  // Initialize season settings from current match
+  // Initialize season settings from active match
   useEffect(() => {
-    if (currentMatch) {
+    if (activeMatch) {
       setSeasonSettings({
-        name: currentMatch.name || '',
-        sport: currentMatch.sport || 'Cricket',
-        startDate: currentMatch.matchDate ? new Date(currentMatch.matchDate).toISOString().split('T')[0] : '',
-        duration: currentMatch.config?.duration || 120,
-        bidIncrement: currentMatch.config?.bidIncrement || 100000,
-        maxTeams: currentMatch.config?.maxTeams || 8,
-        maxSquadSize: currentMatch.config?.maxSquadSize || 15,
-        baseTeamBudget: currentMatch.config?.baseTeamBudget || 10000000,
+        name: activeMatch.name || '',
+        sport: activeMatch.sport || 'Cricket',
+        startDate: activeMatch.matchDate ? new Date(activeMatch.matchDate).toISOString().split('T')[0] : '',
+        duration: activeMatch.config?.duration || 120,
+        bidIncrement: activeMatch.config?.bidIncrement || 100000,
+        maxTeams: activeMatch.config?.maxTeams || 8,
+        maxSquadSize: activeMatch.config?.maxSquadSize || 15,
+        baseTeamBudget: activeMatch.config?.baseTeamBudget || 10000000,
       });
     }
-  }, [currentMatch]);
+  }, [activeMatch]);
 
-
-  // WebSocket connection for real-time updates
+  // CONSOLIDATED Firebase real-time listeners (matches other working dashboards)
   useEffect(() => {
-    if (!currentMatch?.id || !currentUser?.email) return;
+    if (!currentUser?.email || !activeMatch?.id) {
+      console.log('⏸️ Admin: Waiting for activeMatch to set up listeners...');
+      return;
+    }
 
-    // Connect to server
-    socketService.connect('http://localhost:5000');
+    const seasonId = activeMatch.id;
+    
+    console.log('🔥 Admin: Setting up real-time listeners for seasonId:', seasonId);
+
+    // Initialize realtime connection
+    socketService.connect();
 
     // Join season room
-    socketService.joinSeason(currentMatch.id, currentUser.email, UserRole.ADMIN);
+    socketService.joinSeason(seasonId, currentUser.email, UserRole.ADMIN);
 
-    const socket = socketService.getSocket();
-    if (!socket) return;
+    // Store unsubscribe functions for cleanup
+    const unsubscribers: (() => void)[] = [];
 
-    // Listen for player updates
-    socket.on('PLAYER_UPDATED', async (data: { playerId: string; player: Player }) => {
-      console.log('Admin: PLAYER_UPDATED received:', data);
-      setPlayers(prev => prev.map(p => p.id === data.playerId ? data.player : p));
-      
-      // If player was sold, refetch teams to update squad sizes
-      if (data.player.status === 'SOLD') {
-        try {
-          const teamsRes = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
-          if (teamsRes.ok) {
-            const teamsData = await teamsRes.json();
-            // Calculate squadSize from playerIds array length
-            const teamsWithSquadSize = (teamsData.data || []).map((team: Team) => ({
-              ...team,
-              squadSize: team.playerIds?.length || 0
-            }));
-            setTeams(teamsWithSquadSize);
-          }
-        } catch (error) {
-          console.error('Failed to refetch teams:', error);
+    // Listen to players collection
+    const playersMatchId = activeMatch.id;
+    unsubscribers.push(socketService.onPlayersUpdate(playersMatchId, (updatedPlayers) => {
+      console.log('🔥 Admin: Players updated:', updatedPlayers.length);
+      setPlayers(updatedPlayers);
+
+      // Check for live player being auctioned
+      const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE');
+      if (livePlayer) {
+        console.log('🔥 Admin: Live player:', livePlayer.name, 'Bid:', livePlayer.currentBid);
+        setCurrentBiddingPlayer(livePlayer);
+        setCurrentBid(livePlayer.currentBid || livePlayer.basePrice || 0);
+        setLeadingTeamName(livePlayer.leadingTeamName || '');
+        setLiveAuctionStatus('LIVE');
+      } else {
+        // If there are sold/unsold players, auction is in progress
+        const hasProcessedPlayers = updatedPlayers.some((p: any) => p.status === 'SOLD' || p.status === 'UNSOLD');
+        if (hasProcessedPlayers && liveAuctionStatus !== 'ENDED') {
+          // Keep auction status as LIVE but clear current player
+          setCurrentBiddingPlayer(null);
+          console.log('🔥 Admin: No live player, but auction in progress');
         }
       }
-    });
+    }));
 
-    // Listen for player sold events
-    socket.on('PLAYER_SOLD', async (data: any) => {
-      console.log('Admin: PLAYER_SOLD received:', data);
+    // Listen to teams collection
+    const teamsMatchId = activeMatch.id;
+    unsubscribers.push(socketService.onTeamsUpdate(teamsMatchId, (updatedTeams) => {
+      console.log('🔥 Admin: Teams updated:', updatedTeams.length);
+      setTeams(updatedTeams);
+    }));
+
+    // Listen to bid events
+    unsubscribers.push(socketService.onNewBid((bidData) => {
+      console.log('🔥 Admin: New bid:', bidData);
       
-      // Refetch both players and teams to get updated data
-      try {
-        const [playersRes, teamsRes] = await Promise.all([
-          fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`),
-          fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`)
-        ]);
-        
-        if (playersRes.ok) {
-          const playersData = await playersRes.json();
-          setPlayers(playersData.data || []);
-        }
-        
-        if (teamsRes.ok) {
-          const teamsData = await teamsRes.json();
-          // Calculate squadSize from playerIds array length
-          const teamsWithSquadSize = (teamsData.data || []).map((team: Team) => ({
-            ...team,
-            squadSize: team.playerIds?.length || 0
-          }));
-          setTeams(teamsWithSquadSize);
-        }
-        
-        addSystemLog('success', `Player ${data.playerName} sold to ${data.teamName} for ₹${(data.finalAmount / 100000).toFixed(1)}L`);
-        addLiveNotification(`✅ ${data.playerName} SOLD to ${data.teamName} for ₹${(data.finalAmount / 100000).toFixed(1)}L`, 'sold');
-      } catch (error) {
-        console.error('Failed to refetch data after player sold:', error);
+      if (!bidData.amount) {
+        console.error('❌ Admin: Bid missing amount:', bidData);
+        return;
       }
       
-      setCurrentBiddingPlayer(null);
-      setCurrentBid(0);
-      setLeadingTeamName('');
-    });
+      setCurrentBid(bidData.amount);
+      setLeadingTeamName(bidData.teamName);
+      addSystemLog('info', `Bid: ${bidData.teamName} - ₹${(bidData.amount / 100000).toFixed(1)}L`);
+    }));
 
-    // Listen for team updates
-    socket.on('TEAM_UPDATED', (data: { teamId: string; team: Team }) => {
-      console.log('Admin: TEAM_UPDATED received:', data);
-      // Calculate squadSize from playerIds array length
-      const updatedTeam = {
-        ...data.team,
-        squadSize: data.team.playerIds?.length || 0
-      };
-      setTeams(prev => prev.map(t => t.id === data.teamId ? updatedTeam : t));
-    });
-
-    // Listen for live auction events
-    socket.on('AUCTION_TIMER_UPDATE', (data: any) => {
-      setCountdown(data.remainingSeconds);
-    });
-
-    socket.on('AUCTION_STATE_UPDATE', (data: any) => {
-      console.log('Admin: AUCTION_STATE_UPDATE received:', data);
+    // AUCTION STATE UPDATE - PRIMARY SOURCE OF TRUTH
+    unsubscribers.push(socketService.onAuctionStateUpdate((data: any) => {
+      console.log('🚨 Admin: AUCTION_STATE_UPDATE received:', data);
       console.log('   → Status:', data.status);
       console.log('   → Current Player ID:', data.currentPlayerId);
       console.log('   → Bidding Active:', data.biddingActive);
-      console.log('   → Current Bid:', data.currentBid);
-      console.log('   → Leading Team Name:', data.leadingTeamName);
       
       if (data.status) {
-        setLiveAuctionStatus(data.status);
+        const normalizedStatus = (data.status || '').toUpperCase();
+        console.log('   → Setting liveAuctionStatus to:', normalizedStatus);
+        if (normalizedStatus === 'LIVE' || normalizedStatus === 'PAUSED' || normalizedStatus === 'READY' || normalizedStatus === 'ENDED') {
+          setLiveAuctionStatus(normalizedStatus as 'READY' | 'LIVE' | 'PAUSED' | 'ENDED');
+        }
       }
+      
       if (data.remainingSeconds !== undefined) {
         setCountdown(data.remainingSeconds);
       }
+      
       if (data.currentPlayerId && data.biddingActive) {
         // Fetch player data if we have the ID
-        fetch(`http://localhost:5000/api/players/${data.currentPlayerId}?matchId=${currentMatch.id}`)
-          .then(res => res.json())
-          .then(playerData => {
-            if (playerData.data) {
-              console.log('✅ Fetched player:', playerData.data);
-              setCurrentBiddingPlayer(playerData.data);
-              setCurrentBid(data.currentBid || playerData.data.basePrice || 0);
-              setLeadingTeamName(data.leadingTeamName || '');
-            }
-          })
-          .catch(err => {
-            console.error('Failed to fetch player:', err);
-            // Fallback: try to find in local players array
-            const player = players.find(p => p.id === data.currentPlayerId);
-            if (player) {
-              console.log('✅ Found player in local array:', player);
-              setCurrentBiddingPlayer(player);
-              setCurrentBid(data.currentBid || player.basePrice || 0);
-              setLeadingTeamName(data.leadingTeamName || '');
-            }
-          });
+        const player = players.find(p => p.id === data.currentPlayerId);
+        if (player) {
+          console.log('✅ Found player in local array:', player.name);
+          setCurrentBiddingPlayer(player);
+          setCurrentBid(data.currentBid || player.currentBid || player.basePrice || 0);
+          setLeadingTeamName(data.leadingTeamName || '');
+        }
       } else if (!data.biddingActive) {
         console.log('ℹ️ Bidding not active, clearing current player');
         setCurrentBiddingPlayer(null);
         setCurrentBid(0);
         setLeadingTeamName('');
       }
-    });
+    }));
 
-    socket.on('AUCTION_STARTED', (data: any) => {
-      console.log('Admin: AUCTION_STARTED');
+    // Auction lifecycle events
+    unsubscribers.push(socketService.onAuctionStarted((data: any) => {
+      console.log('🚀 Admin: AUCTION_STARTED');
       setLiveAuctionStatus('LIVE');
       addSystemLog('info', 'Auction has started');
-    });
+    }));
 
-    socket.on('AUCTION_PAUSED', (data: any) => {
-      console.log('Admin: AUCTION_PAUSED');
+    unsubscribers.push(socketService.onAuctionPaused((data: any) => {
+      console.log('⏸️ Admin: AUCTION_PAUSED');
       setLiveAuctionStatus('PAUSED');
       addSystemLog('warning', 'Auction paused');
-    });
+    }));
 
-    socket.on('AUCTION_RESUMED', (data: any) => {
-      console.log('Admin: AUCTION_RESUMED');
+    unsubscribers.push(socketService.onAuctionResumed((data: any) => {
+      console.log('▶️ Admin: AUCTION_RESUMED');
       setLiveAuctionStatus('LIVE');
       addSystemLog('info', 'Auction resumed');
-    });
+    }));
 
-    socket.on('AUCTION_ENDED', (data: any) => {
-      console.log('Admin: AUCTION_ENDED');
+    unsubscribers.push(socketService.onAuctionEnded((data: any) => {
+      console.log('🏁 Admin: AUCTION_ENDED');
       setLiveAuctionStatus('ENDED');
       addSystemLog('info', 'Auction has ended');
-    });
+    }));
 
-    socket.on('PLAYER_BIDDING_STARTED', (data: any) => {
-      console.log('Admin: PLAYER_BIDDING_STARTED', data);
-      console.log('   → Player:', data.player);
-      console.log('   → Base Price:', data.basePrice);
+    // Player bidding events
+    unsubscribers.push(socketService.onPlayerBiddingStarted((data: any) => {
+      console.log('🎯 Admin: PLAYER_BIDDING_STARTED', data);
       
-      if (data.player) {
-        setCurrentBiddingPlayer(data.player);
-        setCurrentBid(data.basePrice || data.player.basePrice || 0);
+      if (!data || !data.player) {
+        setCurrentBiddingPlayer(null);
+        setCurrentBid(0);
         setLeadingTeamName('');
-        setCountdown(data.duration || 120); // Set initial countdown
-        setLiveAuctionStatus('LIVE');
-        addSystemLog('info', `Bidding started for ${data.player.name}`);
-        addLiveNotification(`🎯 Bidding started for ${data.player.name}`, 'start');
+        return;
       }
-    });
-
-    socket.on('NEW_BID', (data: any) => {
-      console.log('Admin: NEW_BID', data);
-      console.log('   → Amount:', data.amount);
-      console.log('   → Team Name:', data.teamName);
       
-      setCurrentBid(data.amount);
-      setLeadingTeamName(data.teamName || '');
-      addSystemLog('info', `${data.teamName} bid ₹${(data.amount / 100000).toFixed(1)}L`);
-      addLiveNotification(`💰 ${data.teamName} bid ₹${(data.amount / 100000).toFixed(1)}L`, 'bid');
-    });
+      setCurrentBiddingPlayer(data.player);
+      setCurrentBid(data.player?.currentBid || data.basePrice || data.player.basePrice || 0);
+      setLeadingTeamName(data.player?.leadingTeamName || '');
+      setCountdown(data.duration || 120);
+      setLiveAuctionStatus('LIVE');
+      addSystemLog('info', `Bidding started for ${data.player.name}`);
+      addLiveNotification(`🎯 Bidding started for ${data.player.name}`, 'start');
+    }));
 
-    socket.on('PLAYER_UNSOLD', async (data: any) => {
-      console.log('Admin: PLAYER_UNSOLD', data);
+    unsubscribers.push(socketService.onPlayerSold(async (data: any) => {
+      console.log('✅ Admin: PLAYER_SOLD', data);
+      
+      setCurrentBiddingPlayer(null);
+      setCurrentBid(0);
+      setLeadingTeamName('');
+      addSystemLog('success', `Player ${data.playerName} sold to ${data.teamName} for ₹${(data.finalAmount / 100000).toFixed(1)}L`);
+      addLiveNotification(`✅ ${data.playerName} SOLD to ${data.teamName} for ₹${(data.finalAmount / 100000).toFixed(1)}L`, 'sold');
+    }));
+
+    unsubscribers.push(socketService.onPlayerUnsold(async (data: any) => {
+      console.log('❌ Admin: PLAYER_UNSOLD', data);
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);
       setLeadingTeamName('');
       addSystemLog('warning', `${data.playerName} went unsold`);
       addLiveNotification(`❌ ${data.playerName} went UNSOLD`, 'unsold');
-    });
+    }));
+
+    // Timer updates
+    unsubscribers.push(socketService.onTimerUpdate((data: { remainingSeconds: number }) => {
+      setCountdown(data.remainingSeconds);
+    }));
 
     return () => {
-      socket.off('PLAYER_UPDATED');
-      socket.off('PLAYER_SOLD');
-      socket.off('TEAM_UPDATED');
-      socket.off('AUCTION_TIMER_UPDATE');
-      socket.off('AUCTION_STATE_UPDATE');
-      socket.off('AUCTION_STARTED');
-      socket.off('AUCTION_PAUSED');
-      socket.off('AUCTION_RESUMED');
-      socket.off('AUCTION_ENDED');
-      socket.off('PLAYER_BIDDING_STARTED');
-      socket.off('NEW_BID');
-      socket.off('PLAYER_UNSOLD');
+      console.log('🔥 Admin: Cleaning up real-time listeners');
+      unsubscribers.forEach(unsubscribe => unsubscribe());
     };
-  }, [currentMatch?.id, currentUser?.email]);
+  }, [currentUser?.email, activeMatch?.id]);
 
   // Calculate season-specific KPIs
   const totalTeams = teams.length;
@@ -767,7 +782,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     try {
       setReportLoading(true);
       // Use matchId query parameter instead of auction_id in URL
-      const response = await fetch(`http://localhost:5000/api/bids?playerId=${playerId}`);
+      const response = await fetch(`${API_BASE}/bids?playerId=${playerId}`);
       
       if (response.ok) {
         const result = await response.json();
@@ -999,10 +1014,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
               <div className="flex items-center gap-4">
                 <div>
                   <h2 className="text-2xl font-black text-slate-800">
-                    {currentMatch?.name || 'No Season Selected'}
+                    {activeMatch?.name || 'No Season Selected'}
                   </h2>
                   <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-                    {currentMatch?.sport || 'Cricket'} • {currentMatch?.year || new Date().getFullYear()}
+                    {activeMatch?.sport || 'Cricket'} • {activeMatch?.year || new Date().getFullYear()}
                   </p>
                 </div>
               </div>
@@ -1024,7 +1039,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
                 {/* Logout */}
                 <button 
-                  onClick={() => setStatus(AuctionStatus.HOME)} 
+                  onClick={() => {
+                    sessionStorage.clear();
+                    localStorage.clear();
+                    setStatus(AuctionStatus.HOME);
+                  }} 
                   className="px-4 py-2 rounded-xl bg-red-500/10 border-2 border-red-500/20 hover:bg-red-500 hover:text-white transition-all flex items-center gap-2 text-sm font-bold text-red-600"
                 >
                   <LogOut size={16} />
@@ -1982,14 +2001,6 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                             <h3 className="text-3xl font-black text-slate-800 mb-2 uppercase leading-tight">{currentBiddingPlayer.name}</h3>
                             <p className="text-cyan-600 text-xs uppercase tracking-wider font-bold mb-3">{currentBiddingPlayer.role || currentBiddingPlayer.roleId || 'Player'}</p>
 
-                            {/* Timer */}
-                            {countdown > 0 && (
-                              <div className="bg-white border-4 border-yellow-400 rounded-2xl p-2 mb-3 shadow-lg inline-block">
-                                <p className="text-xs text-gray-600 uppercase tracking-wider font-bold mb-1">Time Remaining</p>
-                                <p className="text-4xl font-black text-slate-800 animate-pulse">{countdown}s</p>
-                              </div>
-                            )}
-
                             {/* Current Bid */}
                             <div className="bg-white border-4 border-red-400 rounded-2xl p-4 mb-2 shadow-lg">
                               <p className="text-xs text-gray-600 uppercase tracking-wider font-bold mb-1">Current Bid</p>
@@ -2075,46 +2086,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                       </div>
                     </div>
 
-                    {/* Emergency Controls - 2 rows */}
-                    <div className="row-span-2 bg-gradient-to-br from-red-500 to-orange-600 rounded-2xl p-2 shadow-2xl">
-                      <h3 className="text-sm font-black text-white mb-2 flex items-center gap-2">
-                        <AlertTriangle size={18} />
-                        Emergency Controls
-                      </h3>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={handleEmergencyPause}
-                          disabled={emergencyPaused || liveAuctionStatus !== 'LIVE'}
-                          className="px-3 py-3 rounded-xl bg-white/90 hover:bg-white font-black text-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center gap-1"
-                        >
-                          <Pause size={20} />
-                          <span className="text-xs">PAUSE</span>
-                        </button>
-                        <button
-                          onClick={() => handleExtendTimer(30)}
-                          disabled={liveAuctionStatus !== 'LIVE' || !currentBiddingPlayer}
-                          className="px-3 py-3 rounded-xl bg-white/90 hover:bg-white font-black text-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center gap-1"
-                        >
-                          <Clock size={20} />
-                          <span className="text-xs">+30s</span>
-                        </button>
-                        <button
-                          onClick={handleForceCloseBidding}
-                          disabled={liveAuctionStatus !== 'LIVE' || !currentBiddingPlayer}
-                          className="px-3 py-3 rounded-xl bg-white/90 hover:bg-white font-black text-purple-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center gap-1"
-                        >
-                          <StopCircle size={20} />
-                          <span className="text-xs">CLOSE</span>
-                        </button>
-                        <button
-                          onClick={handleRollbackLastAction}
-                          className="px-3 py-3 rounded-xl bg-white/90 hover:bg-white font-black text-blue-600 transition-all flex flex-col items-center gap-1"
-                        >
-                          <RotateCcw size={20} />
-                          <span className="text-xs">UNDO</span>
-                        </button>
-                      </div>
-                    </div>
+
                   </div>
                 </div>
               </div>

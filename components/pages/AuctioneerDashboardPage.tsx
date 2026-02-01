@@ -5,6 +5,8 @@ import { socketService } from '../../services/socketService';
 import { LiveAuctionPage } from './LiveAuctionPage';
 import { PlayersPage } from './PlayersPage';
 
+const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+
 interface AuctioneerDashboardPageProps {
   setStatus: (status: AuctionStatus) => void;
   currentMatch: MatchData | null;
@@ -78,12 +80,23 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   // Quick announcements
   const [lastAnnouncement, setLastAnnouncement] = useState<string | null>(null);
 
+  const auctionStateRef = useRef<AuctionState>(auctionState);
+  const playersRef = useRef<Player[]>(players);
+
+  useEffect(() => {
+    auctionStateRef.current = auctionState;
+  }, [auctionState]);
+
+  useEffect(() => {
+    playersRef.current = players;
+  }, [players]);
+
   // Check auctioneer approval status
   useEffect(() => {
     const checkApprovalStatus = async () => {
       try {
-        // Fetch auctioneer by email first to get ID
-        const auctioneerResponse = await fetch(`http://localhost:5000/api/auctioneers?email=${encodeURIComponent(currentUser.email)}`);
+        // Fetch auctioneer by email to get approval status
+        const auctioneerResponse = await fetch(`${API_BASE}/auctioneers?email=${encodeURIComponent(currentUser.email)}`);
         const auctioneerData = await auctioneerResponse.json();
 
         if (!auctioneerData.success || !auctioneerData.data || auctioneerData.data.length === 0) {
@@ -97,20 +110,22 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         const fetchedAuctioneerId = auctioneer.id || auctioneer.auctioneerId;
         setAuctioneerId(fetchedAuctioneerId);
 
-        // Now fetch approval status
-        const statusResponse = await fetch(`http://localhost:5000/api/auctioneer/status/${fetchedAuctioneerId}`);
-        const statusData = await statusResponse.json();
+        // Get approval status from auctioneer object
+        console.log('🔍 Auctioneer data received:', auctioneer);
+        console.log('🔍 Raw approvalStatus field:', auctioneer.approvalStatus);
+        console.log('🔍 Raw status field:', auctioneer.status);
+        
+        // Check both 'approvalStatus' and 'status' fields (database uses 'status')
+        const statusField = auctioneer.approvalStatus || auctioneer.status || 'pending';
+        const status = statusField.toLowerCase();
+        console.log('✅ Final approval status:', status);
+        setApprovalStatus(status);
 
-        if (statusData.success) {
-          const status = statusData.data.status || 'pending';
-          setApprovalStatus(status);
-
-          if (status === 'pending') {
-            const matchName = currentMatch?.name || 'this season';
-            setApprovalMessage(`Your application for ${matchName} is under review. You will get access once the organizer approves.`);
-          } else if (status === 'rejected') {
-            setApprovalMessage('Your application was not approved. Please contact the organizer for more details.');
-          }
+        if (status === 'pending') {
+          const matchName = currentMatch?.name || 'this season';
+          setApprovalMessage(`Your application for ${matchName} is under review. You will get access once the organizer approves.`);
+        } else if (status === 'rejected') {
+          setApprovalMessage('Your application was not approved. Please contact the organizer for more details.');
         }
       } catch (error) {
         console.error('Failed to check approval status:', error);
@@ -127,60 +142,80 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     if (approvalStatus !== 'approved' || !auctioneerId || !currentMatch) return;
 
     // Connect to server
-    socketService.connect('http://localhost:5000');
+    // socketService.connect('http://localhost:5000'); // Disabled: Cloud Functions don't support WebSocket
 
     // Join season room
     socketService.joinSeason(currentMatch.id, auctioneerId, currentUser.role);
 
+    const unsubscribers: Array<() => void> = [];
+
     // Listen to auction state updates
-    socketService.onAuctionStateUpdate((state) => {
+    unsubscribers.push(socketService.onAuctionStateUpdate((state) => {
       console.log('Auction state update:', state);
       setAuctionState(prev => ({ ...prev, ...state }));
-    });
+    }));
 
     // Listen to auction started
-    socketService.onAuctionStarted((data) => {
+    unsubscribers.push(socketService.onAuctionStarted((data) => {
       console.log('Auction started!', data);
       setAuctionState(prev => ({ ...prev, status: 'LIVE' }));
       
       // Auto-start first player when auction goes LIVE
       console.log('🚀 Auction went LIVE - auto-starting first player');
       setTimeout(() => {
-        setPlayers(prev => {
-          const pendingPlayers = prev.filter(p => p.status === 'PENDING' || p.status === 'UNSOLD');
-          if (pendingPlayers.length > 0) {
-            const firstPlayer = pendingPlayers[0];
-            console.log('Auto-starting first player:', firstPlayer.name);
-            setSelectedPlayerId(firstPlayer.id);
-            startPlayerBidding(firstPlayer.id, firstPlayer.basePrice);
-          }
-          return prev;
-        });
+        const alreadyActive = !!auctionStateRef.current.currentPlayerId || auctionStateRef.current.biddingActive;
+        const anyLivePlayer = playersRef.current.some(p => p.status === 'LIVE');
+        if (alreadyActive || anyLivePlayer) {
+          console.log('⏭️ Skipping auto-start (bidding already active)');
+          return;
+        }
+
+        const remainingPlayers = playersRef.current.filter(p => p.status !== 'SOLD');
+        if (remainingPlayers.length > 0) {
+          const firstPlayer = remainingPlayers[0];
+          console.log('Auto-starting first player:', firstPlayer.name);
+          setSelectedPlayerId(firstPlayer.id);
+          startPlayerBidding(firstPlayer.id, firstPlayer.basePrice);
+        }
       }, 1000);
-    });
+    }));
 
     // Listen to timer updates
-    socketService.onTimerUpdate((data) => {
+    unsubscribers.push(socketService.onTimerUpdate((data) => {
       setAuctionState(prev => ({ ...prev, remainingSeconds: data.remainingSeconds }));
-    });
+    }));
 
     // Listen to player bidding started
-    socketService.onPlayerBiddingStarted((data) => {
+    unsubscribers.push(socketService.onPlayerBiddingStarted((data) => {
       console.log('Player bidding started:', data);
+      if (!data || !(data as any)?.player) {
+        setAuctionState(prev => ({
+          ...prev,
+          biddingActive: false,
+          currentPlayerId: null,
+          currentPlayerName: null,
+          currentBid: 0,
+          leadingTeamId: null,
+          leadingTeamName: null
+        }));
+        setBidHistory([]);
+        return;
+      }
+
       setAuctionState(prev => ({
         ...prev,
         currentPlayerId: data.player.id,
         currentPlayerName: data.player.name,
-        currentBid: data.basePrice,
-        leadingTeamId: null,
-        leadingTeamName: null,
+        currentBid: data.player?.currentBid ?? data.basePrice ?? data.player.basePrice ?? 0,
+        leadingTeamId: data.player?.leadingTeamId ?? null,
+        leadingTeamName: data.player?.leadingTeamName ?? null,
         biddingActive: true
       }));
       setBidHistory([]);
-    });
+    }));
 
     // Listen to new bids
-    socketService.onNewBid((data) => {
+    unsubscribers.push(socketService.onNewBid((data) => {
       console.log('New bid:', data);
       setAuctionState(prev => ({
         ...prev,
@@ -189,19 +224,19 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         leadingTeamName: data.teamName
       }));
       setBidHistory(prev => [data, ...prev]);
-    });
+    }));
 
     // Listen to player updated
-    socketService.onPlayerUpdated((data) => {
+    unsubscribers.push(socketService.onPlayerUpdated((data) => {
       console.log('Player updated:', data);
       // Update the player in the players list
       setPlayers(prev => prev.map(p => p.id === data.playerId ? data.player : p));
       // Also refetch teams since player assignments may have changed
       fetchTeams();
-    });
+    }));
 
     // Listen to player sold
-    socketService.onPlayerSold(async (data) => {
+    unsubscribers.push(socketService.onPlayerSold(async (data) => {
       console.log('Player sold:', data);
       setAuctionState(prev => ({
         ...prev,
@@ -216,9 +251,9 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       // Auto-advance to next pending player
       setTimeout(() => {
         setPlayers(prev => {
-          const pendingPlayers = prev.filter(p => p.status === 'PENDING' || p.status === 'UNSOLD');
-          if (pendingPlayers.length > 0) {
-            const nextPlayer = pendingPlayers[0];
+          const remainingPlayers = prev.filter(p => p.status !== 'SOLD');
+          if (remainingPlayers.length > 0) {
+            const nextPlayer = remainingPlayers[0];
             console.log('🎯 Auto-advancing to next player:', nextPlayer.name);
             setSelectedPlayerId(nextPlayer.id);
             // Auto-start bidding for next player
@@ -229,10 +264,10 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
           return prev;
         });
       }, 2000);
-    });
+    }));
 
     // Listen to player unsold
-    socketService.onPlayerUnsold(async (data) => {
+    unsubscribers.push(socketService.onPlayerUnsold(async (data) => {
       console.log('Player unsold:', data);
       setAuctionState(prev => ({
         ...prev,
@@ -246,9 +281,9 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       // Auto-advance to next pending player
       setTimeout(() => {
         setPlayers(prev => {
-          const pendingPlayers = prev.filter(p => p.status === 'PENDING' || p.status === 'UNSOLD');
-          if (pendingPlayers.length > 0) {
-            const nextPlayer = pendingPlayers[0];
+          const remainingPlayers = prev.filter(p => p.status !== 'SOLD');
+          if (remainingPlayers.length > 0) {
+            const nextPlayer = remainingPlayers[0];
             console.log('🎯 Auto-advancing to next player after unsold:', nextPlayer.name);
             setSelectedPlayerId(nextPlayer.id);
             // Auto-start bidding for next player
@@ -259,24 +294,21 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
           return prev;
         });
       }, 2000);
-    });
+    }));
 
     // Listen to approval events
-    socketService.onAuctioneerApproved((data) => {
+    unsubscribers.push(socketService.onAuctioneerApproved((data) => {
       setApprovalStatus('approved');
       alert('🎉 Your application has been approved! You can now access the auction dashboard.');
-    });
+    }));
 
-    socketService.onAuctioneerRejected((data) => {
+    unsubscribers.push(socketService.onAuctioneerRejected((data) => {
       setApprovalStatus('rejected');
       setApprovalMessage(data.reason || 'Application not approved');
-    });
+    }));
 
     return () => {
-      if (currentMatch) {
-        socketService.leaveSeason(currentMatch.id);
-      }
-      socketService.removeAllListeners();
+      unsubscribers.forEach(unsub => unsub());
     };
   }, [approvalStatus, auctioneerId, currentMatch?.id, currentUser.role]);
 
@@ -284,10 +316,42 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   const fetchPlayers = async () => {
     if (!currentMatch) return;
     try {
-      const response = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
+      const response = await fetch(`${API_BASE}/players?matchId=${currentMatch.id}`);
       if (response.ok) {
         const data = await response.json();
-        setPlayers(data.data || []);
+        const playersList = data.data || [];
+        
+        // Analyze player statuses
+        const statusCounts = playersList.reduce((acc: any, p: Player) => {
+          const status = p.status || 'NO_STATUS';
+          acc[status] = (acc[status] || 0) + 1;
+          return acc;
+        }, {});
+        
+        // Find remaining players (not SOLD and not LIVE)
+        const remainingPlayers = playersList.filter((p: Player) => p.status !== 'SOLD' && p.status !== 'LIVE');
+        
+        console.log('🎯 Players API Response:', {
+          url: `${API_BASE}/players?matchId=${currentMatch.id}`,
+          status: response.status,
+          total_players: playersList.length,
+          status_breakdown: statusCounts,
+          remaining_players_count: remainingPlayers.length,
+          remaining_players: remainingPlayers.map(p => ({
+            id: p.id,
+            name: p.name,
+            status: p.status,
+            basePrice: p.basePrice,
+            roleId: p.roleId,
+            imageUrl: p.imageUrl ? '✓' : '✗'
+          }))
+        });
+        
+        setPlayers(playersList);
+      } else {
+        console.error('❌ Players API failed with status:', response.status);
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Error response:', errorData);
       }
     } catch (error) {
       console.error('Failed to fetch players:', error);
@@ -298,7 +362,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     if (!currentMatch) return;
     try {
       console.log('Fetching teams for match:', currentMatch.id);
-      const response = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
+      const response = await fetch(`${API_BASE}/teams?matchId=${currentMatch.id}`);
       if (response.ok) {
         const data = await response.json();
         console.log('Teams fetched, setting teams:', data.data);
@@ -319,12 +383,71 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     }
   }, [approvalStatus, currentMatch?.id]);
 
+  // Set up real-time Firestore listeners for live updates
+  useEffect(() => {
+    if (approvalStatus !== 'approved' || !currentMatch?.id) return;
+
+    console.log('🔥 Setting up real-time listeners for match:', currentMatch.id);
+
+    // Join season to set up context
+    socketService.joinSeason(currentMatch.id, auctioneerId || currentUser.email, currentUser.role);
+
+    // Listen to players collection for live updates
+    const playersUnsubscribe = socketService.onPlayersUpdate(currentMatch.id, (updatedPlayers) => {
+      console.log('🔥 Players live update:', updatedPlayers.length);
+      setPlayers(updatedPlayers);
+
+      // Check if there's a live player and update auction state
+      const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE');
+      if (livePlayer) {
+        console.log('🔥 Live player found:', livePlayer.name, 'Current bid:', livePlayer.currentBid);
+        setAuctionState(prev => ({
+          ...prev,
+          currentPlayerId: livePlayer.id,
+          currentPlayerName: livePlayer.name,
+          currentBid: livePlayer.currentBid || livePlayer.basePrice || 0,
+          leadingTeamId: livePlayer.leadingTeamId || null,
+          leadingTeamName: livePlayer.leadingTeamName || null,
+          biddingActive: true,
+          status: 'LIVE'
+        }));
+      } else {
+        // If no live player, check if auction has started
+        const hasProcessedPlayers = updatedPlayers.some((p: any) => p.status === 'SOLD' || p.status === 'UNSOLD');
+        if (hasProcessedPlayers) {
+          // Keep auction active but clear current player
+          setAuctionState(prev => ({
+            ...prev,
+            currentPlayerId: null,
+            currentPlayerName: '',
+            biddingActive: false
+            // Preserve status and last bid values
+          }));
+          console.log('🔥 No live player, but auction in progress');
+        }
+      }
+    });
+
+    // Listen to teams collection for budget updates
+    const teamsUnsubscribe = socketService.onTeamsUpdate(currentMatch.id, (updatedTeams) => {
+      console.log('🔥 Teams live update:', updatedTeams.length);
+      setTeams(updatedTeams);
+    });
+
+    // Cleanup listeners on unmount
+    return () => {
+      console.log('🔥 Cleaning up real-time listeners');
+      playersUnsubscribe();
+      teamsUnsubscribe();
+    };
+  }, [approvalStatus, currentMatch?.id]);
+
   // Auction controls
   const startAuction = async () => {
     if (!currentMatch) return;
     try {
       // Step 1: Initialize auction state (if not already done)
-      const initResponse = await fetch('http://localhost:5000/api/auction/initialize', {
+      const initResponse = await fetch(`${API_BASE}/auction/initialize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -341,7 +464,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       }
       
       // Step 2: Start the auction
-      const response = await fetch('http://localhost:5000/api/auction/start', {
+      const response = await fetch(`${API_BASE}/auction/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seasonId: currentMatch.id })
@@ -349,7 +472,8 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       const data = await response.json();
       if (data.success) {
         alert('Auction started!');
-        setAuctionState({ ...auctionState, status: 'LIVE' });
+        setAuctionState(prev => ({ ...prev, status: 'LIVE' }));
+        addSystemLog('success', 'Auction started successfully!');
       } else {
         alert(data.error || 'Failed to start auction');
       }
@@ -365,7 +489,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       // Optimistic update
       setAuctionState(prev => ({ ...prev, status: 'PAUSED' }));
       
-      await fetch('http://localhost:5000/api/auction/pause', {
+      await fetch(`${API_BASE}/auction/pause`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seasonId: currentMatch.id })
@@ -383,7 +507,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       // Optimistic update
       setAuctionState(prev => ({ ...prev, status: 'LIVE' }));
       
-      await fetch('http://localhost:5000/api/auction/resume', {
+      await fetch(`${API_BASE}/auction/resume`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seasonId: currentMatch.id })
@@ -398,7 +522,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   const startPlayerBidding = async (playerId: string, basePrice: number) => {
     if (!currentMatch) return;
     try {
-      const response = await fetch('http://localhost:5000/api/auction/player/start', {
+      const response = await fetch(`${API_BASE}/player/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -419,7 +543,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   const closePlayerBidding = async (sold: boolean) => {
     if (!currentMatch) return;
     try {
-      const response = await fetch('http://localhost:5000/api/auction/player/close', {
+      const response = await fetch(`${API_BASE}/player/close`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -453,34 +577,38 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   };
 
   const formatCurrency = (amount: number) => {
+    if (!amount || amount === 0) return '₹0.0L';
     return `₹${(amount / 100000).toFixed(1)}L`;
   };
 
   // Bid on behalf of teams - Auctioneer places all bids
-  const handlePlaceBidForTeam = async (incrementAmount: number) => {
-    if (!selectedTeamId || !auctionState.currentPlayerId || !currentMatch) {
+  const handlePlaceBidForTeam = async (incrementAmount: number, teamIdOverride?: string) => {
+    const teamIdToBid = teamIdOverride || selectedTeamId;
+    if (!teamIdToBid || !auctionState.currentPlayerId || !currentMatch) {
       addSystemLog('warning', 'Please select a team before bidding');
       return;
     }
 
-    const selectedTeam = teams.find(t => t.id === selectedTeamId);
+    const selectedTeam = teams.find(t => t.id === teamIdToBid);
     if (!selectedTeam) return;
 
     const currentPlayer = players.find(p => p.id === auctionState.currentPlayerId);
     if (!currentPlayer) return;
 
     // Calculate new bid
-    const newBidAmount = (auctionState.currentBid || currentPlayer.basePrice) + incrementAmount;
+    const baseAmount = auctionState.currentBid || currentPlayer.basePrice || 0;
+    const newBidAmount = baseAmount + incrementAmount;
 
     // Validate team budget
-    if (newBidAmount > selectedTeam.budget) {
-      alert(`Cannot bid ₹${formatCurrency(newBidAmount)}. ${selectedTeam.name}'s remaining budget is ₹${formatCurrency(selectedTeam.budget)}.`);
+    const teamRemainingBudget = (selectedTeam as any).remainingBudget || selectedTeam.budget || (selectedTeam as any).initialBudget || 0;
+    if (newBidAmount > teamRemainingBudget) {
+      alert(`Cannot bid ₹${formatCurrency(newBidAmount)}. ${selectedTeam.name}'s remaining budget is ₹${formatCurrency(teamRemainingBudget)}.`);
       addSystemLog('warning', `Bid rejected - ${selectedTeam.name} has insufficient budget`);
       return;
     }
 
     // Place bid via API (backend validates and broadcasts)
-    const result = await socketService.placeBid(currentMatch.id, selectedTeamId, newBidAmount);
+    const result = await socketService.placeBid(currentMatch.id, teamIdToBid, newBidAmount);
 
     if (result.success) {
       addSystemLog('info', `✓ Bid placed for ${selectedTeam.name}: ₹${formatCurrency(newBidAmount)}`);
@@ -515,7 +643,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     if (!currentMatch || !auctionState.biddingActive) return;
     
     try {
-      const response = await fetch('http://localhost:5000/api/auction/timer/extend', {
+      const response = await fetch(`${API_BASE}/auction/timer/extend`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -614,15 +742,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   const makeAnnouncement = (text: string) => {
     setLastAnnouncement(text);
     
-    // Broadcast announcement
-    const socket = socketService.getSocket();
-    if (socket && currentMatch) {
-      socket.emit('AUCTIONEER_ANNOUNCEMENT', {
-        seasonId: currentMatch.id,
-        message: text
-      });
-    }
-    
+    // Announcements are logged locally (audio streaming is handled separately)
     addSystemLog('info', `Announced: "${text}"`);
     
     // Clear after 3 seconds
@@ -825,7 +945,11 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
               Live Room
             </button>
             <button
-              onClick={() => setStatus(AuctionStatus.HOME)}
+              onClick={() => {
+                sessionStorage.clear();
+                localStorage.clear();
+                setStatus(AuctionStatus.HOME);
+              }}
               className="p-2 rounded-lg bg-white border-2 border-gray-300 hover:border-red-300 text-gray-700 hover:text-red-600 transition-all"
             >
               <LogOut size={18} />
@@ -960,7 +1084,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                       return 0;
                     })
                     .map(team => {
-                      const remainingBudget = team.remainingBudget || team.budget || 0;
+                      const remainingBudget = team.remainingBudget || team.budget || (team as any).initialBudget || 0;
                       const isSelectedTeam = selectedTeamId === team.id;
                       const isLeadingTeam = auctionState.leadingTeamId === team.id;
                       
@@ -1002,7 +1126,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                               <button
                                 onClick={() => {
                                   setSelectedTeamId(team.id);
-                                  handlePlaceBidForTeam(100000);
+                                  handlePlaceBidForTeam(100000, team.id);
                                 }}
                                 disabled={remainingBudget < (auctionState.currentBid + 100000)}
                                 className="px-2 py-1.5 rounded-sm bg-purple-500 hover:bg-purple-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold text-xs transition-all whitespace-nowrap"
@@ -1012,7 +1136,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                               <button
                                 onClick={() => {
                                   setSelectedTeamId(team.id);
-                                  handlePlaceBidForTeam(500000);
+                                  handlePlaceBidForTeam(500000, team.id);
                                 }}
                                 disabled={remainingBudget < (auctionState.currentBid + 500000)}
                                 className="px-2 py-1.5 rounded-sm bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold text-xs transition-all whitespace-nowrap"
@@ -1022,7 +1146,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                               <button
                                 onClick={() => {
                                   setSelectedTeamId(team.id);
-                                  handlePlaceBidForTeam(1000000);
+                                  handlePlaceBidForTeam(1000000, team.id);
                                 }}
                                 disabled={remainingBudget < (auctionState.currentBid + 1000000)}
                                 className="px-2 py-1.5 rounded-sm bg-purple-700 hover:bg-purple-800 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold text-xs transition-all whitespace-nowrap"
@@ -1032,7 +1156,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                               <button
                                 onClick={() => {
                                   setSelectedTeamId(team.id);
-                                  handlePlaceBidForTeam(2000000);
+                                  handlePlaceBidForTeam(2000000, team.id);
                                 }}
                                 disabled={remainingBudget < (auctionState.currentBid + 2000000)}
                                 className="px-2 py-1.5 rounded-sm bg-purple-800 hover:bg-purple-900 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold text-xs transition-all whitespace-nowrap"
@@ -1057,7 +1181,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
               <div className="bg-gradient-to-r from-blue-100 to-cyan-100 px-5 py-4 border-b-2 border-blue-200">
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
                   <Users size={16} className="text-blue-600" />
-                  Player Queue ({players.filter(p => p.status === 'PENDING').length})
+                  Player Queue ({players.filter(p => p.status !== 'SOLD' && p.id !== auctionState.currentPlayerId).length} remaining)
                 </h3>
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -1067,7 +1191,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                   </div>
                 ) : (
                   players
-                    .filter(p => p.status === 'PENDING')
+                    .filter(p => p.status !== 'SOLD' && p.id !== auctionState.currentPlayerId)
                     .map((player, index) => (
                       <div
                         key={player.id}
@@ -1089,7 +1213,11 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                         </div>
                         <div className="flex-1 min-w-0">
                           <h4 className="font-black text-sm text-slate-800 truncate">{player.name}</h4>
-                          <p className="text-xs text-gray-600">{player.roleId} • ₹{(player.basePrice / 100000).toFixed(1)}L</p>
+                          <p className="text-xs text-gray-600">
+                            {player.roleId || '—'} • ₹{typeof player.basePrice === 'number' && Number.isFinite(player.basePrice) && player.basePrice > 0
+                              ? (player.basePrice / 100000).toFixed(1)
+                              : '—'}L
+                          </p>
                         </div>
                       </div>
                     ))

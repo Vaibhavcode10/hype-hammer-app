@@ -3,7 +3,8 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { Player, AuctionConfig, Team } from "../types";
 
 // Initializing the Google GenAI client using the required named parameter and environment variable.
-const apiKey = process.env.API_KEY || "";
+// Use import.meta.env for Vite (browser environment)
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.API_KEY || "";
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const getPriceSuggestion = async (

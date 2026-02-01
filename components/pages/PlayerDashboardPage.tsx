@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { User, Trophy, Clock, DollarSign, Bell, LogOut, Users, Activity, Award, Radio, Shield, AlertCircle, CheckCircle, XCircle, ChevronDown, X, Calendar, MapPin, Mail } from 'lucide-react';
 import { AuctionStatus, MatchData, UserRole, Player, Team } from '../../types';
@@ -7,9 +7,11 @@ import { PlayersPage } from './PlayersPage';
 import { socketService } from '../../services/socketService';
 import { useAudioListener } from '../../services/useAudioListener';
 
+const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+
 interface PlayerDashboardPageProps {
   setStatus: (status: AuctionStatus) => void;
-  currentMatch: MatchData;
+  currentMatch: MatchData | null;
   currentUser: { name: string; email: string; role: UserRole; playerRole?: string; basePrice?: number };
 }
 
@@ -18,13 +20,15 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
   const [playerData, setPlayerData] = useState<Player | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
+  const teamsRef = useRef<Team[]>([]);
   
   // Live auction state
   const [currentBiddingPlayer, setCurrentBiddingPlayer] = useState<Player | null>(null);
   const [currentBid, setCurrentBid] = useState<number>(0);
   const [leadingTeam, setLeadingTeam] = useState<Team | null>(null);
+  const currentPlayerIdRef = useRef<string | null>(null);
   const [countdown, setCountdown] = useState<number>(0);
-  const [auctionStatus, setAuctionStatus] = useState<'upcoming' | 'live' | 'completed'>('upcoming');
+  const [auctionStatus, setAuctionStatus] = useState<'upcoming' | 'live' | 'paused' | 'completed'>('upcoming');
   
   // Queue information
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
@@ -32,7 +36,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
   const [estimatedTime, setEstimatedTime] = useState<number>(0);
   
   // Activity feed
-  const [activityFeed, setActivityFeed] = useState<Array<{ id: string; message: string; time: string; type: 'bid' | 'sold' | 'unsold' }>>([]);
+  const [activityFeed, setActivityFeed] = useState<Array<{ id: string; message: string; time: string; type: 'system' | 'bid' | 'sold' | 'unsold' }>>([]);
   
   // Audio
   const [auctioneerMicOn, setAuctioneerMicOn] = useState(false);
@@ -47,7 +51,54 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
   const [notifications, setNotifications] = useState<Array<{ id: string; message: string; time: string; read: boolean }>>([]);
 
   const userId = currentUser.email;
-  const seasonId = currentMatch?.id || '';
+
+  const [resolvedMatchId, setResolvedMatchId] = useState<string>('');
+  const [resolvedMatchName, setResolvedMatchName] = useState<string>('');
+  const seasonId = resolvedMatchId || currentMatch?.id || '';
+
+  // Resolve matchId for players when App doesn't have currentMatch loaded.
+  useEffect(() => {
+    if (seasonId || !currentUser?.email) return;
+
+    let cancelled = false;
+    const resolve = async () => {
+      try {
+        setLoading(true);
+        const playersRes = await fetch(`${API_BASE}/players`);
+        const playersJson = await playersRes.json().catch(() => ({}));
+        const allPlayers: Player[] = playersJson.data || [];
+        const me = allPlayers.find(p => p.email === currentUser.email);
+        const matchId = (me as any)?.matchId;
+        if (!cancelled && matchId) {
+          setResolvedMatchId(matchId);
+          // Best-effort match name (optional)
+          fetch(`${API_BASE}/matches/${matchId}`)
+            .then(r => r.json())
+            .then(j => {
+              if (!cancelled && j?.success && j?.data?.name) setResolvedMatchName(j.data.name);
+            })
+            .catch(() => {});
+        }
+      } catch (e) {
+        console.error('Failed to resolve player match:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    resolve();
+    return () => {
+      cancelled = true;
+    };
+  }, [seasonId, currentUser?.email]);
+
+  useEffect(() => {
+    teamsRef.current = teams;
+  }, [teams]);
+
+  useEffect(() => {
+    currentPlayerIdRef.current = currentBiddingPlayer?.id || null;
+  }, [currentBiddingPlayer?.id]);
 
   // Initialize socket connection early
   useEffect(() => {
@@ -64,37 +115,43 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
     const fetchData = async () => {
       try {
         setLoading(true);
+
+        const fetchJsonWithTimeout = async (url: string, timeoutMs = 12000) => {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), timeoutMs);
+          try {
+            const res = await fetch(url, { signal: controller.signal });
+            const json = await res.json().catch(() => ({}));
+            return { ok: res.ok, status: res.status, json };
+          } finally {
+            clearTimeout(timeout);
+          }
+        };
         
-        // Fetch player data
-        const playerResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}&email=${currentUser.email}`);
-        if (playerResponse.ok) {
-          const playerDataResponse = await playerResponse.json();
-          const player = playerDataResponse.data?.find((p: Player) => p.email === currentUser.email);
+        const [playersResp, teamsResp] = await Promise.all([
+          fetchJsonWithTimeout(`${API_BASE}/players?matchId=${seasonId}`),
+          fetchJsonWithTimeout(`${API_BASE}/teams?matchId=${seasonId}`)
+        ]);
+
+        if (teamsResp.ok) {
+          setTeams(teamsResp.json.data || []);
+        }
+
+        if (playersResp.ok) {
+          const allPlayers = playersResp.json.data || [];
+          setTotalPlayers(allPlayers.length);
+
+          const player = allPlayers.find((p: Player) => p.email === currentUser.email);
           if (player) {
             setPlayerData(player);
           }
-        }
-        
-        // Fetch teams
-        const teamsResponse = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
-        if (teamsResponse.ok) {
-          const teamsData = await teamsResponse.json();
-          setTeams(teamsData.data || []);
-        }
-        
-        // Fetch all players to determine queue position
-        const allPlayersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
-        if (allPlayersResponse.ok) {
-          const allPlayersData = await allPlayersResponse.json();
-          const allPlayers = allPlayersData.data || [];
-          setTotalPlayers(allPlayers.length);
-          
-          // Calculate queue position (pending players before this player)
-          const pendingPlayers = allPlayers.filter((p: Player) => p.status?.toLowerCase() === 'pending');
-          const playerIndex = pendingPlayers.findIndex((p: Player) => p.email === currentUser.email);
+
+          // Calculate queue position (best-effort): players not yet SOLD before this player
+          const remainingPlayers = allPlayers.filter((p: Player) => (p.status || '').toUpperCase() !== 'SOLD');
+          const playerIndex = remainingPlayers.findIndex((p: Player) => p.email === currentUser.email);
           if (playerIndex !== -1) {
             setQueuePosition(playerIndex + 1);
-            setEstimatedTime(playerIndex * 3); // Assume 3 minutes per player
+            setEstimatedTime(playerIndex * 3);
           }
         }
       } catch (error) {
@@ -113,32 +170,30 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
   useEffect(() => {
     if (!seasonId || !userId) return;
 
-    // Connect to server
-    socketService.connect('http://localhost:5000');
+    // Connect to server (keep for local dev if needed, disabled for Cloud deployment)
+    // socketService.connect('http://localhost:5000');
 
     // Join season room
     socketService.joinSeason(seasonId, userId, UserRole.PLAYER);
 
-    const socket = socketService.getSocket();
-    
-    if (!socket) {
-      console.error('Socket not available');
-      return;
-    }
+    // Store unsubscribe functions for cleanup
+    const unsubscribers: (() => void)[] = [];
 
     // Listen for auction state updates (includes current player if auction is in progress)
-    socket.on('AUCTION_STATE_UPDATE', (data: any) => {
+    unsubscribers.push(socketService.onAuctionStateUpdate((data: any) => {
       console.log('AUCTION_STATE_UPDATE received:', data);
       // If there's a current player being auctioned, set it
       if (data.currentPlayerId && data.biddingActive) {
         // We need to fetch the player data from the backend
-        fetch(`http://localhost:5000/api/players/${data.currentPlayerId}`)
+        const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+        fetch(`${API_BASE}/players/${data.currentPlayerId}`)
           .then(res => res.json())
           .then(playerData => {
             if (playerData.success && playerData.data) {
               setCurrentBiddingPlayer(playerData.data);
-              setCurrentBid(data.currentBid || playerData.data.basePrice || 0);
-              setLeadingTeam(teams.find(t => t.id === data.leadingTeamId) || null);
+              currentPlayerIdRef.current = playerData.data.id;
+              setCurrentBid(data.currentBid || playerData.data.currentBid || playerData.data.basePrice || 0);
+              setLeadingTeam(teamsRef.current.find(t => t.id === data.leadingTeamId) || null);
               setAuctionStatus('live');
             }
           })
@@ -147,11 +202,12 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
         setCurrentBiddingPlayer(null);
         setCurrentBid(0);
         setLeadingTeam(null);
+        currentPlayerIdRef.current = null;
       }
-    });
+    }));
 
     // Auction state updates
-    socket.on('AUCTION_STARTED', (data: any) => {
+    unsubscribers.push(socketService.onAuctionStarted((data: any) => {
       console.log('🚀 AUCTION_STARTED received:', data);
       setAuctionStatus('live');
       setActivityFeed(prev => [{
@@ -160,9 +216,9 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
         time: new Date().toLocaleTimeString(),
         type: 'system'
       }, ...prev]);
-    });
+    }));
 
-    socket.on('AUCTION_PAUSED', (data: any) => {
+    unsubscribers.push(socketService.onAuctionPaused((data: any) => {
       console.log('⏸️ AUCTION_PAUSED received:', data);
       setAuctionStatus('paused');
       setActivityFeed(prev => [{
@@ -171,9 +227,9 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
         time: new Date().toLocaleTimeString(),
         type: 'system'
       }, ...prev]);
-    });
+    }));
 
-    socket.on('AUCTION_RESUMED', (data: any) => {
+    unsubscribers.push(socketService.onAuctionResumed((data: any) => {
       console.log('▶️ AUCTION_RESUMED received:', data);
       setAuctionStatus('live');
       setActivityFeed(prev => [{
@@ -182,23 +238,34 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
         time: new Date().toLocaleTimeString(),
         type: 'system'
       }, ...prev]);
-    });
+    }));
 
-    // Auctioneer mic status
-    socket.on('AUCTIONEER_MIC_ON', () => {
+    // Auctioneer mic status (stubs for compatibility)
+    unsubscribers.push(socketService.onAuctioneerMicOn(() => {
       setAuctioneerMicOn(true);
-    });
+    }));
 
-    socket.on('AUCTIONEER_MIC_OFF', () => {
+    unsubscribers.push(socketService.onAuctioneerMicOff(() => {
       setAuctioneerMicOn(false);
-    });
+    }));
 
     // Player bidding started
-    socket.on('PLAYER_BIDDING_STARTED', (data: { player: Player; basePrice: number }) => {
+    unsubscribers.push(socketService.onPlayerBiddingStarted((data: { player: Player; basePrice: number } | null) => {
       console.log('PLAYER_BIDDING_STARTED received:', data);
+      if (!data || !(data as any)?.player) {
+        setCurrentBiddingPlayer(null);
+        setCurrentBid(0);
+        setLeadingTeam(null);
+        currentPlayerIdRef.current = null;
+        return;
+      }
+
       setCurrentBiddingPlayer(data.player);
-      setCurrentBid(data.basePrice || data.player.basePrice);
-      setLeadingTeam(null);
+      currentPlayerIdRef.current = data.player.id;
+      const hydratedBid = (data.player as any)?.currentBid || data.basePrice || data.player.basePrice || 0;
+      setCurrentBid(hydratedBid);
+      const hydratedLeadingTeamId = (data.player as any)?.leadingTeamId;
+      setLeadingTeam(hydratedLeadingTeamId ? (teamsRef.current.find(t => t.id === hydratedLeadingTeamId) || null) : null);
       setAuctionStatus('live');
       
       // Check if it's this player
@@ -217,17 +284,21 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
           type: 'bid'
         }, ...prev]);
       }
-    });
+    }));
 
     // New bid
-    socket.on('NEW_BID', (data: { playerId: string; amount: number; teamId: string; teamName: string }) => {
+    unsubscribers.push(socketService.onNewBid((data: { playerId: string; amount: number; teamId: string; teamName: string; seasonId?: string }) => {
       console.log('💰 NEW_BID received:', data);
       console.log('   → Updating current bid to:', data.amount);
+
+      // Ignore stale latestEvent bids from other players/seasons
+      if (!currentPlayerIdRef.current) return;
+      if (data.seasonId && seasonId && data.seasonId !== seasonId) return;
+      if (currentPlayerIdRef.current && data.playerId && data.playerId !== currentPlayerIdRef.current) return;
+
       setCurrentBid(data.amount);
-      const team = teams.find(t => t.id === data.teamId);
-      if (team) {
-        setLeadingTeam(team);
-      }
+      const team = teamsRef.current.find(t => t.id === data.teamId);
+      setLeadingTeam(team || ({ id: data.teamId, name: data.teamName } as any));
       
       setActivityFeed(prev => [{
         id: Date.now().toString(),
@@ -235,10 +306,10 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
         time: new Date().toLocaleTimeString(),
         type: 'bid'
       }, ...prev]);
-    });
+    }));
 
     // Player updated (live changes from auctioneer)
-    socket.on('PLAYER_UPDATED', async (data: { playerId: string; player: Player }) => {
+    unsubscribers.push(socketService.onPlayerUpdated(async (data: { playerId: string; player: Player }) => {
       console.log('PLAYER_UPDATED received:', data);
       
       // If this is the current user's player data, update it
@@ -258,10 +329,10 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       if (currentBiddingPlayer && data.playerId === currentBiddingPlayer.id) {
         setCurrentBiddingPlayer(data.player);
       }
-    });
+    }));
     
     // Player sold
-    socket.on('PLAYER_SOLD', async (data: { playerId: string; playerName: string; sold: boolean; finalAmount: number; teamId: string; teamName: string }) => {
+    unsubscribers.push(socketService.onPlayerSold(async (data: { playerId: string; playerName: string; sold?: boolean; finalAmount: number; teamId: string; teamName: string }) => {
       const soldMessage = `${data.playerName} SOLD to ${data.teamName} for ₹${(data.finalAmount / 100000).toFixed(1)}L`;
       
       setActivityFeed(prev => [{
@@ -281,7 +352,8 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       
       // Refetch player data to get updated status
       try {
-        const playerResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}&email=${currentUser.email}`);
+        if (!seasonId) return;
+        const playerResponse = await fetch(`${API_BASE}/players?matchId=${seasonId}&email=${currentUser.email}`);
         if (playerResponse.ok) {
           const playerDataResponse = await playerResponse.json();
           const player = playerDataResponse.data?.find((p: Player) => p.email === currentUser.email);
@@ -306,10 +378,10 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);
       setLeadingTeam(null);
-    });
+    }));
 
     // Player unsold
-    socket.on('PLAYER_UNSOLD', async (data: { playerId: string; playerName: string }) => {
+    unsubscribers.push(socketService.onPlayerUnsold(async (data: { playerId: string; playerName: string }) => {
       setActivityFeed(prev => [{
         id: Date.now().toString(),
         message: `${data.playerName} went UNSOLD`,
@@ -319,7 +391,8 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       
       // Refetch player data to get updated status
       try {
-        const playerResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}&email=${currentUser.email}`);
+        if (!seasonId) return;
+        const playerResponse = await fetch(`${API_BASE}/players?matchId=${seasonId}&email=${currentUser.email}`);
         if (playerResponse.ok) {
           const playerDataResponse = await playerResponse.json();
           const player = playerDataResponse.data?.find((p: Player) => p.email === currentUser.email);
@@ -342,34 +415,61 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);
       setLeadingTeam(null);
-    });
+    }));
 
     // Timer update
-    socket.on('TIMER_UPDATE', (data: { timeLeft: number }) => {
-      setCountdown(data.timeLeft);
-    });
+    unsubscribers.push(socketService.onTimerUpdate((data: { remainingSeconds: number }) => {
+      setCountdown(data.remainingSeconds);
+    }));
 
-    // Auction status
-    socket.on('AUCTION_STARTED', () => {
-      setAuctionStatus('live');
-    });
-
-    socket.on('AUCTION_COMPLETED', () => {
+    // Auction ended
+    unsubscribers.push(socketService.onAuctionEnded(() => {
       setAuctionStatus('completed');
+    }));
+
+    return () => {
+      // Cleanup all event listeners
+      unsubscribers.forEach(unsubscribe => unsubscribe());
+    };
+  }, [seasonId, userId, currentUser.email]);
+
+  // Set up Firebase real-time listeners
+  useEffect(() => {
+    if (!seasonId) return;
+
+    console.log('🔥 Player: Setting up real-time listeners');
+
+    // Listen to player status changes
+    const playersUnsubscribe = socketService.onPlayersUpdate(seasonId, (updatedPlayers) => {
+      // Find if I'm being auctioned
+      const myPlayer = updatedPlayers.find((p: any) => p.email === currentUser.email);
+      if (myPlayer && myPlayer.status === 'LIVE') {
+        setCurrentBiddingPlayer(myPlayer);
+        setCurrentBid(myPlayer.currentBid || myPlayer.basePrice);
+      }
+
+      // Check for live player
+      const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE');
+      if (livePlayer) {
+        setCurrentBiddingPlayer(livePlayer);
+        setAuctionLive(true);
+      }
+    });
+
+    // Listen to bid events
+    const bidUnsubscribe = socketService.onNewBid((bidData) => {
+      console.log('🔥 Player: New bid:', bidData);
+      if (!currentPlayerIdRef.current) return;
+      if (bidData?.seasonId && seasonId && bidData.seasonId !== seasonId) return;
+      if (currentPlayerIdRef.current && bidData?.playerId && bidData.playerId !== currentPlayerIdRef.current) return;
+      setCurrentBid(bidData.amount);
     });
 
     return () => {
-      socket.off('AUCTIONEER_MIC_ON');
-      socket.off('AUCTIONEER_MIC_OFF');
-      socket.off('PLAYER_BIDDING_STARTED');
-      socket.off('NEW_BID');
-      socket.off('PLAYER_SOLD');
-      socket.off('PLAYER_UNSOLD');
-      socket.off('TIMER_UPDATE');
-      socket.off('AUCTION_STARTED');
-      socket.off('AUCTION_COMPLETED');
+      playersUnsubscribe();
+      bidUnsubscribe();
     };
-  }, [seasonId, userId, currentUser.email, teams]);
+  }, [seasonId, currentUser.email]);
 
   const getPlayerStatus = (player: Player | null): { label: string; color: string; icon: React.ReactNode } => {
     if (!player) return { label: 'Waiting', color: 'bg-gray-100 text-gray-600 border-gray-300', icon: <Clock size={14} /> };
@@ -638,7 +738,11 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
 
                     {/* Logout Button */}
                     <button
-                      onClick={() => setStatus(AuctionStatus.HOME)}
+                      onClick={() => {
+                        sessionStorage.clear();
+                        localStorage.clear();
+                        setStatus(AuctionStatus.HOME);
+                      }}
                       className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-sm transition-all shadow-lg"
                     >
                       <LogOut size={16} />
@@ -865,7 +969,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
                     </div>
                     <div className="text-center p-6 bg-white rounded-2xl border-2 border-purple-200 shadow-lg">
                       <p className="text-xs text-gray-600 uppercase tracking-wider font-bold mb-2">Leading Team</p>
-                      <p className="text-xl font-black text-purple-600">{leadingTeam?.name || 'None Yet'}</p>
+                      <p className="text-xl font-black text-purple-600">{leadingTeam?.name || (currentBiddingPlayer as any)?.leadingTeamName || 'None Yet'}</p>
                     </div>
                   </div>
 
@@ -903,7 +1007,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
                     </div>
                     <div className="text-center p-3 bg-purple-50 rounded-lg border-2 border-purple-200">
                       <p className="text-xs text-gray-600 uppercase tracking-wider font-bold mb-1">Leading Team</p>
-                      <p className="text-sm font-black text-purple-600">{leadingTeam?.name || 'None'}</p>
+                      <p className="text-sm font-black text-purple-600">{leadingTeam?.name || (currentBiddingPlayer as any)?.leadingTeamName || 'None'}</p>
                     </div>
                   </div>
                 </div>

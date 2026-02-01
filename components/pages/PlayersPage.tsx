@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Users, TrendingUp, TrendingDown, User, Download, ArrowLeft, Search, Filter, X as FilterX } from 'lucide-react';
 import { MatchData } from '../../types';
 
+const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+
 interface Player {
   id: string;
   name: string;
@@ -47,8 +49,8 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch 
     try {
       setLoading(true);
       const [playersRes, teamsRes] = await Promise.all([
-        fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`),
-        fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`)
+        fetch(`${API_BASE}/players?matchId=${currentMatch.id}`),
+        fetch(`${API_BASE}/teams?matchId=${currentMatch.id}`)
       ]);
 
       if (playersRes.ok) {

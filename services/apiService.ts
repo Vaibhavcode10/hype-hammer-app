@@ -1,12 +1,12 @@
 /**
  * API Service Layer
- * Maps frontend operations to Flask/Firebase backend endpoints
+ * Maps frontend operations to Firebase Cloud Functions
  * 
- * Base URL: http://localhost:5000/api
+ * Base URL: https://us-central1-axilam.cloudfunctions.net/auction
  */
 
-const API_BASE = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:5000';
-const API_ENDPOINT = `${API_BASE}/api`;
+const API_BASE = (import.meta as any)?.env?.VITE_API_URL || 'https://us-central1-axilam.cloudfunctions.net';
+const API_ENDPOINT = `${API_BASE}/auction`;
 
 interface ApiResponse<T = any> {
   success: boolean;
@@ -533,3 +533,5 @@ export default {
   healthCheck,
   getApiInfo,
 };
+
+

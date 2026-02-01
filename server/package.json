@@ -8,9 +8,7 @@
     "start": "python app.py",
     "dev": "python -m flask --app app run --debug"
   },
-  "dependencies": {
-    "socket.io-client": "^4.8.3"
-  },
+  "dependencies": {},
   "python": {
     "requirements": [
       "flask==3.0.0",

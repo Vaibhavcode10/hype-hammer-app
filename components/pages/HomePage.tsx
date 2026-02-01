@@ -20,7 +20,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
     
     try {
       // Try Firebase API first
-      const response = await fetch('http://localhost:5000/api/auth/login', {
+      const response = await fetch('https://us-central1-axilam.cloudfunctions.net/auction/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: loginEmail, password: loginPassword })

@@ -64,28 +64,19 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
   });
 
   const listenerAudio = useAudioListener({
-    socket: socketService.getSocket(),
     seasonId,
     userId
   });
 
   /**
-   * Connect to server and join season room
+   * Connect to Firebase and join season room
    */
   useEffect(() => {
-    const socket = socketService.connect();
-    
-    socket.on('connect', () => {
-      console.log('✅ Connected to server');
-      socketService.joinSeason(seasonId, userId, userRole);
-    });
+    // Join season room
+    socketService.joinSeason(seasonId, userId, userRole);
 
     // Load initial data
     loadAuctionData();
-
-    return () => {
-      socketService.leaveSeason(seasonId);
-    };
   }, [seasonId, userId, userRole]);
 
   /**
@@ -127,59 +118,68 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
    * Socket event listeners
    */
   useEffect(() => {
+    const unsubscribers: Array<() => void> = [];
+
     // Auction state updates
-    socketService.onAuctionStateUpdate((state) => {
+    unsubscribers.push(socketService.onAuctionStateUpdate((state) => {
       console.log('📡 Auction state updated:', state);
       setAuctionState(prev => ({ ...prev, ...state }));
-    });
+    }));
 
     // Auction started
-    socketService.onAuctionStarted((data) => {
+    unsubscribers.push(socketService.onAuctionStarted((data) => {
       console.log('🎬 Auction started!');
       setAuctionState(prev => prev ? { ...prev, status: LiveAuctionStatus.LIVE } : null);
-    });
+    }));
 
     // Auction paused
-    socketService.onAuctionPaused((data) => {
+    unsubscribers.push(socketService.onAuctionPaused((data) => {
       console.log('⏸️ Auction paused');
       setAuctionState(prev => prev ? { ...prev, status: LiveAuctionStatus.PAUSED } : null);
-    });
+    }));
 
     // Auction resumed
-    socketService.onAuctionResumed((data) => {
+    unsubscribers.push(socketService.onAuctionResumed((data) => {
       console.log('▶️ Auction resumed');
       setAuctionState(prev => prev ? { ...prev, status: LiveAuctionStatus.LIVE } : null);
-    });
+    }));
 
     // Auction ended
-    socketService.onAuctionEnded((data) => {
+    unsubscribers.push(socketService.onAuctionEnded((data) => {
       console.log('🏁 Auction ended');
       setAuctionState(prev => prev ? { ...prev, status: LiveAuctionStatus.ENDED } : null);
-    });
+    }));
 
     // Timer updates (server-controlled)
-    socketService.onTimerUpdate((data) => {
+    unsubscribers.push(socketService.onTimerUpdate((data) => {
       setRemainingSeconds(data.remainingSeconds);
-    });
+    }));
 
     // Player bidding started
-    socketService.onPlayerBiddingStarted((data) => {
+    unsubscribers.push(socketService.onPlayerBiddingStarted((data) => {
       console.log('🎯 Bidding started for player:', data.player.name);
+      if (!data || !data?.player) {
+        setCurrentPlayer(null);
+        setCurrentBid(0);
+        setLeadingTeam(null);
+        setBiddingActive(false);
+        return;
+      }
       setCurrentPlayer(data.player);
       setAuctionState(prev => prev ? {
         ...prev,
         currentPlayerId: data.player.id,
         currentPlayerName: data.player.name,
-        currentBid: data.basePrice,
-        leadingTeamId: null,
-        leadingTeamName: null,
+        currentBid: data.player?.currentBid ?? data.basePrice ?? data.player.basePrice ?? 0,
+        leadingTeamId: data.player?.leadingTeamId ?? null,
+        leadingTeamName: data.player?.leadingTeamName ?? null,
         biddingActive: true,
         bidHistory: []
       } : null);
-    });
+    }));
 
     // New bid placed
-    socketService.onNewBid((data) => {
+    unsubscribers.push(socketService.onNewBid((data) => {
       console.log('💰 New bid:', data.teamName, '-', data.amount);
       setAuctionState(prev => {
         if (!prev) return null;
@@ -199,10 +199,10 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
           bidHistory: newHistory
         };
       });
-    });
+    }));
 
     // Player sold
-    socketService.onPlayerSold((data) => {
+    unsubscribers.push(socketService.onPlayerSold((data) => {
       console.log('✅ Player sold:', data.playerName, 'to', data.teamName);
       
       // Update player status
@@ -235,10 +235,10 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
         biddingActive: false,
         bidHistory: []
       } : null);
-    });
+    }));
 
     // Player unsold
-    socketService.onPlayerUnsold((data) => {
+    unsubscribers.push(socketService.onPlayerUnsold((data) => {
       console.log('❌ Player unsold:', data.playerName);
       
       // Update player status
@@ -260,10 +260,10 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
         biddingActive: false,
         bidHistory: []
       } : null);
-    });
+    }));
 
     return () => {
-      socketService.removeAllListeners();
+      unsubscribers.forEach(unsub => unsub());
     };
   }, []);
 

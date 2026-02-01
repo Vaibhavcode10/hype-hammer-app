@@ -13,12 +13,11 @@
   },
   "dependencies": {
     "@google/genai": "^1.37.0",
-    "firebase": "^10.14.1",
+    "firebase": "^11.10.0",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "react-router-dom": "^6.30.3",
-    "socket.io-client": "^4.8.3"
+    "react-router-dom": "^6.30.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
