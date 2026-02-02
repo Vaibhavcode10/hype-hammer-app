@@ -962,6 +962,17 @@ const AppContent: React.FC = () => {
         // User can now join/register for this specific match - go to role selection
         setStatus(AuctionStatus.ROLE_SELECTION);
       }}
+      onViewLiveAuction={(sportType, matchId) => {
+        setCurrentSport(sportType);
+        setCurrentMatchId(matchId);
+        setCurrentUser(prev => ({
+          ...prev,
+          name: prev.name || 'Guest User',
+          email: prev.email || 'guest@hypehammer.com',
+          role: UserRole.GUEST
+        }));
+        setStatus(AuctionStatus.GUEST_DASHBOARD);
+      }}
       onCreateSeason={() => {
         // Admin wants to create a new season
         setStatus(AuctionStatus.ADMIN_REGISTRATION);
@@ -1446,6 +1457,7 @@ const AppContent: React.FC = () => {
               players={players}
               teams={teams}
               exportHistoryAsJson={exportHistoryAsJson}
+              currentMatchId={currentMatchId || undefined}
             />
           )}
         </div>

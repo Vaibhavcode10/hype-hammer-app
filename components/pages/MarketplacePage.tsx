@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Trophy, Calendar, Users, Play, Clock, MapPin, Filter, Search, Plus, ArrowLeft } from 'lucide-react';
+import { Trophy, Calendar, Users, Play, Clock, MapPin, Filter, Search, Plus, ArrowLeft, Eye, UserPlus } from 'lucide-react';
 import { AuctionStatus, SportData, MatchData, UserRole } from '../../types';
 
 interface MarketplacePageProps {
   allSports: SportData[];
   setStatus: (status: AuctionStatus) => void;
   onSelectMatch: (sportType: string, matchId: string) => void;
+  onViewLiveAuction: (sportType: string, matchId: string) => void;
   onCreateSeason: () => void;
   currentUserRole?: UserRole;
 }
@@ -16,6 +17,7 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
   allSports,
   setStatus,
   onSelectMatch,
+  onViewLiveAuction,
   onCreateSeason,
   currentUserRole
 }) => {
@@ -87,8 +89,7 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
     return (
     <div
       key={`${match.sportType}-${match.id}`}
-      className="bg-white border-2 border-slate-200 rounded-2xl p-6 hover:border-blue-500 hover:shadow-xl transition-all group cursor-pointer"
-      onClick={() => onSelectMatch(match.sportType, match.id)}
+      className="bg-white border-2 border-slate-200 rounded-2xl p-6 hover:border-blue-500 hover:shadow-xl transition-all group"
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-4">
@@ -119,20 +120,32 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
         )}
       </div>
 
-      {/* Action Button */}
-      <button
-        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-500 to-orange-500 text-white rounded-lg font-bold uppercase text-sm tracking-wider hover:brightness-110 transition-all group-hover:scale-105"
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelectMatch(match.sportType, match.id);
-        }}
-      >
-        <Play className="w-4 h-4" fill="currentColor" />
-        {match.status === 'COMPLETED' ? 'View Results' : match.status === 'ONGOING' ? 'Join Live' : 'Register Now'}
-      </button>
+      {/* Action Buttons */}
+      <div className="space-y-3">
+        <button
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-500 to-orange-500 text-white rounded-lg font-bold uppercase text-sm tracking-wider hover:brightness-110 transition-all"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelectMatch(match.sportType, match.id);
+          }}
+        >
+          <UserPlus className="w-4 h-4" />
+          Apply for Auction
+        </button>
+        <button
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white border-2 border-blue-500 text-blue-600 rounded-lg font-bold uppercase text-sm tracking-wider hover:bg-blue-500 hover:text-white transition-all"
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewLiveAuction(match.sportType, match.id);
+          }}
+        >
+          <Eye className="w-4 h-4" />
+          View Live Auction
+        </button>
+      </div>
     </div>
     );
-  }, [onSelectMatch, getStatusBadge]);
+  }, [onSelectMatch, onViewLiveAuction, getStatusBadge]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50">

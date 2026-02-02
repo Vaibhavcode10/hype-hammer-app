@@ -37,16 +37,28 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ setStatus }) => 
             How It <span className="gold-text">Works</span>
           </h1>
 
-          {/* Video and Pro Tips Side by Side */}
+          {/* Intro and Pro Tips Side by Side */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            {/* Mock YouTube Video Embed */}
-            <div className="aspect-video bg-white border-2 border-blue-500/20 rounded-2xl overflow-hidden flex items-center justify-center relative">
-              <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-[#1a1410] to-[#0d0a09]">
-                <div className="text-center space-y-4">
-                  <div className="w-24 h-24 mx-auto bg-gradient-to-r from-blue-500 to-orange-500 rounded-full flex items-center justify-center shadow-2xl cursor-pointer hover:scale-110 transition-transform">
-                    <Play size={48} fill="white" className="text-white ml-2" />
+            {/* About HypeHammer */}
+            <div className="bg-white/50 border-2 border-blue-500/20 rounded-2xl p-6 backdrop-blur-sm">
+              <div className="text-center space-y-4">
+                <h3 className="text-2xl font-display font-black text-slate-900 uppercase tracking-wider">What is HypeHammer?</h3>
+                <p className="text-slate-600 text-base leading-relaxed">
+                  HypeHammer is a modern, real-time auction platform designed for fantasy sports, player drafts, and competitive bidding events. Built with live synchronization, AI insights, and comprehensive management tools—all in one powerful dashboard.
+                </p>
+                <div className="pt-4 space-y-3">
+                  <div className="flex items-center gap-3 text-slate-700 font-semibold">
+                    <Trophy size={20} className="text-blue-600" />
+                    <span>Real-Time Bidding Wars</span>
                   </div>
-                  <p className="text-slate-600 text-base font-bold uppercase tracking-widest">Tutorial Video Coming Soon</p>
+                  <div className="flex items-center gap-3 text-slate-700 font-semibold">
+                    <Gavel size={20} className="text-blue-600" />
+                    <span>Professional Auction Control</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-slate-700 font-semibold">
+                    <Users size={20} className="text-blue-600" />
+                    <span>Multi-Team Management</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -60,23 +72,23 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ setStatus }) => 
                   <ul className="space-y-3 text-base text-slate-600 leading-relaxed">
                     <li className="flex gap-3">
                       <span className="text-blue-600 font-black">•</span>
-                      <span>Use the dashboard to get AI-powered insights and track real-time auction statistics</span>
+                      <span>Team reps can place bids in real-time from the Live Auction Room with instant feedback</span>
                     </li>
                     <li className="flex gap-3">
                       <span className="text-blue-600 font-black">•</span>
-                      <span>Click on any team card to view their complete roster and remaining budget</span>
+                      <span>Auctioneers control the pace with the timer and bid acceptance to keep events moving smoothly</span>
                     </li>
                     <li className="flex gap-3">
                       <span className="text-blue-600 font-black">•</span>
-                      <span>Use the search functionality in Players and Teams pages to quickly find specific entries</span>
+                      <span>Browse complete player stats and biographical info on the Players page before bidding</span>
                     </li>
                     <li className="flex gap-3">
                       <span className="text-blue-600 font-black">•</span>
-                      <span>The auction room can be accessed via the navigation dock at any time during the process</span>
+                      <span>Track team budgets live to strategize bids and avoid running out of funds</span>
                     </li>
                     <li className="flex gap-3">
                       <span className="text-blue-600 font-black">•</span>
-                      <span>Export your complete auction history from the History tab for record-keeping</span>
+                      <span>Use multiple auction rounds for unsold players to maximize competition</span>
                     </li>
                   </ul>
                 </div>
@@ -97,16 +109,16 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ setStatus }) => 
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-3">
                     <SettingsIcon size={20} className="text-blue-600" />
-                    <h4 className="font-display font-black text-slate-900 text-xl uppercase">Configure Your Auction</h4>
+                    <h4 className="font-display font-black text-slate-900 text-xl uppercase">Admin Setup & Approval</h4>
                   </div>
                   <p className="text-base text-slate-600 leading-relaxed mb-4">
-                    Choose your sport, set budget limits, and customize the auction framework to match your league requirements. 
-                    Define player roles, set minimum bid increments, and configure all essential parameters.
+                    Admins create and configure new auction seasons. Auctioneers register and await approval before gaining access. 
+                    Set up teams with initial budgets, define player roles and base prices, and configure auction parameters.
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Sport Selection</span>
-                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Budget Setup</span>
-                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Role Configuration</span>
+                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Admin Dashboard</span>
+                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Auctioneer Approval</span>
+                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Season Config</span>
                   </div>
                 </div>
               </div>
@@ -123,13 +135,13 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ setStatus }) => 
                     <h4 className="font-display font-black text-slate-900 text-xl uppercase">Register Teams & Players</h4>
                   </div>
                   <p className="text-base text-slate-600 leading-relaxed mb-4">
-                    Add all participating teams with their budgets, owners, and franchise details. 
-                    Register players with comprehensive profiles including roles, base prices, statistics, images, and biographical information.
+                    Team representatives register their teams with budgets and ownership details. Players are added with comprehensive profiles including stats, roles, base prices, and images. 
+                    View and verify all registrations before the auction begins.
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Team Registry</span>
+                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Team Registration</span>
                     <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Player Profiles</span>
-                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Budget Allocation</span>
+                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Budget Tracking</span>
                   </div>
                 </div>
               </div>
@@ -142,16 +154,16 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ setStatus }) => 
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-3">
                     <Gavel size={20} className="text-blue-600" />
-                    <h4 className="font-display font-black text-slate-900 text-xl uppercase">Launch Auction Room</h4>
+                    <h4 className="font-display font-black text-slate-900 text-xl uppercase">Launch Live Auction</h4>
                   </div>
                   <p className="text-base text-slate-600 leading-relaxed mb-4">
-                    Enter the live auction room and start the bidding process. Watch as teams compete for top talent in real-time. 
-                    Use the 30-second timer to create urgency, accept bids, and manage unsold players through multiple rounds.
+                    Start the auction and enter the live auction room. Auctioneers control the flow—starting player bidding, accepting bids from team reps, and managing timers. 
+                    All participants see real-time updates with current bids, leading teams, and auction progress.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Live Bidding</span>
-                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Timer Control</span>
-                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Multi-Round</span>
+                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Real-Time Sync</span>
+                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Multi-Role Views</span>
                   </div>
                 </div>
               </div>
@@ -164,16 +176,16 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ setStatus }) => 
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-3">
                     <LayoutDashboard size={20} className="text-blue-600" />
-                    <h4 className="font-display font-black text-slate-900 text-xl uppercase">Monitor & Finalize</h4>
+                    <h4 className="font-display font-black text-slate-900 text-xl uppercase">Monitor & Complete</h4>
                   </div>
                   <p className="text-base text-slate-600 leading-relaxed mb-4">
-                    Track live statistics, monitor team budgets, and manage all bids through the comprehensive dashboard. 
-                    View complete team rosters, analyze spending patterns, and export the full auction history as JSON when complete.
+                    View live dashboards showing player status, team rosters, spending patterns, and remaining budgets. 
+                    Auctioneers can sell, unsold, or defer players to multiple rounds. Access the complete auction history with all bids and results when finished.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Live Dashboard</span>
-                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Analytics</span>
-                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Export Data</span>
+                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Team Rosters</span>
+                    <span className="text-[9px] font-black uppercase px-3 py-1 bg-gradient-to-r from-blue-500 to-orange-500/10 text-blue-600 rounded-full border border-blue-500/20">Auction History</span>
                   </div>
                 </div>
               </div>
@@ -186,8 +198,8 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ setStatus }) => 
               onClick={() => setStatus(AuctionStatus.MARKETPLACE)}
               className="px-12 py-5 gold-gradient text-white rounded-full font-black uppercase tracking-[0.3em] text-sm shadow-2xl hover:brightness-110 transition-all inline-flex items-center gap-3"
             >
-              <SettingsIcon size={20} />
-              Get Started Now
+              <Gavel size={20} />
+              Start Auctioning Now
             </button>
           </div>
         </div>

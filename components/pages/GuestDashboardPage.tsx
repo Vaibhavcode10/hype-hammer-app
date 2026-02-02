@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Eye, Trophy, Users, DollarSign, Bell, User, LogOut, Clock, 
-  Zap, Radio, Shield, Timer,
+  Zap, Shield, Timer,
   CheckCircle, XCircle, Loader, Mic, 
-  Calendar, MapPin, Mail, ChevronDown, X
+  Calendar, MapPin, Mail, X, ArrowLeft
 } from 'lucide-react';
 import { AuctionStatus, MatchData, UserRole, Team, Player } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
-import { PlayersPage } from './PlayersPage';
 import { useAudioListener } from '../../services/useAudioListener';
 import socketService from '../../services/socketService';
 
@@ -19,7 +18,6 @@ interface GuestDashboardPageProps {
 
 export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom'>('dashboard');
-  const [showPlayersPage, setShowPlayersPage] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +29,6 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
   const [activityFeed, setActivityFeed] = useState<Array<{ id: string; message: string; timestamp: Date; type: 'bid' | 'sold' | 'unsold' }>>([]);
   const [auctioneerMicOn, setAuctioneerMicOn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showProfile, setShowProfile] = useState(false);
   const [notifications, setNotifications] = useState<Array<{ id: string; message: string; time: string; read: boolean }>>([]);
 
   // Audio listener for auctioneer mic
@@ -175,23 +172,8 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       // Use team name from data instead of finding from teams array
       addActivity(`✅ ${data.playerName} sold to ${data.teamName || 'Team'} for ${formatCurrency(data.finalAmount)}`, 'sold');
       
-      // Refetch player and team data to get live updates
-      try {
-        const playersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
-        if (playersResponse.ok) {
-          const playersData = await playersResponse.json();
-          setPlayers(playersData.data || []);
-        }
-        
-        const teamsResponse = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
-        if (teamsResponse.ok) {
-          const teamsData = await teamsResponse.json();
-          setTeams(teamsData.data || []);
-        }
-      } catch (error) {
-        console.error('Failed to refetch data:', error);
-      }
-      
+      // Firebase listeners will automatically update players and teams
+      // No need to refetch - just clear current bidding player
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);
       setLeadingTeam('');
@@ -200,17 +182,8 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
     unsubscribers.push(socketService.onPlayerUnsold(async (data: any) => {
       addActivity(`❌ ${data.playerName} went unsold`, 'unsold');
       
-      // Refetch player data to get live updates
-      try {
-        const playersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
-        if (playersResponse.ok) {
-          const playersData = await playersResponse.json();
-          setPlayers(playersData.data || []);
-        }
-      } catch (error) {
-        console.error('Failed to refetch data:', error);
-      }
-      
+      // Firebase listeners will automatically update players
+      // No need to refetch - just clear current bidding player
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);
       setLeadingTeam('');
@@ -230,22 +203,41 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
 
     // Listen to players collection
     const playersUnsubscribe = socketService.onPlayersUpdate(currentMatch.id, (updatedPlayers) => {
+      console.log('🔥 Guest: Players updated, count:', updatedPlayers.length);
+      console.log('🔥 Guest: All player statuses:', updatedPlayers.map(p => `${p.name}: ${p.status}`).join(', '));
       setPlayers(updatedPlayers);
 
-      const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE');
+      // Find player with status 'PENDING' or 'LIVE' (currently being auctioned)
+      const livePlayer = updatedPlayers.find((p: any) => p.status === 'PENDING' || p.status === 'LIVE');
       if (livePlayer) {
+        console.log('🎯 Guest: Found live player:', livePlayer.name, 'status:', livePlayer.status);
+        console.log('   → Current bid:', livePlayer.currentBid);
+        console.log('   → Base price:', livePlayer.basePrice);
+        console.log('   → Leading team:', livePlayer.leadingTeamId);
         setCurrentBiddingPlayer(livePlayer);
-        setCurrentBid(livePlayer.currentBid || livePlayer.basePrice);
-        setAuctionLive(true);
+        setCurrentBid(livePlayer.currentBid || livePlayer.basePrice || 0);
+        if (livePlayer.leadingTeamId) {
+          setLeadingTeam(livePlayer.leadingTeamId);
+        }
       } else {
-        setCurrentBiddingPlayer(null);
-        setAuctionLive(false);
+        console.log('⚠️ Guest: No LIVE/PENDING player found. Clearing current bidding player.');
+        // Only clear if auction is not LIVE, otherwise keep showing last player
+        if (auctionStatus !== 'LIVE') {
+          setCurrentBiddingPlayer(null);
+        }
       }
     });
 
     // Listen to teams collection
     const teamsUnsubscribe = socketService.onTeamsUpdate(currentMatch.id, (updatedTeams) => {
-      setTeams(updatedTeams);
+      // Enrich teams with calculated squadSize from playerIds array
+      const teamsWithSquadSize = updatedTeams.map((team: any) => ({
+        ...team,
+        players: team.playerIds || team.players || [], // Normalize to players array
+        squadSize: (team.playerIds?.length || team.players?.length || 0)
+      }));
+      console.log('🔥 Guest: Teams updated with squadSize:', teamsWithSquadSize.map(t => `${t.name}: ${t.squadSize} players`));
+      setTeams(teamsWithSquadSize);
     });
 
     // Listen to bid events
@@ -296,74 +288,16 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
 
   const unreadNotifications = notifications.filter(n => !n.read).length;
 
-  // Fetch real data from API
+  // Firebase listeners provide all real-time data - no need for initial REST API fetch
+  // Just set loading to false once component mounts
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        
-        // Fetch teams for this match
-        const teamsResponse = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
-        const teamsData = teamsResponse.ok ? await teamsResponse.json() : { data: [] };
-        setTeams(teamsData.data || []);
-        
-        // Fetch players for this match
-        const playersResponse = await fetch(`http://localhost:5000/api/players?matchId=${currentMatch.id}`);
-        const playersData = playersResponse.ok ? await playersResponse.json() : { data: [] };
-        const fetchedPlayers = playersData.data || [];
-        setPlayers(fetchedPlayers);
-
-        // Fetch auction state with timer from backend
-        const auctionStateResponse = await fetch(`http://localhost:5000/api/auction/state/${currentMatch.id}`);
-        if (auctionStateResponse.ok) {
-          const auctionStateData = await auctionStateResponse.json();
-          const state = auctionStateData.data;
-          
-          if (state) {
-            console.log('📊 Initial auction state:', state);
-            
-            // Set timer countdown
-            if (state.endTime) {
-              const endTime = new Date(state.endTime).getTime();
-              const now = Date.now();
-              const remainingSeconds = Math.max(0, Math.floor((endTime - now) / 1000));
-              setCountdown(remainingSeconds);
-            }
-            
-            // Set auction status
-            if (state.status) {
-              console.log('   → Setting auction status to:', state.status);
-              setAuctionStatus(state.status);
-            }
-            
-            // Set current bidding player if active
-            if (state.currentPlayerId && state.biddingActive) {
-              const player = fetchedPlayers.find((p: Player) => p.id === state.currentPlayerId);
-              if (player) {
-                console.log('🎯 Setting initial current bidding player:', player.name);
-                console.log('   → Current bid:', state.currentBid);
-                console.log('   → Leading team:', state.leadingTeamId);
-                setCurrentBiddingPlayer(player);
-                setCurrentBid(state.currentBid || player.basePrice || 0);
-                setLeadingTeam(state.leadingTeamId || '');
-              } else {
-                console.log('⚠️ Player not found in players list:', state.currentPlayerId);
-              }
-            } else {
-              console.log('   → No active bidding (biddingActive:', state.biddingActive, ')');
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to fetch auction data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (currentMatch?.id) {
-      fetchData();
-    }
+    console.log('🔥 Guest: Component mounted, waiting for Firebase listeners to populate data');
+    // Give Firebase listeners a moment to populate data
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 1000);
+    
+    return () => clearTimeout(timer);
   }, [currentMatch?.id]);
 
   // Debug: Monitor currentBiddingPlayer state
@@ -478,7 +412,6 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
               <button
                 onClick={() => {
                   setShowNotifications(!showNotifications);
-                  setShowProfile(false);
                 }}
                 className="relative p-2 rounded-lg bg-white border-2 border-cyan-300 text-cyan-600 hover:bg-cyan-50 transition-all"
               >
@@ -543,80 +476,14 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
               )}
             </div>
 
-            {/* Players Button */}
+            {/* Go Back Button */}
             <button
-              onClick={() => setShowPlayersPage(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-600 text-white font-bold text-sm transition-all shadow-lg"
+              onClick={() => setStatus(AuctionStatus.MARKETPLACE)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-sm transition-all shadow-lg"
             >
-              <Users size={16} />
-              Players
+              <ArrowLeft size={16} />
+              Go Back
             </button>
-
-            {/* Live Room Toggle */}
-            <button
-              onClick={() => setActiveSection(activeSection === 'dashboard' ? 'liveRoom' : 'dashboard')}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-white font-bold text-sm transition-all shadow-lg"
-            >
-              <Radio size={16} />
-              {activeSection === 'dashboard' ? 'Live Room' : 'Dashboard'}
-            </button>
-            
-            {/* Profile */}
-            <button
-              onClick={() => {
-                setShowProfile(!showProfile);
-                setShowNotifications(false);
-              }}
-              className="flex items-center gap-3 px-4 py-2 rounded-xl bg-white border-2 border-cyan-200 hover:border-cyan-300 transition-all"
-            >
-              <div className="w-8 h-8 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 flex items-center justify-center text-white font-bold text-sm">
-                {currentUser.name?.[0] || 'G'}
-              </div>
-              <ChevronDown size={16} />
-            </button>
-
-            {showProfile && (
-              <div className="absolute right-6 top-20 w-80 bg-white rounded-2xl border-2 border-cyan-200 shadow-2xl z-[999]">
-                <div className="p-6">
-                  <div className="flex flex-col items-center mb-6">
-                    <div className="w-20 h-20 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 flex items-center justify-center text-white font-black text-3xl border-4 border-white shadow-lg mb-3">
-                      {currentUser.name?.[0] || 'G'}
-                    </div>
-                    <h3 className="text-lg font-black text-slate-800">{currentUser.name}</h3>
-                    <span className="mt-2 px-3 py-1 rounded-full bg-cyan-100 border border-cyan-300 text-xs font-bold text-cyan-700">
-                      GUEST SPECTATOR
-                    </span>
-                  </div>
-                  <div className="space-y-3 mb-6">
-                    <div className="flex items-start gap-3">
-                      <Mail size={16} className="text-cyan-600 mt-0.5" />
-                      <div>
-                        <p className="text-xs text-gray-600 uppercase font-bold">Email</p>
-                        <p className="text-sm text-slate-800 font-semibold">{currentUser.email}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <Eye size={16} className="text-cyan-600 mt-0.5" />
-                      <div>
-                        <p className="text-xs text-gray-600 uppercase font-bold">Access</p>
-                        <p className="text-sm text-slate-800 font-semibold">Read-Only Observer</p>
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      sessionStorage.clear();
-                      localStorage.clear();
-                      setStatus(AuctionStatus.HOME);
-                    }}
-                    className="w-full px-4 py-3 bg-red-100 hover:bg-red-500 border-2 border-red-300 hover:border-red-500 text-red-600 hover:text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all"
-                  >
-                    <LogOut size={16} />
-                    Logout
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -809,14 +676,6 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
             onClose={() => setActiveSection('dashboard')}
           />
         </div>
-      )}
-
-      {/* Players Page Overlay */}
-      {showPlayersPage && (
-        <PlayersPage 
-          onClose={() => setShowPlayersPage(false)} 
-          currentMatch={currentMatch}
-        />
       )}
     </div>
   );

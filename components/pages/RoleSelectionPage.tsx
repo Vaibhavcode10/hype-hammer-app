@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Gavel, Users, User, Eye, ArrowLeft, ChevronRight } from 'lucide-react';
+import { Gavel, Users, User, ArrowLeft, ChevronRight } from 'lucide-react';
 import { AuctionStatus, UserRole, MatchData, SportData } from '../../types';
 
 interface RoleSelectionPageProps {
@@ -53,18 +53,6 @@ export const RoleSelectionPage: React.FC<RoleSelectionPageProps> = ({
         'Get drafted by teams'
       ],
       color: 'from-green-500 to-emerald-500'
-    },
-    {
-      id: UserRole.GUEST,
-      title: 'Guest',
-      icon: Eye,
-      description: 'Watch the auction live',
-      features: [
-        'View live bidding',
-        'Follow your favorites',
-        'No bidding access'
-      ],
-      color: 'from-orange-500 to-red-500'
     }
   ];
 

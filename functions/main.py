@@ -365,6 +365,8 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                 return debug_all_players(data)
             elif action == 'seed-users' and method == 'POST':
                 return debug_seed_test_users()
+            elif action == 'migrate-sold-players' and method == 'POST':
+                return migrate_sold_players_data(data)
         
         # ===== SPORTS ROUTES =====
         elif resource == 'sports':
@@ -798,10 +800,55 @@ def get_matches(data):
     return create_response(success_response(serialize_firestore_docs(docs)))
 
 def get_match(match_id):
-    doc = get_db().collection('matches').document(match_id).get()
-    if not doc.exists:
-        return create_response(error_response("Not found", 404), 404)
-    return create_response(success_response(serialize_firestore_doc(doc)))
+    """Get match details and include current live auction state"""
+    try:
+        doc = get_db().collection('matches').document(match_id).get()
+        if not doc.exists:
+            return create_response(error_response("Not found", 404), 404)
+        
+        match_data = serialize_firestore_doc(doc)
+        
+        # Also fetch the live auction state if it exists
+        try:
+            live_auction_doc = get_db().collection('liveAuctions').document(match_id).get()
+            if live_auction_doc.exists:
+                live_state = live_auction_doc.to_dict() or {}
+                # Merge live auction state into match data
+                match_data.update({
+                    'status': live_state.get('status', match_data.get('status', 'READY')),
+                    'currentPlayerId': live_state.get('currentPlayerId'),
+                    'currentPlayerName': live_state.get('currentPlayerName'),
+                    'currentBid': live_state.get('currentBid', 0),
+                    'leadingTeamId': live_state.get('leadingTeamId'),
+                    'leadingTeamName': live_state.get('leadingTeamName'),
+                    'biddingActive': live_state.get('biddingActive', False),
+                    'remainingSeconds': live_state.get('remainingSeconds', 0)
+                })
+                
+                # If there's a current player, fetch fresh data from the player doc to ensure bid is up-to-date
+                current_player_id = live_state.get('currentPlayerId')
+                if current_player_id:
+                    try:
+                        player_doc = get_db().collection('players').document(current_player_id).get()
+                        if player_doc.exists:
+                            player_data = player_doc.to_dict() or {}
+                            # Override with fresh player data to ensure currentBid and leadingTeam are latest
+                            match_data.update({
+                                'currentBid': player_data.get('currentBid', match_data.get('currentBid', 0)),
+                                'leadingTeamId': player_data.get('leadingTeamId', match_data.get('leadingTeamId')),
+                                'leadingTeamName': player_data.get('leadingTeamName', match_data.get('leadingTeamName'))
+                            })
+                            print(f"✓ Refreshed currentBid from player doc: ₹{match_data['currentBid']}")
+                    except Exception as e:
+                        print(f"⚠ Warning fetching current player for refresh: {e}")
+                
+                print(f"✓ Merged live auction state into match data")
+        except Exception as e:
+            print(f"⚠ Warning fetching live auction state: {e}")
+        
+        return create_response(success_response(match_data))
+    except Exception as e:
+        return create_response(error_response(str(e), 500), 500)
 
 def create_match(data):
     match_id = data.get('id') or generate_id('match')
@@ -825,11 +872,17 @@ def delete_match(match_id):
 
 def get_bids(data):
     season_id = data.get('seasonId')
+    player_id = data.get('playerId')
     query = get_db().collection('bids')
     if season_id:
         query = query.where('seasonId', '==', season_id)
-    docs = query.stream()
-    return create_response(success_response(serialize_firestore_docs(docs)))
+    if player_id:
+        query = query.where('playerId', '==', player_id)
+    docs = list(query.stream())
+    # Sort by timestamp descending (most recent first)
+    bids_list = serialize_firestore_docs(docs)
+    bids_list.sort(key=lambda b: b.get('timestamp', ''), reverse=True)
+    return create_response(success_response(bids_list))
 
 def create_bid(data):
     """Create a new bid and update auction state"""
@@ -838,13 +891,21 @@ def create_bid(data):
         team_id = data.get('teamId')
         amount = data.get('amount', 0)
         
+        print(f"📋 Create bid request: season={season_id}, team={team_id}, amount={amount}")
+        
         if not season_id or not team_id or not amount:
             return create_response(error_response("Missing required fields: seasonId, teamId, amount"), 400)
         
         # Get team to validate budget
-        team_doc = get_db().collection('teams').document(team_id).get()
-        if not team_doc.exists:
-            return create_response(error_response("Team not found"), 404)
+        try:
+            team_doc = get_db().collection('teams').document(team_id).get()
+            if not team_doc.exists:
+                error_msg = f"Team {team_id} not found"
+                print(f"❌ {error_msg}")
+                return create_response(error_response(error_msg), 404)
+        except Exception as e:
+            print(f"❌ Failed to fetch team: {e}")
+            return create_response(error_response(f"Failed to fetch team: {str(e)}"), 400)
         
         team_data = serialize_firestore_doc(team_doc)
         
@@ -854,100 +915,143 @@ def create_bid(data):
             remaining_budget = team_data.get('budget', 0)
 
         if amount > remaining_budget:
-            return create_response(error_response(
-                f"Insufficient budget. Team has ₹{remaining_budget/100000:.1f}L remaining"
-            ), 400)
+            budget_msg = f"Insufficient budget. Team has ₹{remaining_budget/100000:.1f}L remaining"
+            print(f"⚠ Bid rejected: {budget_msg}")
+            return create_response(error_response(budget_msg), 400)
 
         # Get current player from canonical Firestore doc (source of truth)
         player_id = None
-        current_player_doc = get_db().collection('liveAuctions').document(season_id).collection('currentPlayer').document('active').get()
-        if current_player_doc.exists:
-            cp = current_player_doc.to_dict() or {}
-            player_obj = cp.get('player') or {}
-            player_id = cp.get('playerId') or player_obj.get('id')
+        try:
+            current_player_doc = get_db().collection('liveAuctions').document(season_id).collection('currentPlayer').document('active').get()
+            if current_player_doc.exists:
+                cp = current_player_doc.to_dict() or {}
+                player_obj = cp.get('player') or {}
+                player_id = cp.get('playerId') or player_obj.get('id')
+                print(f"✓ Found player from canonical doc: {player_id}")
+        except Exception as e:
+            print(f"⚠ Failed to fetch canonical player doc: {e}")
 
         # Fallback: find any LIVE player if currentPlayer doc missing
         if not player_id:
-            players_query = (
-                get_db().collection('players')
-                .where('matchId', '==', season_id)
-                .where('status', '==', 'LIVE')
-                .limit(1)
-            )
-            live_players = list(players_query.stream())
-            if not live_players:
-                return create_response(error_response("No active player bidding"), 404)
-            player_doc = live_players[0]
+            try:
+                players_query = (
+                    get_db().collection('players')
+                    .where('matchId', '==', season_id)
+                    .where('status', '==', 'LIVE')
+                    .limit(1)
+                )
+                live_players = list(players_query.stream())
+                if not live_players:
+                    error_msg = "No active player bidding"
+                    print(f"❌ {error_msg}")
+                    return create_response(error_response(error_msg), 404)
+                player_doc = live_players[0]
+                print(f"✓ Found LIVE player via fallback query: {player_doc.id}")
+            except Exception as e:
+                print(f"❌ Failed to find active player: {e}")
+                return create_response(error_response(f"Failed to find active player: {str(e)}"), 400)
         else:
-            player_doc = get_db().collection('players').document(player_id).get()
+            try:
+                player_doc = get_db().collection('players').document(player_id).get()
+            except Exception as e:
+                print(f"❌ Failed to fetch player: {e}")
+                return create_response(error_response(f"Failed to fetch player: {str(e)}"), 400)
 
         if not player_doc.exists:
-            return create_response(error_response("Active player not found"), 404)
+            error_msg = "Active player not found"
+            print(f"❌ {error_msg}")
+            return create_response(error_response(error_msg), 404)
 
         player_data = serialize_firestore_doc(player_doc)
         
         # Validate bid amount is higher than current bid
         current_bid = player_data.get('currentBid', player_data.get('basePrice', 0))
         if amount <= current_bid:
-            return create_response(error_response(f"Bid must be higher than current bid of ₹{current_bid/100000:.1f}L"), 400)
+            bid_msg = f"Bid must be higher than current bid of ₹{current_bid/100000:.1f}L"
+            print(f"⚠ Bid rejected: {bid_msg}")
+            return create_response(error_response(bid_msg), 400)
         
         # Create bid record
-        bid_id = generate_id('bid')
-        bid_data = {
-            'id': bid_id,
-            'seasonId': season_id,
-            'teamId': team_id,
-            'teamName': team_data.get('name', 'Unknown Team'),
-            'playerId': player_data.get('id') or player_doc.id,
-            'playerName': player_data.get('name', 'Unknown Player'),
-            'amount': amount,
-            'timestamp': datetime.now().isoformat(),
-            'createdAt': firestore.SERVER_TIMESTAMP
-        }
-        
-        get_db().collection('bids').document(bid_id).set(bid_data)
+        try:
+            bid_id = generate_id('bid')
+            bid_data = {
+                'id': bid_id,
+                'seasonId': season_id,
+                'teamId': team_id,
+                'teamName': team_data.get('name', 'Unknown Team'),
+                'playerId': player_data.get('id') or player_doc.id,
+                'playerName': player_data.get('name', 'Unknown Player'),
+                'amount': amount,
+                'timestamp': datetime.now().isoformat(),
+                'createdAt': firestore.SERVER_TIMESTAMP
+            }
+            
+            get_db().collection('bids').document(bid_id).set(bid_data)
+            print(f"✓ Created bid record: {bid_id}")
+        except Exception as e:
+            print(f"❌ Failed to create bid record: {e}")
+            return create_response(error_response(f"Failed to create bid: {str(e)}"), 400)
         
         # Update player with new bid
-        target_player_id = player_data.get('id') or player_doc.id
-        get_db().collection('players').document(target_player_id).update({
-            'currentBid': amount,
-            'leadingTeamId': team_id,
-            'leadingTeamName': team_data.get('name', 'Unknown Team'),
-            'updatedAt': datetime.now().isoformat()
-        })
+        try:
+            target_player_id = player_data.get('id') or player_doc.id
+            get_db().collection('players').document(target_player_id).update({
+                'currentBid': amount,
+                'leadingTeamId': team_id,
+                'leadingTeamName': team_data.get('name', 'Unknown Team'),
+                'updatedAt': datetime.now().isoformat()
+            })
+            print(f"✓ Updated player bid data")
+        except Exception as e:
+            print(f"❌ Failed to update player bid: {e}")
+            return create_response(error_response(f"Failed to update player bid: {str(e)}"), 400)
 
         # Update canonical live auction state docs so all dashboards converge
-        _set_live_auction_state(season_id, {
-            'status': 'LIVE',
-            'currentPlayerId': target_player_id,
-            'currentPlayerName': player_data.get('name'),
-            'currentBid': amount,
-            'leadingTeamId': team_id,
-            'leadingTeamName': team_data.get('name'),
-            'biddingActive': True
-        })
+        try:
+            _set_live_auction_state(season_id, {
+                'status': 'LIVE',
+                'currentPlayerId': target_player_id,
+                'currentPlayerName': player_data.get('name'),
+                'currentBid': amount,
+                'leadingTeamId': team_id,
+                'leadingTeamName': team_data.get('name'),
+                'biddingActive': True
+            })
+            print(f"✓ Updated live auction state")
+        except Exception as e:
+            print(f"⚠ Warning updating auction state: {e}")
 
         try:
             # Keep currentPlayer/active doc fresh for any consumers
             refreshed_player = serialize_firestore_doc(get_db().collection('players').document(target_player_id).get())
             _set_current_player(season_id, refreshed_player, refreshed_player.get('basePrice', 0))
+            print(f"✓ Refreshed canonical current player doc")
         except Exception as e:
-            print(f"✗ Failed to refresh currentPlayer doc after bid: {e}")
+            print(f"⚠ Failed to refresh currentPlayer doc after bid: {e}")
         
         # Emit real-time event
-        emit_realtime_event('bid_placed', {
-            'bidId': bid_id,
-            'playerId': target_player_id,
-            'playerName': player_data.get('name'),
-            'teamId': team_id,
-            'teamName': team_data.get('name'),
-            'amount': amount,
-            'seasonId': season_id
-        }, season_id)
+        try:
+            emit_realtime_event('bid_placed', {
+                'bidId': bid_id,
+                'playerId': target_player_id,
+                'playerName': player_data.get('name'),
+                'teamId': team_id,
+                'teamName': team_data.get('name'),
+                'amount': amount,
+                'seasonId': season_id
+            }, season_id)
+            print(f"✓ Emitted bid_placed event")
+        except Exception as e:
+            print(f"⚠ Warning emitting event: {e}")
         
+        print(f"✅ Successfully placed bid: {amount} by {team_data.get('name')}")
         return create_response(success_response(bid_data, "Bid placed successfully"), 201)
     except Exception as e:
-        return create_response(error_response(f"Failed to place bid: {str(e)}"), 400)
+        error_msg = str(e)
+        print(f"❌ Unexpected error in create_bid: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Failed to place bid: {error_msg}"), 400)
 
 def start_auction(data):
     match_id = data.get('matchId')
@@ -1276,69 +1380,111 @@ def start_player_bidding(data):
         player_id = data.get('playerId')
         base_price = data.get('basePrice', 0)
         
+        print(f"📋 Start player bidding request: season={season_id}, player={player_id}, basePrice={base_price}")
+        
         if not season_id or not player_id:
             return create_response(error_response("Missing seasonId or playerId"), 400)
         
+        # Verify player exists first
+        player_ref = get_db().collection('players').document(player_id)
+        player_doc = player_ref.get()
+        if not player_doc.exists:
+            error_msg = f"Player {player_id} not found in database"
+            print(f"❌ {error_msg}")
+            return create_response(error_response(error_msg), 404)
+        
         # Ensure only ONE player is LIVE at a time for this season.
         # If previous runs left multiple players as LIVE, normalize them back to AVAILABLE.
-        live_players = list(
-            get_db()
-            .collection('players')
-            .where('matchId', '==', season_id)
-            .where('status', '==', 'LIVE')
-            .stream()
-        )
-        for doc in live_players:
-            if doc.id != player_id:
-                get_db().collection('players').document(doc.id).update({
-                    'status': 'AVAILABLE',
-                    'updatedAt': datetime.now().isoformat()
-                })
+        try:
+            live_players = list(
+                get_db()
+                .collection('players')
+                .where('matchId', '==', season_id)
+                .where('status', '==', 'LIVE')
+                .stream()
+            )
+            for doc in live_players:
+                if doc.id != player_id:
+                    get_db().collection('players').document(doc.id).update({
+                        'status': 'AVAILABLE',
+                        'updatedAt': datetime.now().isoformat()
+                    })
+                    print(f"✓ Cleared LIVE status from previous player: {doc.id}")
+        except Exception as e:
+            print(f"⚠ Warning clearing previous LIVE players: {e}")
 
         # Update player status to LIVE and reset bid data
-        player_ref = get_db().collection('players').document(player_id)
-        player_ref.update({
-            'status': 'LIVE',
-            'currentBid': base_price,
-            'basePrice': base_price,
-            'leadingTeamId': None,
-            'leadingTeamName': None,
-            'updatedAt': datetime.now().isoformat()
-        })
+        try:
+            player_ref.update({
+                'status': 'LIVE',
+                'currentBid': base_price,
+                'basePrice': base_price,
+                'leadingTeamId': None,
+                'leadingTeamName': None,
+                'updatedAt': datetime.now().isoformat()
+            })
+            print(f"✓ Updated player {player_id} to LIVE")
+        except Exception as e:
+            print(f"❌ Failed to update player: {e}")
+            return create_response(error_response(f"Failed to update player status: {str(e)}"), 400)
 
         # Fetch updated player so we can broadcast a full object
-        updated_player = serialize_firestore_doc(player_ref.get())
+        try:
+            updated_player = serialize_firestore_doc(player_ref.get())
+            print(f"✓ Fetched updated player: {updated_player.get('name')}")
+        except Exception as e:
+            print(f"❌ Failed to fetch updated player: {e}")
+            return create_response(error_response(f"Failed to fetch updated player: {str(e)}"), 400)
 
         # Canonical current player doc (all dashboards listen here)
-        _set_current_player(season_id, updated_player, base_price)
+        try:
+            _set_current_player(season_id, updated_player, base_price)
+            print(f"✓ Set canonical current player doc")
+        except Exception as e:
+            print(f"❌ Failed to set current player doc: {e}")
+            return create_response(error_response(f"Failed to set current player: {str(e)}"), 400)
 
         # Update canonical live auction state doc (all dashboards listen here)
-        _set_live_auction_state(season_id, {
-            'status': 'LIVE',
-            'currentPlayerId': player_id,
-            'currentPlayerName': updated_player.get('name'),
-            'currentBid': base_price,
-            'leadingTeamId': None,
-            'leadingTeamName': None,
-            'biddingActive': True,
-            'remainingSeconds': 0
-        })
+        try:
+            _set_live_auction_state(season_id, {
+                'status': 'LIVE',
+                'currentPlayerId': player_id,
+                'currentPlayerName': updated_player.get('name'),
+                'currentBid': base_price,
+                'leadingTeamId': None,
+                'leadingTeamName': None,
+                'biddingActive': True,
+                'remainingSeconds': 0
+            })
+            print(f"✓ Updated live auction state")
+        except Exception as e:
+            print(f"❌ Failed to update auction state: {e}")
+            return create_response(error_response(f"Failed to update auction state: {str(e)}"), 400)
         
         # Emit real-time event
-        emit_realtime_event('player_bidding_started', {
-            'player': updated_player,
-            'playerId': player_id,
-            'basePrice': base_price,
-            'seasonId': season_id
-        }, season_id)
+        try:
+            emit_realtime_event('player_bidding_started', {
+                'player': updated_player,
+                'playerId': player_id,
+                'basePrice': base_price,
+                'seasonId': season_id
+            }, season_id)
+            print(f"✓ Emitted player_bidding_started event")
+        except Exception as e:
+            print(f"⚠ Warning emitting event: {e}")
         
+        print(f"✅ Successfully started bidding for player {player_id}")
         return create_response(success_response({
             'playerId': player_id,
             'status': 'LIVE',
             'basePrice': base_price
         }, "Player bidding started"))
     except Exception as e:
-        return create_response(error_response(f"Failed to start player bidding: {str(e)}"), 400)
+        error_msg = str(e)
+        print(f"❌ Unexpected error in start_player_bidding: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Failed to start player bidding: {error_msg}"), 400)
 
 def close_player_bidding(data):
     """Close bidding for current player"""
@@ -1346,34 +1492,58 @@ def close_player_bidding(data):
         season_id = data.get('seasonId')
         sold = data.get('sold', False)
         
+        print(f"📋 Close player bidding request: season={season_id}, sold={sold}")
+        
         if not season_id:
             return create_response(error_response("Missing seasonId"), 400)
         
         # Get current player from canonical doc first
         player_id = None
-        current_player_doc = get_db().collection('liveAuctions').document(season_id).collection('currentPlayer').document('active').get()
-        if current_player_doc.exists:
-            cp = current_player_doc.to_dict() or {}
-            player_obj = cp.get('player') or {}
-            player_id = cp.get('playerId') or player_obj.get('id')
+        try:
+            current_player_doc = get_db().collection('liveAuctions').document(season_id).collection('currentPlayer').document('active').get()
+            if current_player_doc.exists:
+                cp = current_player_doc.to_dict() or {}
+                player_obj = cp.get('player') or {}
+                player_id = cp.get('playerId') or player_obj.get('id')
+                print(f"✓ Found player from canonical doc: {player_id}")
+        except Exception as e:
+            print(f"⚠ Failed to fetch canonical player doc: {e}")
 
         if player_id:
-            player_doc = get_db().collection('players').document(player_id).get()
-            if not player_doc.exists:
-                return create_response(error_response("Active player not found"), 404)
+            try:
+                player_doc = get_db().collection('players').document(player_id).get()
+                if not player_doc.exists:
+                    error_msg = f"Player {player_id} not found"
+                    print(f"❌ {error_msg}")
+                    return create_response(error_response(error_msg), 404)
+            except Exception as e:
+                print(f"❌ Failed to fetch player: {e}")
+                return create_response(error_response(f"Failed to fetch player: {str(e)}"), 400)
         else:
-            players_query = (
-                get_db().collection('players')
-                .where('matchId', '==', season_id)
-                .where('status', '==', 'LIVE')
-                .limit(1)
-            )
-            live_players = list(players_query.stream())
-            if not live_players:
-                return create_response(error_response("No active player bidding found"), 404)
-            player_doc = live_players[0]
+            # Fallback: find LIVE player
+            try:
+                players_query = (
+                    get_db().collection('players')
+                    .where('matchId', '==', season_id)
+                    .where('status', '==', 'LIVE')
+                    .limit(1)
+                )
+                live_players = list(players_query.stream())
+                if not live_players:
+                    error_msg = "No active player bidding found"
+                    print(f"❌ {error_msg}")
+                    return create_response(error_response(error_msg), 404)
+                player_doc = live_players[0]
+                print(f"✓ Found LIVE player via query: {player_doc.id}")
+            except Exception as e:
+                print(f"❌ Failed to find LIVE player: {e}")
+                return create_response(error_response(f"Failed to find active player: {str(e)}"), 400)
 
-        player_data = serialize_firestore_doc(player_doc)
+        try:
+            player_data = serialize_firestore_doc(player_doc)
+        except Exception as e:
+            print(f"❌ Failed to serialize player: {e}")
+            return create_response(error_response(f"Failed to process player data: {str(e)}"), 400)
         
         # Update player status (preserve currentBid and team data)
         new_status = 'SOLD' if sold else 'UNSOLD'
@@ -1383,60 +1553,94 @@ def close_player_bidding(data):
             'status': new_status,
             'updatedAt': datetime.now().isoformat()
         }
+        # If sold, add sold-to team and amount
+        if sold:
+            update_data['soldTo'] = player_data.get('leadingTeamId')
+            update_data['soldAmount'] = player_data.get('currentBid', 0)
+            update_data['soldAt'] = datetime.now().isoformat()
+            print(f"✓ Recording SOLD: soldTo={player_data.get('leadingTeamId')}, soldAmount={player_data.get('currentBid')}")
         # If unsold, clear bid data
-        if not sold:
+        else:
             update_data['currentBid'] = player_data.get('basePrice', 0)
             update_data['leadingTeamId'] = None
             update_data['leadingTeamName'] = None
-        player_ref.update(update_data)
+        
+        try:
+            player_ref.update(update_data)
+            print(f"✓ Updated player {target_player_id} status to {new_status}")
+        except Exception as e:
+            print(f"❌ Failed to update player status: {e}")
+            return create_response(error_response(f"Failed to update player: {str(e)}"), 400)
 
         # Update live auction state + clear current player
-        _set_live_auction_state(season_id, {
-            'currentPlayerId': None,
-            'currentPlayerName': None,
-            'biddingActive': False,
-            'leadingTeamId': None,
-            'leadingTeamName': None
-        })
+        try:
+            _set_live_auction_state(season_id, {
+                'currentPlayerId': None,
+                'currentPlayerName': None,
+                'biddingActive': False,
+                'leadingTeamId': None,
+                'leadingTeamName': None
+            })
+            print(f"✓ Updated live auction state")
+        except Exception as e:
+            print(f"⚠ Warning updating auction state: {e}")
 
         # Clear canonical current player doc to prevent stale hydration
-        _clear_current_player(season_id)
+        try:
+            _clear_current_player(season_id)
+            print(f"✓ Cleared canonical current player doc")
+        except Exception as e:
+            print(f"⚠ Warning clearing current player: {e}")
 
         # Write stable event docs used by existing listeners
-        if sold:
-            _emit_named_event_doc(season_id, 'playerSold', {
-                'playerId': target_player_id,
-                'playerName': player_data.get('name'),
-                'teamId': player_data.get('leadingTeamId'),
-                'teamName': player_data.get('leadingTeamName'),
-                'finalAmount': player_data.get('currentBid', 0),
-                'seasonId': season_id
-            })
-        else:
-            _emit_named_event_doc(season_id, 'playerUnsold', {
-                'playerId': target_player_id,
-                'playerName': player_data.get('name'),
-                'finalAmount': player_data.get('basePrice', 0),
-                'seasonId': season_id
-            })
+        try:
+            if sold:
+                _emit_named_event_doc(season_id, 'playerSold', {
+                    'playerId': target_player_id,
+                    'playerName': player_data.get('name'),
+                    'teamId': player_data.get('leadingTeamId'),
+                    'teamName': player_data.get('leadingTeamName'),
+                    'finalAmount': player_data.get('currentBid', 0),
+                    'seasonId': season_id
+                })
+                print(f"✓ Emitted playerSold event")
+            else:
+                _emit_named_event_doc(season_id, 'playerUnsold', {
+                    'playerId': target_player_id,
+                    'playerName': player_data.get('name'),
+                    'finalAmount': player_data.get('basePrice', 0),
+                    'seasonId': season_id
+                })
+                print(f"✓ Emitted playerUnsold event")
+        except Exception as e:
+            print(f"⚠ Warning emitting event docs: {e}")
         
         # Emit real-time event
-        emit_realtime_event('player_bidding_closed', {
-            'playerId': target_player_id,
-            'status': new_status,
-            'sold': sold,
-            'finalBid': player_data.get('currentBid', 0),
-            'teamId': player_data.get('teamId'),
-            'seasonId': season_id
-        }, season_id)
+        try:
+            emit_realtime_event('player_bidding_closed', {
+                'playerId': target_player_id,
+                'status': new_status,
+                'sold': sold,
+                'finalBid': player_data.get('currentBid', 0),
+                'teamId': player_data.get('teamId'),
+                'seasonId': season_id
+            }, season_id)
+            print(f"✓ Emitted player_bidding_closed event")
+        except Exception as e:
+            print(f"⚠ Warning emitting realtime event: {e}")
         
+        print(f"✅ Successfully closed bidding for player {target_player_id} - {new_status}")
         return create_response(success_response({
             'playerId': target_player_id,
             'status': new_status,
             'sold': sold
         }, f"Player bidding closed - {new_status}"))
     except Exception as e:
-        return create_response(error_response(f"Failed to close player bidding: {str(e)}"), 400)
+        error_msg = str(e)
+        print(f"❌ Unexpected error in close_player_bidding: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Failed to close player bidding: {error_msg}"), 400)
 
 
 def reset_live_auction(data):
@@ -1530,6 +1734,82 @@ def debug_all_players(data):
         return create_response(success_response(player_list, f"Found {len(player_list)} sold players"))
     except Exception as e:
         return create_response(error_response(f"Failed to get players: {str(e)}"), 400)
+
+def migrate_sold_players_data(data):
+    """
+    MIGRATION: Populate missing soldTo, soldAmount, soldAt for already-sold players
+    Copies from leadingTeamId, currentBid, updatedAt
+    """
+    try:
+        season_id = data.get('seasonId')
+        if not season_id:
+            return create_response(error_response("Missing seasonId parameter"), 400)
+        
+        # Find all SOLD players missing soldTo
+        players_query = (
+            get_db().collection('players')
+            .where('matchId', '==', season_id)
+            .where('status', '==', 'SOLD')
+        )
+        players = list(players_query.stream())
+        
+        updated_count = 0
+        updates_made = []
+        
+        for p in players:
+            p_data = p.to_dict()
+            player_id = p.id
+            player_name = p_data.get('name', 'Unknown')
+            
+            # Check if this player is missing soldTo/soldAmount/soldAt
+            has_soldTo = 'soldTo' in p_data and p_data.get('soldTo')
+            has_soldAmount = 'soldAmount' in p_data and p_data.get('soldAmount')
+            has_soldAt = 'soldAt' in p_data and p_data.get('soldAt')
+            
+            # If already complete, skip
+            if has_soldTo and has_soldAmount and has_soldAt:
+                print(f"✓ {player_name} already has complete sold data")
+                continue
+            
+            # Get source data
+            leading_team_id = p_data.get('leadingTeamId')
+            current_bid = p_data.get('currentBid')
+            updated_at = p_data.get('updatedAt')
+            
+            if not leading_team_id or not current_bid:
+                print(f"⚠ {player_name} missing leadingTeamId or currentBid, skipping")
+                continue
+            
+            # Prepare update
+            update_data = {}
+            if not has_soldTo and leading_team_id:
+                update_data['soldTo'] = leading_team_id
+            if not has_soldAmount and current_bid:
+                update_data['soldAmount'] = current_bid
+            if not has_soldAt and updated_at:
+                update_data['soldAt'] = updated_at
+            
+            # Apply update
+            if update_data:
+                get_db().collection('players').document(player_id).update(update_data)
+                updated_count += 1
+                updates_made.append({
+                    'playerId': player_id,
+                    'playerName': player_name,
+                    'updates': update_data
+                })
+                print(f"✓ Migrated {player_name}: {list(update_data.keys())}")
+        
+        return create_response(success_response({
+            'updated_count': updated_count,
+            'updates_made': updates_made
+        }, f"Migration complete: Updated {updated_count} players"))
+    
+    except Exception as e:
+        print(f"❌ Migration error: {e}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Migration failed: {str(e)}"), 400)
 
 # ===== AUCTION CRUD HANDLERS =====
 def get_auctions(data):

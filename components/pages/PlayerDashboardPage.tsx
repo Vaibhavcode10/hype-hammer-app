@@ -350,29 +350,15 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
         read: false
       }, ...prev]);
       
-      // Refetch player data to get updated status
-      try {
-        if (!seasonId) return;
-        const playerResponse = await fetch(`${API_BASE}/players?matchId=${seasonId}&email=${currentUser.email}`);
-        if (playerResponse.ok) {
-          const playerDataResponse = await playerResponse.json();
-          const player = playerDataResponse.data?.find((p: Player) => p.email === currentUser.email);
-          if (player) {
-            setPlayerData(player);
-            
-            // Check if it's this player
-            if (data.playerId === player.id) {
-              setFinalResult({
-                sold: true,
-                teamName: data.teamName,
-                price: data.finalAmount,
-                time: new Date().toLocaleTimeString()
-              });
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to refetch player data:', error);
+      // Firebase listeners will automatically update player data
+      // Check if it's this player and update final result
+      if (data.playerId === playerData?.id) {
+        setFinalResult({
+          sold: true,
+          teamName: data.teamName,
+          price: data.finalAmount,
+          time: new Date().toLocaleTimeString()
+        });
       }
       
       setCurrentBiddingPlayer(null);
@@ -389,27 +375,13 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
         type: 'unsold'
       }, ...prev]);
       
-      // Refetch player data to get updated status
-      try {
-        if (!seasonId) return;
-        const playerResponse = await fetch(`${API_BASE}/players?matchId=${seasonId}&email=${currentUser.email}`);
-        if (playerResponse.ok) {
-          const playerDataResponse = await playerResponse.json();
-          const player = playerDataResponse.data?.find((p: Player) => p.email === currentUser.email);
-          if (player) {
-            setPlayerData(player);
-            
-            // Check if it's this player
-            if (data.playerId === player.id) {
-              setFinalResult({
-                sold: false,
-                time: new Date().toLocaleTimeString()
-              });
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to refetch player data:', error);
+      // Firebase listeners will automatically update player data
+      // Check if it's this player and update final result
+      if (data.playerId === playerData?.id) {
+        setFinalResult({
+          sold: false,
+          time: new Date().toLocaleTimeString()
+        });
       }
       
       setCurrentBiddingPlayer(null);

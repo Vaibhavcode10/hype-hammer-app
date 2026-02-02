@@ -161,6 +161,31 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       (playerFilter === 'unsold' && player.status === 'UNSOLD');
     return matchesSearch && matchesFilter;
   });
+
+  // Helper function to calculate team stats based on sold players
+  const getTeamStats = (team: Team) => {
+    const soldPlayersForTeam = players.filter(p => 
+      p.status === 'SOLD' && (p.soldTo === team.id || p.leadingTeamId === team.id)
+    );
+    
+    const totalSpent = soldPlayersForTeam.reduce((sum, p) => {
+      const amount = p.soldAmount || p.soldPrice || p.finalPrice || p.currentBid || p.basePrice || 0;
+      console.log(`💰 ${team.name} - ${p.name}: sold=${p.soldAmount}, price=${p.soldPrice}, final=${p.finalPrice}, current=${p.currentBid}, base=${p.basePrice} → using: ${amount}`);
+      return sum + amount;
+    }, 0);
+    
+    const initialBudget = team.budget || team.initialBudget || 0;
+    const remainingBudget = initialBudget - totalSpent;
+    
+    console.log(`📊 ${team.name}: Budget=${initialBudget}, Spent=${totalSpent}, Remaining=${remainingBudget}`);
+    
+    return {
+      squadSize: soldPlayersForTeam.length,
+      spent: totalSpent,
+      remaining: remainingBudget,
+      soldPlayers: soldPlayersForTeam
+    };
+  };
   
   // Add system log
   const addSystemLog = (type: SystemLog['type'], message: string, actor?: string) => {
@@ -548,7 +573,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
     const seasonId = activeMatch.id;
     
-    console.log('🔥 Admin: Setting up real-time listeners for seasonId:', seasonId);
+    console.log('🔥 Admin: Firebase listeners useEffect triggered');
+    console.log('   → Current user:', currentUser.email);
+    console.log('   → Active match ID:', seasonId);    console.log('🔥 Admin: Setting up real-time listeners for seasonId:', seasonId);
 
     // Initialize realtime connection
     socketService.connect();
@@ -563,17 +590,23 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     const playersMatchId = activeMatch.id;
     unsubscribers.push(socketService.onPlayersUpdate(playersMatchId, (updatedPlayers) => {
       console.log('🔥 Admin: Players updated:', updatedPlayers.length);
+      console.log('🔥 Admin: All player statuses:', updatedPlayers.map(p => `${p.name}: ${p.status}`).join(', '));
       setPlayers(updatedPlayers);
 
-      // Check for live player being auctioned
-      const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE');
+      // Check for live player being auctioned (check both LIVE and PENDING)
+      const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE' || p.status === 'PENDING');
       if (livePlayer) {
-        console.log('🔥 Admin: Live player:', livePlayer.name, 'Bid:', livePlayer.currentBid);
+        console.log('🔥 Admin: Found live player:', livePlayer.name, 'status:', livePlayer.status);
+        console.log('   → Current bid:', livePlayer.currentBid);
+        console.log('   → Base price:', livePlayer.basePrice);
+        console.log('   → Leading team ID:', livePlayer.leadingTeamId);
+        console.log('   → Image URL:', livePlayer.imageUrl);
         setCurrentBiddingPlayer(livePlayer);
         setCurrentBid(livePlayer.currentBid || livePlayer.basePrice || 0);
         setLeadingTeamName(livePlayer.leadingTeamName || '');
         setLiveAuctionStatus('LIVE');
       } else {
+        console.log('⚠️ Admin: No LIVE/PENDING player found. All statuses:', updatedPlayers.map(p => `${p.name}:${p.status}`).join(', '));
         // If there are sold/unsold players, auction is in progress
         const hasProcessedPlayers = updatedPlayers.some((p: any) => p.status === 'SOLD' || p.status === 'UNSOLD');
         if (hasProcessedPlayers && liveAuctionStatus !== 'ENDED') {
@@ -588,7 +621,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     const teamsMatchId = activeMatch.id;
     unsubscribers.push(socketService.onTeamsUpdate(teamsMatchId, (updatedTeams) => {
       console.log('🔥 Admin: Teams updated:', updatedTeams.length);
-      setTeams(updatedTeams);
+      console.log('🔥 Admin: Teams with logos:', updatedTeams.map((t: any) => ({ name: t.name, logo: t.logo })));
+      // Calculate squadSize from playerIds array length (same as initial fetch)
+      const teamsWithSquadSize = updatedTeams.map((team: Team) => ({
+        ...team,
+        squadSize: team.playerIds?.length || 0
+      }));
+      setTeams(teamsWithSquadSize);
     }));
 
     // Listen to bid events
@@ -624,17 +663,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         setCountdown(data.remainingSeconds);
       }
       
-      if (data.currentPlayerId && data.biddingActive) {
-        // Fetch player data if we have the ID
-        const player = players.find(p => p.id === data.currentPlayerId);
-        if (player) {
-          console.log('✅ Found player in local array:', player.name);
-          setCurrentBiddingPlayer(player);
-          setCurrentBid(data.currentBid || player.currentBid || player.basePrice || 0);
-          setLeadingTeamName(data.leadingTeamName || '');
-        }
-      } else if (!data.biddingActive) {
-        console.log('ℹ️ Bidding not active, clearing current player');
+      // Only clear the player if bidding is explicitly inactive
+      // onPlayersUpdate listener handles setting the player based on status
+      if (data.biddingActive === false) {
+        console.log('ℹ️ Bidding explicitly inactive, clearing current player');
         setCurrentBiddingPlayer(null);
         setCurrentBid(0);
         setLeadingTeamName('');
@@ -683,7 +715,6 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       setCountdown(data.duration || 120);
       setLiveAuctionStatus('LIVE');
       addSystemLog('info', `Bidding started for ${data.player.name}`);
-      addLiveNotification(`🎯 Bidding started for ${data.player.name}`, 'start');
     }));
 
     unsubscribers.push(socketService.onPlayerSold(async (data: any) => {
@@ -693,7 +724,15 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       setCurrentBid(0);
       setLeadingTeamName('');
       addSystemLog('success', `Player ${data.playerName} sold to ${data.teamName} for ₹${(data.finalAmount / 100000).toFixed(1)}L`);
-      addLiveNotification(`✅ ${data.playerName} SOLD to ${data.teamName} for ₹${(data.finalAmount / 100000).toFixed(1)}L`, 'sold');
+      
+      // Clear bidding history cache for this player so Reports section refreshes
+      setBiddingHistory(prev => {
+        const updated = { ...prev };
+        delete updated[data.playerId];
+        return updated;
+      });
+      
+      // Firebase listeners (onPlayersUpdate and onTeamsUpdate) will automatically update all data
     }));
 
     unsubscribers.push(socketService.onPlayerUnsold(async (data: any) => {
@@ -702,7 +741,15 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       setCurrentBid(0);
       setLeadingTeamName('');
       addSystemLog('warning', `${data.playerName} went unsold`);
-      addLiveNotification(`❌ ${data.playerName} went UNSOLD`, 'unsold');
+      
+      // Clear bidding history cache for this player so Reports section refreshes
+      setBiddingHistory(prev => {
+        const updated = { ...prev };
+        delete updated[data.playerId];
+        return updated;
+      });
+      
+      // Firebase listeners (onPlayersUpdate and onTeamsUpdate) will automatically update all data
     }));
 
     // Timer updates
@@ -777,43 +824,82 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
   // Fetch bidding history for a player
   const fetchBiddingHistory = async (playerId: string) => {
-    if (!currentMatch?.id) return;
+    if (!resolvedMatch?.id) {
+      console.warn('⚠️ resolvedMatch not available, cannot fetch bidding history');
+      return;
+    }
     
     try {
       setReportLoading(true);
-      // Use matchId query parameter instead of auction_id in URL
-      const response = await fetch(`${API_BASE}/bids?playerId=${playerId}`);
+      // Fetch bids for this player in the current match
+      console.log('📋 Fetching bidding history for player:', playerId, 'in match:', resolvedMatch.id);
+      const url = `${API_BASE}/bids?seasonId=${resolvedMatch.id}&playerId=${playerId}`;
+      console.log('🔗 Request URL:', url);
       
-      if (response.ok) {
-        const result = await response.json();
-        console.log('Bidding history response:', result);
-        // Handle both result.data and result.bids or direct array
-        const bids = result.data || result.bids || result || [];
-        console.log('Extracted bids:', bids);
-        
-        // Sort by timestamp descending (most recent first)
-        const sortedBids = Array.isArray(bids) ? bids.sort((a, b) => {
-          const timeA = new Date(a.timestamp).getTime();
-          const timeB = new Date(b.timestamp).getTime();
-          return timeA - timeB; // Ascending order (oldest first, chronological)
-        }) : [];
-        
-        // Enrich bids with team names
-        const enrichedBids = sortedBids.map(bid => {
-          const team = teams.find(t => t.id === bid.teamId);
-          return {
-            ...bid,
-            teamName: team?.name || 'Unknown Team'
-          };
-        });
-        
-        setBiddingHistory(prev => ({
-          ...prev,
-          [playerId]: enrichedBids
-        }));
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        console.error('❌ Failed to fetch bids, HTTP status:', response.status, response.statusText);
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
+
+      const result = await response.json();
+      console.log('📥 Raw API Response:', result);
+      console.log('📥 Response type:', typeof result);
+      console.log('📥 Response keys:', Object.keys(result));
+      
+      // Extract bids from response 
+      // Backend returns: { success: true, data: [...] } or just [...]
+      let bids = [];
+      if (result.data && Array.isArray(result.data)) {
+        bids = result.data;
+        console.log('✓ Extracted bids from result.data:', bids.length, 'bids');
+      } else if (result.bids && Array.isArray(result.bids)) {
+        bids = result.bids;
+        console.log('✓ Extracted bids from result.bids:', bids.length, 'bids');
+      } else if (Array.isArray(result)) {
+        bids = result;
+        console.log('✓ Result is directly an array:', bids.length, 'bids');
+      } else {
+        console.warn('⚠️ Unexpected response structure:', result);
+        bids = [];
+      }
+      
+      console.log('📊 Total bids extracted:', bids.length);
+      
+      if (bids.length > 0) {
+        console.log('📋 First bid sample:', JSON.stringify(bids[0], null, 2));
+      }
+      
+      // Sort by timestamp ascending (oldest first, chronological order)
+      const sortedBids = bids.sort((a: any, b: any) => {
+        const timeA = new Date(a.timestamp || 0).getTime();
+        const timeB = new Date(b.timestamp || 0).getTime();
+        return timeA - timeB;
+      });
+      
+      console.log('✓ Sorted bids chronologically');
+      
+      // Enrich bids with team names from local teams array
+      const enrichedBids = sortedBids.map((bid: any) => {
+        const team = teams.find(t => t.id === bid.teamId);
+        return {
+          ...bid,
+          teamName: bid.teamName || team?.name || 'Unknown Team'
+        };
+      });
+      
+      console.log('✅ Successfully enriched', enrichedBids.length, 'bids with team data');
+      
+      setBiddingHistory(prev => ({
+        ...prev,
+        [playerId]: enrichedBids
+      }));
     } catch (error) {
-      console.error('Failed to fetch bidding history:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('❌ Failed to fetch bidding history:', errorMsg);
+      console.error('❌ Stack trace:', error instanceof Error ? error.stack : 'N/A');
+      
       setBiddingHistory(prev => ({
         ...prev,
         [playerId]: []
@@ -1059,65 +1145,139 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
             {/* 1️⃣ OVERVIEW SECTION */}
             {activeSection === 'overview' && (
               <div className="space-y-8 animate-in fade-in duration-500">
-                {/* KPI Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  {/* Teams KPI */}
-                  <div className="group relative">
-                    <div className="absolute inset-0 bg-gradient-to-br from-blue-400 to-blue-600 rounded-3xl blur-xl opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                    <div className="relative bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="p-3 bg-blue-100 rounded-2xl">
-                          <Trophy size={28} className="text-blue-600" />
+                {/* Main Layout - Live Auction Left, KPI Cards Right (Vertical) */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* LEFT: Live Auction Card */}
+                  <div 
+                    className="lg:col-span-2 cursor-pointer group relative"
+                    onClick={() => {
+                      setActiveSection('liveMonitor');
+                    }}
+                  >
+                    <div className="absolute inset-0 bg-gradient-to-br from-red-400 to-orange-600 rounded-3xl blur-xl opacity-40 group-hover:opacity-60 transition-opacity"></div>
+                    <div className="relative bg-white/90 backdrop-blur-xl border-2 border-red-200 rounded-3xl p-6 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all h-full">
+                      <div className="flex flex-col items-center justify-center h-full min-h-[320px]">
+                        {console.log('📺 Admin: Overview rendering - currentBiddingPlayer:', currentBiddingPlayer?.name || 'NULL')}
+                        {/* Player Photo */}
+                        {currentBiddingPlayer?.imageUrl ? (
+                          <img 
+                            src={currentBiddingPlayer.imageUrl} 
+                            alt={currentBiddingPlayer.name}
+                            className="w-40 h-40 rounded-full object-cover mb-6 border-4 border-red-200 shadow-2xl"
+                            onError={(e) => console.error('❌ Player image failed to load:', currentBiddingPlayer.imageUrl)}
+                          />
+                        ) : (
+                          <div className="w-40 h-40 rounded-full bg-gradient-to-br from-red-200 to-orange-200 flex items-center justify-center mb-6 border-4 border-red-200 shadow-2xl">
+                            <Users size={70} className="text-red-600" />
+                          </div>
+                        )}
+                        
+                        <p className="text-2xl font-black text-slate-800 mb-6 text-center">{currentBiddingPlayer?.name || 'Ready'}</p>
+                        
+                        <div className="w-full max-w-sm space-y-3 mb-6">
+                          <div className="bg-gradient-to-r from-green-50 to-green-100 border border-green-200 rounded-2xl p-3 text-center">
+                            <p className="text-xs font-bold text-green-600 uppercase tracking-wider mb-1">Current Bid</p>
+                            <p className="text-xl font-black text-slate-800">₹{(currentBid / 100000).toFixed(1)}L</p>
+                          </div>
+                          
+                          <div className="bg-gradient-to-r from-purple-50 to-purple-100 border border-purple-200 rounded-2xl p-3 text-center">
+                            <p className="text-xs font-bold text-purple-600 uppercase tracking-wider mb-2">Leading Team</p>
+                            <div className="flex items-center justify-center gap-3">
+                              {(() => {
+                                const leadingTeam = teams.find(t => t.name === leadingTeamName);
+                                console.log('🔍 Looking for team:', leadingTeamName, 'Found:', leadingTeam?.name, 'Logo:', leadingTeam?.logo);
+                                return leadingTeam?.logo ? (
+                                  <img 
+                                    src={leadingTeam.logo} 
+                                    alt={leadingTeamName}
+                                    className="w-8 h-8 rounded-full object-cover"
+                                    onError={(e) => console.error('❌ Team logo failed to load:', leadingTeam.logo)}
+                                  />
+                                ) : (
+                                  <div className="w-8 h-8 rounded-full bg-purple-200 flex items-center justify-center">
+                                    <Trophy size={16} className="text-purple-600" />
+                                  </div>
+                                );
+                              })()}
+                              <p className="text-lg font-black text-slate-800">{leadingTeamName || 'None'}</p>
+                            </div>
+                          </div>
                         </div>
-                        <span className="text-xs font-bold text-blue-600">{approvedTeams} Approved</span>
+                        
+                        <div className={`px-6 py-2 rounded-full font-bold text-sm flex items-center gap-2 ${
+                          liveAuctionStatus === 'LIVE' 
+                            ? 'bg-red-500 text-white' 
+                            : liveAuctionStatus === 'PAUSED'
+                            ? 'bg-yellow-500 text-white'
+                            : 'bg-blue-500 text-white'
+                        }`}>
+                          <span className={`w-2 h-2 rounded-full ${liveAuctionStatus === 'LIVE' ? 'animate-pulse' : ''}`}></span>
+                          {liveAuctionStatus}
+                        </div>
                       </div>
-                      <h3 className="text-4xl font-black text-slate-800 mb-2">{totalTeams}</h3>
-                      <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Teams</p>
                     </div>
                   </div>
 
-                  {/* Players KPI */}
-                  <div className="group relative">
-                    <div className="absolute inset-0 bg-gradient-to-br from-purple-400 to-purple-600 rounded-3xl blur-xl opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                    <div className="relative bg-white/90 backdrop-blur-xl border-2 border-purple-200 rounded-3xl p-6 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="p-3 bg-purple-100 rounded-2xl">
-                          <Users size={28} className="text-purple-600" />
+                  {/* RIGHT: KPI Cards Stacked Vertically */}
+                  <div className="lg:col-span-1 space-y-3">
+                    {/* Teams KPI */}
+                    <div className="group relative">
+                      <div className="absolute inset-0 bg-gradient-to-br from-blue-400 to-blue-600 rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
+                      <div className="relative bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-2xl p-3 shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="p-2 bg-blue-100 rounded-lg">
+                            <Trophy size={18} className="text-blue-600" />
+                          </div>
+                          <span className="text-xs font-bold text-blue-600">{approvedTeams} Approved</span>
                         </div>
-                        <span className="text-xs font-bold text-purple-600">{soldPlayers} Sold</span>
+                        <h3 className="text-2xl font-black text-slate-800 mb-0.5">{totalTeams}</h3>
+                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Teams</p>
                       </div>
-                      <h3 className="text-4xl font-black text-slate-800 mb-2">{totalPlayers}</h3>
-                      <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Players</p>
                     </div>
-                  </div>
 
-                  {/* Budget KPI */}
-                  <div className="group relative">
-                    <div className="absolute inset-0 bg-gradient-to-br from-green-400 to-green-600 rounded-3xl blur-xl opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                    <div className="relative bg-white/90 backdrop-blur-xl border-2 border-green-200 rounded-3xl p-6 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="p-3 bg-green-100 rounded-2xl">
-                          <DollarSign size={28} className="text-green-600" />
+                    {/* Players KPI */}
+                    <div className="group relative">
+                      <div className="absolute inset-0 bg-gradient-to-br from-purple-400 to-purple-600 rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
+                      <div className="relative bg-white/90 backdrop-blur-xl border-2 border-purple-200 rounded-2xl p-3 shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="p-2 bg-purple-100 rounded-lg">
+                            <Users size={18} className="text-purple-600" />
+                          </div>
+                          <span className="text-xs font-bold text-purple-600">{soldPlayers} Sold</span>
                         </div>
-                        <span className="text-xs font-bold text-green-600">Pool</span>
+                        <h3 className="text-2xl font-black text-slate-800 mb-0.5">{totalPlayers}</h3>
+                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Players</p>
                       </div>
-                      <h3 className="text-4xl font-black text-slate-800 mb-2">₹{(totalBudget / 1000000).toFixed(0)}M</h3>
-                      <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Total Budget</p>
                     </div>
-                  </div>
 
-                  {/* Auctioneers KPI */}
-                  <div className="group relative">
-                    <div className="absolute inset-0 bg-gradient-to-br from-orange-400 to-red-600 rounded-3xl blur-xl opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                    <div className="relative bg-white/90 backdrop-blur-xl border-2 border-orange-200 rounded-3xl p-6 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="p-3 bg-orange-100 rounded-2xl">
-                          <Gavel size={28} className="text-orange-600" />
+                    {/* Budget KPI */}
+                    <div className="group relative">
+                      <div className="absolute inset-0 bg-gradient-to-br from-green-400 to-green-600 rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
+                      <div className="relative bg-white/90 backdrop-blur-xl border-2 border-green-200 rounded-2xl p-3 shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="p-2 bg-green-100 rounded-lg">
+                            <DollarSign size={18} className="text-green-600" />
+                          </div>
+                          <span className="text-xs font-bold text-green-600">Pool</span>
                         </div>
-                        <span className="text-xs font-bold text-orange-600">{approvedAuctioneers} Active</span>
+                        <h3 className="text-2xl font-black text-slate-800 mb-0.5">₹{(totalBudget / 1000000).toFixed(0)}M</h3>
+                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Total Budget</p>
                       </div>
-                      <h3 className="text-4xl font-black text-slate-800 mb-2">{auctioneers.length}</h3>
-                      <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Auctioneers</p>
+                    </div>
+
+                    {/* Auctioneers KPI */}
+                    <div className="group relative">
+                      <div className="absolute inset-0 bg-gradient-to-br from-orange-400 to-red-600 rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
+                      <div className="relative bg-white/90 backdrop-blur-xl border-2 border-orange-200 rounded-2xl p-3 shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="p-2 bg-orange-100 rounded-lg">
+                            <Gavel size={18} className="text-orange-600" />
+                          </div>
+                          <span className="text-xs font-bold text-orange-600">{approvedAuctioneers} Active</span>
+                        </div>
+                        <h3 className="text-2xl font-black text-slate-800 mb-0.5">{auctioneers.length}</h3>
+                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Auctioneers</p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1587,7 +1747,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                               </div>
                               <div className="text-right min-w-[100px]">
                                 <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Team</p>
-                                <p className="text-sm font-black text-purple-600 truncate">{teams.find(t => t.id === player.soldTo)?.name || player.teamName || player.teamId || 'N/A'}</p>
+                                <p className="text-sm font-black text-purple-600 truncate">
+                                  {teams.find(t => t.id === (player.soldTo || player.leadingTeamId))?.name || 
+                                   player.teamName || 
+                                   player.leadingTeamName ||
+                                   'N/A'}
+                                </p>
                               </div>
                             </>
                           )}
@@ -1687,17 +1852,23 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                             <p className="text-sm font-black text-slate-800">₹{((team.budget || team.initialBudget || 0) / 1000000).toFixed(1)}M</p>
                           </div>
                           <div className="text-right">
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Spent</p>
+                            <p className="text-sm font-black text-orange-600">₹{(getTeamStats(team).spent / 1000000).toFixed(1)}M</p>
+                          </div>
+                          <div className="text-right">
                             <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Remaining</p>
-                            <p className="text-sm font-black text-green-600">₹{((team.remainingBudget !== undefined ? team.remainingBudget : (team.budget || team.initialBudget || 0)) / 1000000).toFixed(1)}M</p>
+                            <p className={`text-sm font-black ${getTeamStats(team).remaining >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              ₹{(getTeamStats(team).remaining / 1000000).toFixed(1)}M
+                            </p>
                           </div>
                           <div className="text-right">
                             <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Squad</p>
-                            <p className="text-sm font-black text-purple-600">{team.squadSize || 0} Players</p>
+                            <p className="text-sm font-black text-purple-600">{getTeamStats(team).squadSize} Players</p>
                           </div>
                           <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
-                            (team.squadSize || 0) > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                            getTeamStats(team).squadSize > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
                           }`}>
-                            {(team.squadSize || 0) > 0 ? 'ACTIVE' : 'INACTIVE'}
+                            {getTeamStats(team).squadSize > 0 ? 'ACTIVE' : 'INACTIVE'}
                           </span>
                           {currentMatch?.status === 'SETUP' && (
                             <div className="flex items-center gap-1">
@@ -1986,6 +2157,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                       </div>
                       
                       <div className="p-4 flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-cyan-50 flex-1">
+                        {console.log('📺 Admin: LiveMonitor rendering - currentBiddingPlayer:', currentBiddingPlayer?.name || 'NULL')}
                         {currentBiddingPlayer ? (
                           <div className="text-center w-full max-w-md">
                             {/* Player Image */}
@@ -2283,12 +2455,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                           teams
                             .filter(team => {
                               const teamMatch = team.name?.toLowerCase().includes(reportSearchQuery.toLowerCase());
-                              const teamPlayers = players.filter(p => p.soldTo === team.id);
+                              const teamPlayers = players.filter(p => p.status === 'SOLD' && (p.soldTo === team.id || p.leadingTeamId === team.id));
                               const playerMatch = teamPlayers.some(p => p.name?.toLowerCase().includes(reportSearchQuery.toLowerCase()));
                               return reportSearchQuery === '' || teamMatch || playerMatch;
                             })
                             .flatMap(team => {
-                            const teamPlayers = players.filter(p => p.soldTo === team.id).filter(p => 
+                            const teamPlayers = players.filter(p => p.status === 'SOLD' && (p.soldTo === team.id || p.leadingTeamId === team.id)).filter(p => 
                               reportSearchQuery === '' || p.name?.toLowerCase().includes(reportSearchQuery.toLowerCase())
                             );
                             if (teamPlayers.length === 0) {
@@ -2315,7 +2487,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                               );
                             }
                             return teamPlayers.map((player, idx) => {
-                              const difference = (player.soldAmount || 0) - player.basePrice;
+                              const soldPrice = player.soldAmount || player.soldPrice || player.finalPrice || player.currentBid || 0;
+                              const difference = soldPrice - (player.basePrice || 0);
                               const isExpanded = expandedPlayers.has(player.id);
                               
                               return (
@@ -2343,7 +2516,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                                       <span className="font-semibold text-slate-700">₹{((player.basePrice || 0) / 100000).toFixed(1)}L</span>
                                     </td>
                                     <td className="px-6 py-4">
-                                      <span className="font-bold text-green-600">₹{((player.soldAmount || 0) / 100000).toFixed(1)}L</span>
+                                      <span className="font-bold text-green-600">₹{((player.soldAmount || player.soldPrice || player.finalPrice || player.currentBid || 0) / 100000).toFixed(1)}L</span>
                                     </td>
                                     <td className="px-6 py-4">
                                       <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold ${
@@ -2385,11 +2558,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                                               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
                                               <p className="text-xs text-slate-500 mt-2">Loading history...</p>
                                             </div>
-                                          ) : biddingHistory[player.id]?.length === 0 ? (
-                                            <p className="text-sm text-slate-500">No bidding history found</p>
+                                          ) : !biddingHistory[player.id] || biddingHistory[player.id].length === 0 ? (
+                                            <div className="text-center py-6">
+                                              <p className="text-sm text-slate-500 font-bold">No bidding history found</p>
+                                              <p className="text-xs text-slate-400 mt-1">This player may not have received any bids</p>
+                                            </div>
                                           ) : (
                                             <div className="space-y-2">
-                                              {biddingHistory[player.id]?.map((bid, bidIdx) => (
+                                              {biddingHistory[player.id].map((bid, bidIdx) => (
                                                 <div key={bidIdx} className="flex items-center justify-between p-3 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border-l-4 border-blue-500">
                                                   <div className="flex-1">
                                                     <p className="font-bold text-slate-800 text-sm">Bid #{bidIdx + 1}</p>
@@ -2397,7 +2573,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                                                   </div>
                                                   <div className="text-right">
                                                     <p className="font-black text-lg text-purple-600">₹{(bid.amount / 100000).toFixed(1)}L</p>
-                                                    <p className="text-xs text-slate-500">{new Date(bid.timestamp).toLocaleTimeString()}</p>
+                                                    <p className="text-xs text-slate-500">{bid.timestamp ? new Date(bid.timestamp).toLocaleTimeString() : 'N/A'}</p>
                                                   </div>
                                                 </div>
                                               ))}

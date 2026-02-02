@@ -352,27 +352,8 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         }, ...prev]);
       }
       
-      // Refetch team and player data to get live updates
-      try {
-        // Refetch team data
-        const teamResponse = await fetch(`http://localhost:5000/api/teams?matchId=${currentMatch.id}`);
-        if (teamResponse.ok) {
-          const teamDataResponse = await teamResponse.json();
-          const team = teamDataResponse.data?.find((t: Team) => t.email === currentUser.email);
-          if (team) {
-            setTeamData(team);
-          }
-        }
-        
-        // Refetch all players
-        const playersResponse = await fetch(`${API_BASE}/players?matchId=${currentMatch.id}`);
-        if (playersResponse.ok) {
-          const playersData = await playersResponse.json();
-          setAllPlayers(playersData.data || []);
-        }
-      } catch (error) {
-        console.error('Failed to refetch data:', error);
-      }
+      // Firebase listeners will automatically update team and player data
+      // No need to refetch
       
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);
@@ -389,16 +370,8 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         type: 'system'
       }, ...prev]);
       
-      // Refetch player data to get live updates
-      try {
-        const playersResponse = await fetch(`${API_BASE}/players?matchId=${currentMatch.id}`);
-        if (playersResponse.ok) {
-          const playersData = await playersResponse.json();
-          setAllPlayers(playersData.data || []);
-        }
-      } catch (error) {
-        console.error('Failed to refetch player data:', error);
-      }
+      // Firebase listeners will automatically update player data
+      // No need to refetch
       
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);

@@ -1224,20 +1224,27 @@ def get_bids():
     """Get all bids with optional filtering"""
     try:
         auction_id = request.args.get('auctionId')
+        season_id = request.args.get('seasonId')  # Support seasonId for frontend compatibility
         team_id = request.args.get('teamId')
         player_id = request.args.get('playerId')
         
         query = db.collection('bids')
         
+        # Support both auctionId and seasonId for backward compatibility
         if auction_id:
             query = query.where('auctionId', '==', auction_id)
+        if season_id:
+            query = query.where('seasonId', '==', season_id)
         if team_id:
             query = query.where('teamId', '==', team_id)
         if player_id:
             query = query.where('playerId', '==', player_id)
         
-        docs = query.stream()
+        docs = list(query.stream())
         bids = serialize_firestore_docs(docs)
+        
+        # Sort by timestamp descending (most recent first)
+        bids.sort(key=lambda b: b.get('timestamp', ''), reverse=True)
         
         return success_response(bids, f"Retrieved {len(bids)} bids")
     except Exception as e:

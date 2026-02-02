@@ -54,10 +54,72 @@ export const LiveBiddingPanel: React.FC<LiveBiddingPanelProps> = ({
   const [bidding, setBidding] = useState(false);
   const [celebrationVisible, setCelebrationVisible] = useState(false);
 
+  const restoreAuctionState = async (retryCount = 0) => {
+    try {
+      const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+      console.log('🔄 Restoring auction state (attempt', retryCount + 1, ')...');
+      const response = await fetch(`${API_BASE}/matches/${seasonId}`);
+      if (!response.ok) {
+        console.warn('Failed to restore auction state, status:', response.status);
+        // Retry up to 3 times on failure
+        if (retryCount < 3) {
+          console.log('⏳ Retrying state restoration...');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return restoreAuctionState(retryCount + 1);
+        }
+        return;
+      }
+      
+      const data = await response.json();
+      if (!data.success || !data.data) {
+        console.warn('No auction state found');
+        return;
+      }
+      
+      const matchData = data.data;
+      console.log('✓ Restored auction state:', matchData);
+      
+      // Update auction state
+      setAuctionState(prev => {
+        const hasChanges =
+          (matchData.currentPlayerId && matchData.currentPlayerId !== prev.currentPlayerId) ||
+          (matchData.currentBid && matchData.currentBid !== prev.currentBid);
+        
+        if (!hasChanges) {
+          console.log('✓ Auction state unchanged');
+          return prev;
+        }
+        
+        return {
+          ...prev,
+          status: matchData.status || prev.status,
+          currentPlayerId: matchData.currentPlayerId || prev.currentPlayerId,
+          currentPlayerName: matchData.currentPlayerName || prev.currentPlayerName,
+          currentBid: matchData.currentBid || prev.currentBid,
+          leadingTeamId: matchData.leadingTeamId || prev.leadingTeamId,
+          leadingTeamName: matchData.leadingTeamName || prev.leadingTeamName,
+          biddingActive: matchData.biddingActive !== undefined ? matchData.biddingActive : prev.biddingActive,
+          remainingSeconds: matchData.remainingSeconds || prev.remainingSeconds
+        };
+      });
+    } catch (error) {
+      console.error('Failed to restore auction state:', error);
+      // Retry on network errors
+      if (retryCount < 3) {
+        console.log('⏳ Retrying due to network error...');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        return restoreAuctionState(retryCount + 1);
+      }
+    }
+  };
+
   // Connect to Firebase Realtime for live updates
   useEffect(() => {
     // Join season room (Firebase handles it automatically)
     socketService.joinSeason(seasonId, userId, userRole);
+
+    // Restore auction state from server on mount/reconnect
+    restoreAuctionState();
 
     const unsubscribers: Array<() => void> = [];
 

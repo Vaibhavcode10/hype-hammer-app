@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, Megaphone, AlertCircle, Clock, Trophy, Users, DollarSign, Activity, Bell, User, LogOut, Menu, Zap, CheckCircle, XCircle, Loader, Radio, TrendingUp, Plus, Minus, RotateCcw, ChevronRight, Shield, Timer, Hash, Calendar } from 'lucide-react';
+import { Play, Pause, SkipForward, Megaphone, AlertCircle, Clock, Trophy, Users, DollarSign, Activity, Bell, User, LogOut, Menu, Zap, CheckCircle, XCircle, Loader, Radio, TrendingUp, Plus, Minus, RotateCcw, ChevronRight, Shield, Timer, Hash, Calendar, Maximize2, Minimize2 } from 'lucide-react';
 import { AuctionStatus, MatchData, UserRole, Player, Team } from '../../types';
 import { socketService } from '../../services/socketService';
 import { LiveAuctionPage } from './LiveAuctionPage';
@@ -76,6 +76,22 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   
   // Confirmation modals
   const [showConfirm, setShowConfirm] = useState<{ action: string; message: string } | null>(null);
+  
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  
+  // Resizable columns state
+  const [columnWidths, setColumnWidths] = useState({
+    left: 33,    // 33%
+    middle: 44,  // 44%
+    right: 23    // 23%
+  });
+  const resizeRef = useRef<{ column: 'left' | 'middle' | 'right'; startX: number; startLeft: number; startMiddle: number; startRight: number } | null>(null);
+  const columnWidthsRef = useRef(columnWidths);
+
+  useEffect(() => {
+    columnWidthsRef.current = columnWidths;
+  }, [columnWidths]);
   
   // Quick announcements
   const [lastAnnouncement, setLastAnnouncement] = useState<string | null>(null);
@@ -202,6 +218,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         return;
       }
 
+      const playerId = data.player.id;
       setAuctionState(prev => ({
         ...prev,
         currentPlayerId: data.player.id,
@@ -211,7 +228,9 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         leadingTeamName: data.player?.leadingTeamName ?? null,
         biddingActive: true
       }));
-      setBidHistory([]);
+      
+      // Fetch bid history for this player (restores state on page refresh)
+      fetchBidHistoryForPlayer(playerId);
     }));
 
     // Listen to new bids
@@ -375,6 +394,100 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     }
   };
 
+  const fetchBidHistoryForPlayer = async (playerId: string) => {
+    if (!currentMatch) return;
+    try {
+      console.log('Fetching bid history for player:', playerId);
+      const response = await fetch(`${API_BASE}/bids?seasonId=${currentMatch.id}&playerId=${playerId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const bids = data.data || [];
+        // Sort bids by timestamp descending (most recent first)
+        const sortedBids = bids.sort((a: any, b: any) => {
+          const timeA = new Date(a.timestamp || 0).getTime();
+          const timeB = new Date(b.timestamp || 0).getTime();
+          return timeB - timeA;
+        });
+        console.log('✓ Fetched bid history:', sortedBids.length, 'bids');
+        setBidHistory(sortedBids);
+      } else {
+        console.error('Failed to fetch bid history, status:', response.status);
+        setBidHistory([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch bid history:', error);
+      setBidHistory([]);
+    }
+  };
+
+  const restoreAuctionStateFromFirestore = async (retryCount = 0) => {
+    if (!currentMatch) return;
+    try {
+      console.log('🔄 Restoring auction state from Firestore (attempt', retryCount + 1, ')...');
+      // Fetch the live auction state document
+      const response = await fetch(`${API_BASE}/matches/${currentMatch.id}`);
+      if (!response.ok) {
+        console.warn('Failed to fetch auction state, status:', response.status);
+        // Retry up to 3 times on failure
+        if (retryCount < 3) {
+          console.log('⏳ Retrying state restoration...');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return restoreAuctionStateFromFirestore(retryCount + 1);
+        }
+        return;
+      }
+      
+      const data = await response.json();
+      if (!data.success || !data.data) {
+        console.warn('No auction state found in response');
+        return;
+      }
+      
+      const auctionState = data.data;
+      console.log('✓ Restored auction state from Firestore:', auctionState);
+      
+      // IMPORTANT: Only update state if values are actually different to avoid re-renders
+      setAuctionState(prev => {
+        const hasChanges =
+          (auctionState.status && auctionState.status !== prev.status) ||
+          (auctionState.currentPlayerId && auctionState.currentPlayerId !== prev.currentPlayerId) ||
+          (auctionState.currentBid && auctionState.currentBid !== prev.currentBid) ||
+          (auctionState.leadingTeamId && auctionState.leadingTeamId !== prev.leadingTeamId);
+        
+        if (!hasChanges) {
+          console.log('✓ Auction state unchanged, skipping update');
+          return prev;
+        }
+        
+        return {
+          ...prev,
+          status: auctionState.status || prev.status,
+          currentPlayerId: auctionState.currentPlayerId || prev.currentPlayerId,
+          currentPlayerName: auctionState.currentPlayerName || prev.currentPlayerName,
+          currentBid: auctionState.currentBid || prev.currentBid,
+          leadingTeamId: auctionState.leadingTeamId || prev.leadingTeamId,
+          leadingTeamName: auctionState.leadingTeamName || prev.leadingTeamName,
+          biddingActive: auctionState.biddingActive !== undefined ? auctionState.biddingActive : prev.biddingActive,
+          remainingSeconds: auctionState.remainingSeconds || prev.remainingSeconds
+        };
+      });
+      
+      // If there's a current player, fetch bid history
+      if (auctionState.currentPlayerId) {
+        console.log('📋 Current player found:', auctionState.currentPlayerName, 'Current bid:', auctionState.currentBid);
+        await fetchBidHistoryForPlayer(auctionState.currentPlayerId);
+      }
+    } catch (error) {
+      console.error('Failed to restore auction state:', error);
+      // Retry on network errors
+      if (retryCount < 3) {
+        console.log('⏳ Retrying due to network error...');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        return restoreAuctionStateFromFirestore(retryCount + 1);
+      }
+    }
+  };
+
   useEffect(() => {
     if (approvalStatus === 'approved' && currentMatch?.id) {
       setLoading(true);
@@ -392,40 +505,63 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     // Join season to set up context
     socketService.joinSeason(currentMatch.id, auctioneerId || currentUser.email, currentUser.role);
 
+    // Immediately restore auction state from Firestore on mount/reconnect
+    // This handles logout/login and tab switching scenarios
+    // Do NOT wait for this to complete - set it up as a fire-and-forget with proper error handling
+    const restorePromise = restoreAuctionStateFromFirestore();
+    
+    // Log when restoration completes (for debugging)
+    if (restorePromise instanceof Promise) {
+      restorePromise.then(() => {
+        console.log('✅ State restoration completed');
+      }).catch(err => {
+        console.error('State restoration error (non-blocking):', err);
+      });
+    }
+
     // Listen to players collection for live updates
     const playersUnsubscribe = socketService.onPlayersUpdate(currentMatch.id, (updatedPlayers) => {
       console.log('🔥 Players live update:', updatedPlayers.length);
       setPlayers(updatedPlayers);
 
-      // Check if there's a live player and update auction state
+      // Safety check: if we have a LIVE player but auctionState shows base price only, 
+      // it means state restoration may have failed. Try again.
       const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE');
-      if (livePlayer) {
-        console.log('🔥 Live player found:', livePlayer.name, 'Current bid:', livePlayer.currentBid);
-        setAuctionState(prev => ({
-          ...prev,
-          currentPlayerId: livePlayer.id,
-          currentPlayerName: livePlayer.name,
-          currentBid: livePlayer.currentBid || livePlayer.basePrice || 0,
-          leadingTeamId: livePlayer.leadingTeamId || null,
-          leadingTeamName: livePlayer.leadingTeamName || null,
-          biddingActive: true,
-          status: 'LIVE'
-        }));
-      } else {
-        // If no live player, check if auction has started
-        const hasProcessedPlayers = updatedPlayers.some((p: any) => p.status === 'SOLD' || p.status === 'UNSOLD');
-        if (hasProcessedPlayers) {
-          // Keep auction active but clear current player
-          setAuctionState(prev => ({
-            ...prev,
-            currentPlayerId: null,
-            currentPlayerName: '',
-            biddingActive: false
-            // Preserve status and last bid values
-          }));
-          console.log('🔥 No live player, but auction in progress');
+      setAuctionState(prev => {
+        if (livePlayer && prev.currentBid === 0 && livePlayer.currentBid > 0) {
+          console.log('⚠️ Detected stale auction state! Current bid is 0 but player has bid. Re-restoring...');
+          // Trigger restoration in background
+          restoreAuctionStateFromFirestore();
         }
-      }
+        
+        if (livePlayer) {
+          console.log('🔥 Live player found:', livePlayer.name, 'Current bid:', livePlayer.currentBid);
+          return {
+            ...prev,
+            currentPlayerId: livePlayer.id,
+            currentPlayerName: livePlayer.name,
+            currentBid: livePlayer.currentBid || livePlayer.basePrice || 0,
+            leadingTeamId: livePlayer.leadingTeamId || null,
+            leadingTeamName: livePlayer.leadingTeamName || null,
+            biddingActive: true,
+            status: 'LIVE'
+          };
+        } else {
+          // If no live player, check if auction has started
+          const hasProcessedPlayers = updatedPlayers.some((p: any) => p.status === 'SOLD' || p.status === 'UNSOLD');
+          if (hasProcessedPlayers) {
+            // Keep auction active but clear current player
+            return {
+              ...prev,
+              currentPlayerId: null,
+              currentPlayerName: '',
+              biddingActive: false
+              // Preserve status and last bid values
+            };
+          }
+          return prev;
+        }
+      });
     });
 
     // Listen to teams collection for budget updates
@@ -519,7 +655,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     }
   };
 
-  const startPlayerBidding = async (playerId: string, basePrice: number) => {
+  const startPlayerBidding = async (playerId: string, basePrice: number, retryCount = 0) => {
     if (!currentMatch) return;
     try {
       const response = await fetch(`${API_BASE}/player/start`, {
@@ -533,14 +669,40 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       });
       const data = await response.json();
       if (!data.success) {
-        alert(data.error || 'Failed to start bidding');
+        const errorMsg = data.error || 'Failed to start bidding';
+        console.error('❌ Start bidding failed:', errorMsg);
+        
+        // Retry logic: attempt up to 2 retries for transient errors
+        if (retryCount < 2 && !errorMsg.includes('not found')) {
+          console.log(`🔄 Retrying start bidding (attempt ${retryCount + 1}/2)...`);
+          addSystemLog('warning', `Retrying to start bidding for ${playerId}...`);
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
+          return startPlayerBidding(playerId, basePrice, retryCount + 1);
+        }
+        
+        addSystemLog('error', `Failed to start bidding: ${errorMsg}`);
+        alert(`❌ Failed to start bidding: ${errorMsg}`);
+      } else {
+        addSystemLog('info', `✓ Started bidding for player ${playerId}`);
       }
     } catch (error) {
-      alert('Failed to start player bidding');
+      console.error('❌ Start bidding error:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Network error';
+      
+      // Retry on network errors
+      if (retryCount < 2) {
+        console.log(`🔄 Retrying due to network error (attempt ${retryCount + 1}/2)...`);
+        addSystemLog('warning', `Network error, retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return startPlayerBidding(playerId, basePrice, retryCount + 1);
+      }
+      
+      addSystemLog('error', `Failed to start player bidding: ${errorMsg}`);
+      alert(`❌ Failed to start player bidding: ${errorMsg}`);
     }
   };
 
-  const closePlayerBidding = async (sold: boolean) => {
+  const closePlayerBidding = async (sold: boolean, retryCount = 0) => {
     if (!currentMatch) return;
     try {
       const response = await fetch(`${API_BASE}/player/close`, {
@@ -553,10 +715,38 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       });
       const data = await response.json();
       if (data.success) {
-        alert(sold ? '🔨 Player SOLD!' : 'Player UNSOLD');
+        const statusMsg = sold ? '🔨 Player SOLD!' : '↩️ Player UNSOLD';
+        addSystemLog('info', statusMsg);
+        alert(statusMsg);
+      } else {
+        const errorMsg = data.error || 'Failed to close bidding';
+        console.error('❌ Close bidding failed:', errorMsg);
+        
+        // Retry on transient errors
+        if (retryCount < 2 && !errorMsg.includes('not found')) {
+          console.log(`🔄 Retrying close bidding (attempt ${retryCount + 1}/2)...`);
+          addSystemLog('warning', 'Retrying to close bidding...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return closePlayerBidding(sold, retryCount + 1);
+        }
+        
+        addSystemLog('error', `Failed to close bidding: ${errorMsg}`);
+        alert(`❌ Failed to close bidding: ${errorMsg}`);
       }
     } catch (error) {
-      alert('Failed to close bidding');
+      console.error('❌ Close bidding error:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Network error';
+      
+      // Retry on network errors
+      if (retryCount < 2) {
+        console.log(`🔄 Retrying due to network error (attempt ${retryCount + 1}/2)...`);
+        addSystemLog('warning', 'Network error, retrying to close bidding...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return closePlayerBidding(sold, retryCount + 1);
+      }
+      
+      addSystemLog('error', `Failed to close bidding: ${errorMsg}`);
+      alert(`❌ Failed to close bidding: ${errorMsg}`);
     }
   };
 
@@ -580,6 +770,64 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     if (!amount || amount === 0) return '₹0.0L';
     return `₹${(amount / 100000).toFixed(1)}L`;
   };
+
+  // Resize handlers for column widths
+  const handleResizeStart = (column: 'left' | 'middle', e: React.MouseEvent) => {
+    e.preventDefault();
+    resizeRef.current = {
+      column,
+      startX: e.clientX,
+      startLeft: columnWidthsRef.current.left,
+      startMiddle: columnWidthsRef.current.middle,
+      startRight: columnWidthsRef.current.right
+    };
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizeRef.current) return;
+
+      const diff = e.clientX - resizeRef.current.startX;
+      const mainWidth = window.innerWidth - 100; // Account for padding
+      const percentDiff = (diff / mainWidth) * 100;
+
+      if (resizeRef.current.column === 'left') {
+        // Adjust left and middle, keep right constant
+        const newLeft = Math.max(20, Math.min(60, resizeRef.current.startLeft + percentDiff));
+        const newMiddle = resizeRef.current.startMiddle - (newLeft - resizeRef.current.startLeft);
+        const constrainedMiddle = Math.max(20, Math.min(60, newMiddle));
+        
+        setColumnWidths({
+          left: newLeft,
+          middle: constrainedMiddle,
+          right: resizeRef.current.startRight
+        });
+      } else if (resizeRef.current.column === 'middle') {
+        // Adjust middle and right, keep left constant
+        const newMiddle = Math.max(20, Math.min(60, resizeRef.current.startMiddle + percentDiff));
+        const newRight = resizeRef.current.startRight - (newMiddle - resizeRef.current.startMiddle);
+        const constrainedRight = Math.max(20, Math.min(60, newRight));
+        
+        setColumnWidths({
+          left: resizeRef.current.startLeft,
+          middle: newMiddle,
+          right: constrainedRight
+        });
+      }
+    };
+
+    const handleMouseUp = () => {
+      resizeRef.current = null;
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
 
   // Bid on behalf of teams - Auctioneer places all bids
   const handlePlaceBidForTeam = async (incrementAmount: number, teamIdOverride?: string) => {
@@ -838,7 +1086,16 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
 
   // APPROVED - SHOW FULL DASHBOARD
   return (
-    <div className="h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50 flex flex-col overflow-hidden relative">
+    <div className={`h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50 flex flex-col overflow-hidden relative ${isFullscreen ? '!h-screen !bg-black/95' : ''}`}>
+      <style>{`
+        .hide-scrollbar {
+          -ms-overflow-style: none; /* IE and Edge */
+          scrollbar-width: none; /* Firefox */
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+          display: none; /* Chrome, Safari, Opera */
+        }
+      `}</style>
       {/* Blur overlay if not approved */}
       {showBlurOverlay && (
         <>
@@ -893,7 +1150,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       )}
 
       {/* Header */}
-      <div className="h-24 bg-white/95 backdrop-blur-xl border-b-2 border-red-200 shadow-lg flex items-center px-6">
+      <div className={`h-24 bg-white/95 backdrop-blur-xl border-b-2 border-red-200 shadow-lg flex items-center px-6 ${isFullscreen ? 'hidden' : ''}`}>
         <div className="w-full flex items-center justify-between">
           {/* Left: Logo + Season */}
           <div className="flex items-center gap-4">
@@ -959,12 +1216,12 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 px-6 pt-3 pb-3 overflow-hidden">
-        <div className="grid grid-cols-12 gap-4 h-full">
+      <main className={`flex-1 px-6 pt-3 pb-3 overflow-hidden ${isFullscreen ? '!px-0 !pt-0 !pb-0' : ''}`}>
+        <div className="flex h-full gap-0">
           {/* LEFT PANEL: Live Auction Stage */}
-          <div className="col-span-4 flex flex-col gap-4 overflow-hidden h-full">
+          <div style={{ flex: `0 0 ${columnWidths.left}%` }} className="flex flex-col gap-4 overflow-hidden h-full pr-2">
             {/* Live Auction Stage */}
-            <div className="bg-white rounded-2xl border-2 border-purple-200 shadow-xl p-6 flex flex-col items-center justify-center flex-1 overflow-y-auto">
+            <div className="bg-white rounded-2xl border-2 border-purple-200 shadow-xl p-6 flex flex-col items-center justify-center flex-1 overflow-y-auto hide-scrollbar">
               {auctionState.biddingActive && auctionState.currentPlayerId ? (
                 <>
                   {/* Current Player - Compact */}
@@ -1041,8 +1298,19 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
             </div>
           </div>
 
-          {/* MIDDLE: Team Monitor & Bidding Controls (Increased Width) */}
-          <div className="col-span-6 flex flex-col overflow-hidden h-full">
+          {/* RESIZABLE DIVIDER 1 */}
+          <div
+            onMouseDown={(e) => handleResizeStart('left', e)}
+            className="w-2 bg-gray-300 hover:bg-blue-500 cursor-col-resize transition-colors duration-200 flex-shrink-0 group hover:shadow-lg"
+            title="Drag to resize"
+          >
+            <div className="w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="w-1 h-8 bg-white rounded-full"></div>
+            </div>
+          </div>
+
+          {/* MIDDLE: Team Monitor & Bidding Controls */}
+          <div style={{ flex: `0 0 ${columnWidths.middle}%` }} className="flex flex-col overflow-hidden h-full px-2">
             {/* Combined Team Monitor & Bidding Panel */}
             <div className="bg-white rounded-2xl border-2 border-purple-200 shadow-xl flex-1 flex flex-col overflow-hidden">
               <div className="bg-gradient-to-r from-purple-100 to-pink-100 px-5 py-4 border-b-2 border-purple-200">
@@ -1174,8 +1442,19 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
             </div>
           </div>
 
-          {/* RIGHT PANEL: Player Queue (Decreased Width) */}
-          <div className="col-span-2 flex flex-col gap-4 overflow-hidden h-full">
+          {/* RESIZABLE DIVIDER 2 */}
+          <div
+            onMouseDown={(e) => handleResizeStart('middle', e)}
+            className="w-2 bg-gray-300 hover:bg-blue-500 cursor-col-resize transition-colors duration-200 flex-shrink-0 group hover:shadow-lg"
+            title="Drag to resize"
+          >
+            <div className="w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="w-1 h-8 bg-white rounded-full"></div>
+            </div>
+          </div>
+
+          {/* RIGHT PANEL: Player Queue */}
+          <div style={{ flex: `0 0 ${columnWidths.right}%` }} className="flex flex-col gap-4 overflow-hidden h-full pl-2">
             {/* Player Queue */}
             <div className="bg-white rounded-2xl border-2 border-blue-200 shadow-xl flex-1 flex flex-col overflow-hidden">
               <div className="bg-gradient-to-r from-blue-100 to-cyan-100 px-5 py-4 border-b-2 border-blue-200">
@@ -1184,7 +1463,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                   Player Queue ({players.filter(p => p.status !== 'SOLD' && p.id !== auctionState.currentPlayerId).length} remaining)
                 </h3>
               </div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              <div className="flex-1 overflow-y-auto p-4 space-y-2 hide-scrollbar">
                 {loading ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader size={24} className="animate-spin text-blue-500" />
@@ -1317,6 +1596,23 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
           </div>
         </div>
       )}
+
+      {/* Fullscreen Button - Bottom Left */}
+      <button
+        onClick={() => setIsFullscreen(!isFullscreen)}
+        className={`fixed bottom-4 left-4 z-30 p-3 rounded-full shadow-lg transition-all hover:scale-110 ${
+          isFullscreen 
+            ? 'bg-white text-slate-800 hover:bg-gray-100' 
+            : 'bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:from-blue-600 hover:to-purple-700'
+        }`}
+        title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+      >
+        {isFullscreen ? (
+          <Minimize2 size={20} />
+        ) : (
+          <Maximize2 size={20} />
+        )}
+      </button>
 
       {/* Players Page Overlay */}
       {showPlayersPage && (

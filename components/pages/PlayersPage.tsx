@@ -1,28 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Users, TrendingUp, TrendingDown, User, Download, ArrowLeft, Search, Filter, X as FilterX } from 'lucide-react';
-import { MatchData } from '../../types';
+import type { MatchData, Player as AppPlayer, Team as AppTeam } from '../../types';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
-interface Player {
-  id: string;
-  name: string;
-  email?: string;
-  roleId?: string;
-  basePrice: number;
-  status: 'SOLD' | 'UNSOLD' | 'AVAILABLE';
-  soldTo?: string;
-  soldAmount?: number;
-  soldAt?: string;
-  imageUrl?: string;
-  matchId?: string;
-}
+type Player = AppPlayer & {
+  // Some API responses use alternate field names; keep these optional for compatibility.
+  soldTimestamp?: unknown;
+  updatedAt?: unknown;
+  createdAt?: unknown;
+};
 
-interface Team {
-  id: string;
-  name: string;
-  logo?: string;
-}
+type Team = AppTeam;
 
 interface PlayersPageProps {
   onClose: () => void;
@@ -69,23 +58,7 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch 
     }
   };
 
-  const soldPlayers = players.filter(p => p.status === 'SOLD');
-  const unsoldPlayers = players.filter(p => p.status === 'UNSOLD');
-
-  // Apply search and team filters
-  const filteredSoldPlayers = soldPlayers.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                         p.email?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesTeam = !selectedTeam || p.soldTo === selectedTeam;
-    return matchesSearch && matchesTeam;
-  });
-
-  const filteredUnsoldPlayers = unsoldPlayers.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                         p.email?.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesSearch;
-  });
-
+  // Helper functions (defined BEFORE they're used in filters)
   const getTeamName = (teamId?: string) => {
     if (!teamId) return 'N/A';
     const team = teams.find(t => t.id === teamId);
@@ -98,20 +71,105 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch 
     return team?.logo;
   };
 
-  const formatCurrency = (amount: number) => {
-    return `₹${(amount / 100000).toFixed(1)}L`;
+  const getSoldAmount = (player: Player) => {
+    // Backend may return soldAmount, currentBid, soldPrice, or finalPrice
+    return (
+      (player.soldAmount as number | undefined) ??
+      (player.currentBid as number | undefined) ??
+      (player.soldPrice as number | undefined) ??
+      ((player as any).finalPrice as number | undefined) ??
+      0
+    );
   };
 
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-IN', { 
-      day: '2-digit', 
-      month: 'short', 
-      hour: '2-digit', 
-      minute: '2-digit' 
+  const getSoldTeamId = (player: Player) => {
+    // Backend may return soldTo or teamId
+    const result = (player.soldTo as string | undefined) ?? (player.teamId as string | undefined);
+    // If no soldTo/teamId but marked as SOLD and has currentBid, this is incomplete data
+    if (!result && player.status === 'SOLD' && player.currentBid) {
+      console.warn(`⚠️ Player ${player.name} is SOLD but missing soldTo/teamId. Has currentBid: ${player.currentBid}`);
+    }
+    return result;
+  };
+
+  const getSoldTeamDisplayName = (player: Player) => {
+    const explicitName = (player.teamName as string | undefined) ?? ((player as any).leadingTeamName as string | undefined);
+    if (explicitName) return explicitName;
+    return getTeamName(getSoldTeamId(player));
+  };
+
+  const getSoldAt = (player: Player) => {
+    return (player.soldAt as unknown) ?? (player.soldTimestamp as unknown) ?? (player.updatedAt as unknown) ?? (player.createdAt as unknown);
+  };
+
+  const formatCurrency = (amount: number) => `₹${((amount || 0) / 100000).toFixed(1)}L`;
+
+  const formatDate = (value?: unknown) => {
+    if (!value) return 'N/A';
+
+    // Firestore Timestamp (web SDK) support
+    if (typeof value === 'object' && value !== null) {
+      const asAny = value as any;
+      if (typeof asAny.toDate === 'function') {
+        const date = asAny.toDate();
+        return date.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      }
+      const seconds = asAny.seconds ?? asAny._seconds;
+      if (typeof seconds === 'number') {
+        const date = new Date(seconds * 1000);
+        return date.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      }
+    }
+
+    if (typeof value === 'number') {
+      // ms vs seconds heuristic
+      const ms = value > 1_000_000_000_000 ? value : value * 1000;
+      const date = new Date(ms);
+      return date.toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+
+    const date = new Date(String(value));
+    if (Number.isNaN(date.getTime())) return 'N/A';
+    return date.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit'
     });
   };
+
+  const soldPlayers = useMemo(() => players.filter(p => p.status === 'SOLD'), [players]);
+  const unsoldPlayers = useMemo(() => players.filter(p => p.status === 'UNSOLD'), [players]);
+
+  // Apply search and team filters
+  const filteredSoldPlayers = soldPlayers.filter(p => {
+    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                         p.email?.toLowerCase().includes(searchTerm.toLowerCase());
+    const teamId = getSoldTeamId(p);
+    const matchesTeam = !selectedTeam || teamId === selectedTeam;
+    return matchesSearch && matchesTeam;
+  });
+
+  const filteredUnsoldPlayers = unsoldPlayers.filter(p => {
+    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                         p.email?.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesSearch;
+  });
 
   const exportToCSV = () => {
     const dataToExport = activeTab === 'sold' ? filteredSoldPlayers : filteredUnsoldPlayers;
@@ -126,13 +184,14 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch 
     if (activeTab === 'sold') {
       csvContent = 'Player Name,Email,Role,Base Price,Sold Price,Profit/Loss,Sold To Team,Sold At\n';
       dataToExport.forEach(player => {
-        const difference = (player.soldAmount || 0) - player.basePrice;
+        const soldAmount = getSoldAmount(player);
+        const difference = soldAmount - player.basePrice;
         const basePrice = (player.basePrice / 100000).toFixed(1);
-        const soldPrice = ((player.soldAmount || 0) / 100000).toFixed(1);
-        const profitLoss = (Math.abs(difference) / 100000).toFixed(1);
-        const teamName = getTeamName(player.soldTo);
+        const soldPrice = (soldAmount / 100000).toFixed(1);
+        const profitLoss = (difference / 100000).toFixed(1);
+        const teamName = getSoldTeamDisplayName(player);
         
-        csvContent += `"${player.name}","${player.email || ''}","${player.roleId || ''}","₹${basePrice}L","₹${soldPrice}L","₹${profitLoss}L","${teamName}","${formatDate(player.soldAt)}"`;
+        csvContent += `"${player.name}","${player.email || ''}","${player.roleId || ''}","₹${basePrice}L","₹${soldPrice}L","₹${profitLoss}L","${teamName}","${formatDate(getSoldAt(player))}"`;
         csvContent += '\n';
       });
     } else {
@@ -337,7 +396,8 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch 
                     </tr>
                   ) : (
                     filteredSoldPlayers.map((player, index) => {
-                      const difference = (player.soldAmount || 0) - player.basePrice;
+                      const soldAmount = getSoldAmount(player);
+                      const difference = soldAmount - player.basePrice;
                       const isProfit = difference > 0;
                       
                       return (
@@ -366,26 +426,26 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch 
                             <span className="font-semibold text-slate-700">{formatCurrency(player.basePrice)}</span>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="font-bold text-purple-600">{formatCurrency(player.soldAmount || 0)}</span>
+                            <span className="font-bold text-purple-600">{formatCurrency(soldAmount)}</span>
                           </td>
                           <td className="px-4 py-3">
                             <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold ${
                               isProfit ? 'bg-green-100 text-green-700' : difference === 0 ? 'bg-gray-100 text-gray-700' : 'bg-red-100 text-red-700'
                             }`}>
                               {isProfit ? <TrendingUp size={12} /> : difference < 0 ? <TrendingDown size={12} /> : null}
-                              {formatCurrency(Math.abs(difference))}
+                              {difference === 0 ? formatCurrency(0) : `${difference > 0 ? '+' : '-'}${formatCurrency(Math.abs(difference))}`}
                             </span>
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              {getTeamLogo(player.soldTo) && (
-                                <img src={getTeamLogo(player.soldTo)!} alt="Team" className="w-6 h-6 rounded object-contain" />
+                              {getTeamLogo(getSoldTeamId(player)) && (
+                                <img src={getTeamLogo(getSoldTeamId(player))!} alt="Team" className="w-6 h-6 rounded object-contain" />
                               )}
-                              <span className="font-semibold text-sm text-slate-800">{getTeamName(player.soldTo)}</span>
+                              <span className="font-semibold text-sm text-slate-800">{getSoldTeamDisplayName(player)}</span>
                             </div>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="text-xs text-gray-600">{formatDate(player.soldAt)}</span>
+                            <span className="text-xs text-gray-600">{formatDate(getSoldAt(player))}</span>
                           </td>
                         </tr>
                       );
