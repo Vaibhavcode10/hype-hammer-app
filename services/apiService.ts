@@ -205,6 +205,45 @@ export async function registerGuest(guestData: any) {
 }
 
 // ========================
+// AUCTIONEER MANAGEMENT
+// ========================
+
+export async function getAuctioneers(filters?: { matchId?: string; email?: string }) {
+  let query = '';
+  if (filters) {
+    const params = new URLSearchParams();
+    if (filters.matchId) params.append('matchId', filters.matchId);
+    if (filters.email) params.append('email', filters.email);
+    query = params.toString() ? `?${params.toString()}` : '';
+  }
+  return apiCall(`/auctioneers${query}`);
+}
+
+export async function getAuctioneerById(auctioneerId: string) {
+  return apiCall(`/auctioneers/${auctioneerId}`);
+}
+
+export async function createAuctioneer(auctioneerData: any) {
+  return apiCall('/auctioneers', 'POST', auctioneerData);
+}
+
+export async function updateAuctioneer(auctioneerId: string, auctioneerData: any) {
+  return apiCall(`/auctioneers/${auctioneerId}`, 'PUT', auctioneerData);
+}
+
+export async function deleteAuctioneer(auctioneerId: string) {
+  return apiCall(`/auctioneers/${auctioneerId}`, 'DELETE');
+}
+
+export async function approveAuctioneer(auctioneerId: string) {
+  return apiCall(`/auctioneer/approve`, 'POST', { id: auctioneerId });
+}
+
+export async function rejectAuctioneer(auctioneerId: string, reason?: string) {
+  return apiCall(`/auctioneer/reject`, 'POST', { id: auctioneerId, reason });
+}
+
+// ========================
 // PLAYER MANAGEMENT
 // ========================
 
@@ -362,8 +401,8 @@ export async function updateMatch(matchId: string, matchData: any) {
   return apiCall(`/matches/${matchId}`, 'PUT', matchData);
 }
 
-export async function updateMatchStatus(matchId: string) {
-  return apiCall(`/matches/${matchId}/status`, 'PUT');
+export async function updateMatchStatus(matchId: string, status: 'SETUP' | 'ONGOING' | 'COMPLETED', updatedBy?: string) {
+  return apiCall(`/match-status/${matchId}`, 'PUT', { status, updatedBy });
 }
 
 export async function deleteMatch(matchId: string) {

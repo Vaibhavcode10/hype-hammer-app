@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { LiveAuctionRoom } from '../ui/LiveAuctionRoom';
+import { CloseAuctionModal } from '../modals/CloseAuctionModal';
 import { useAuctioneerAudio } from '../../services/useAuctioneerAudio';
 import { useAudioListener } from '../../services/useAudioListener';
 import socketService from '../../services/socketService';
@@ -44,6 +45,10 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+
+  // Refs for real-time updates
+  const playersRef = useRef<Player[]>([])
 
   // Calculate permissions based on role
   const permissions: LiveRoomPermissions = {
@@ -78,6 +83,25 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     // Load initial data
     loadAuctionData();
   }, [seasonId, userId, userRole]);
+
+  // Keep playersRef in sync with players state
+  useEffect(() => {
+    playersRef.current = players;
+  }, [players]);
+
+  // Sync currentPlayerName with currentPlayerId - if ID becomes null/invalid, clear name immediately
+  useEffect(() => {
+    if (auctionState && !auctionState.currentPlayerId && auctionState.currentPlayerName) {
+      console.log('🔄 Clearing stale currentPlayerName because currentPlayerId is null');
+      setAuctionState(prev => prev ? {
+        ...prev,
+        currentPlayerName: null,
+        currentBid: 0,
+        leadingTeamId: null,
+        leadingTeamName: null
+      } : null);
+    }
+  }, [auctionState?.currentPlayerId]);
 
   /**
    * Load auction data
@@ -123,7 +147,9 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     // Auction state updates
     unsubscribers.push(socketService.onAuctionStateUpdate((state) => {
       console.log('📡 Auction state updated:', state);
-      setAuctionState(prev => ({ ...prev, ...state }));
+      // Accept all auction state updates from backend without validation
+      // The backend is authoritative for currentPlayerId; frontend should not reject it
+      setAuctionState(prev => prev ? { ...prev, ...state } : null);
     }));
 
     // Auction started
@@ -241,25 +267,35 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     unsubscribers.push(socketService.onPlayerUnsold((data) => {
       console.log('❌ Player unsold:', data.playerName);
       
-      // Update player status
+      // Update player status and increment unsold count
       setPlayers(prev => prev.map(p => 
         p.id === data.playerId 
-          ? { ...p, status: 'UNSOLD' }
+          ? { ...p, status: 'UNSOLD', unsoldCount: (p.unsoldCount || 0) + 1 }
           : p
       ));
 
-      // Reset bidding state
+      // Update auction state to track unsold players
+      setAuctionState(prev => {
+        if (!prev) return null;
+        const unsoldList = prev.unsoldPlayers || [];
+        if (!unsoldList.includes(data.playerId)) {
+          unsoldList.push(data.playerId);
+        }
+        return {
+          ...prev,
+          currentPlayerId: null,
+          currentPlayerName: null,
+          currentBid: 0,
+          leadingTeamId: null,
+          leadingTeamName: null,
+          biddingActive: false,
+          bidHistory: [],
+          unsoldPlayers: unsoldList
+        };
+      });
+
+      // Reset current player
       setCurrentPlayer(null);
-      setAuctionState(prev => prev ? {
-        ...prev,
-        currentPlayerId: null,
-        currentPlayerName: null,
-        currentBid: 0,
-        leadingTeamId: null,
-        leadingTeamName: null,
-        biddingActive: false,
-        bidHistory: []
-      } : null);
     }));
 
     return () => {
@@ -298,10 +334,15 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     }
   }, [seasonId]);
 
-  // Admin: End auction
+  // Admin/Auctioneer: End auction with confirmation modal
   const handleEndAuction = useCallback(async () => {
+    setShowCloseModal(true);
+  }, []);
+
+  const confirmEndAuction = useCallback(async () => {
     try {
       await apiService.post('/api/auction/end', { seasonId });
+      setShowCloseModal(false);
     } catch (error) {
       console.error('Failed to end auction:', error);
     }
@@ -359,8 +400,33 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     }
   }, [auctioneerAudio]);
 
+  // Auctioneer: Mark player as unsold
+  const handleMarkUnsold = useCallback(async () => {
+    try {
+      await apiService.post('/api/auction/player/unsold', {
+        seasonId
+      });
+    } catch (error) {
+      console.error('Failed to mark player as unsold:', error);
+    }
+  }, [seasonId]);
+
+  // Calculate stats for modal
+  const totalPlayers = players.length;
+  const completedPlayers = auctionState?.completedPlayers?.length || 0;
+  const unsoldCount = auctionState?.unsoldPlayers?.length || 0;
+  const remainingPlayers = Math.max(0, totalPlayers - completedPlayers);
+
   return (
     <div className="w-full h-screen">
+      <CloseAuctionModal
+        isOpen={showCloseModal}
+        onClose={() => setShowCloseModal(false)}
+        onConfirm={confirmEndAuction}
+        remainingPlayers={remainingPlayers}
+        unsoldPlayers={unsoldCount}
+      />
+      
       <LiveAuctionRoom
         auctionState={auctionState}
         currentPlayer={currentPlayer}
@@ -377,8 +443,9 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
         onStartAuction={permissions.canOverride ? handleStartAuction : undefined}
         onPauseAuction={permissions.canOverride ? handlePauseAuction : undefined}
         onResumeAuction={permissions.canOverride ? handleResumeAuction : undefined}
-        onEndAuction={permissions.canOverride ? handleEndAuction : undefined}
+        onEndAuction={(permissions.canOverride || permissions.canControl) ? handleEndAuction : undefined}
         onToggleMic={permissions.canSpeak ? handleToggleMic : undefined}
+        onMarkUnsold={permissions.canControl ? handleMarkUnsold : undefined}
         onClose={onClose}
       />
     </div>

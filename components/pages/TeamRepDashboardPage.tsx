@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { DollarSign, Users, Trophy, TrendingDown, Bell, User, LogOut, Shield, Activity, Clock, Radio, AlertCircle, CheckCircle, XCircle, ChevronDown, X, Calendar, Mail, Award, TrendingUp, Filter, Search, Eye } from 'lucide-react';
 import { AuctionStatus, MatchData, UserRole, Team, Player } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
 import { PlayersPage } from './PlayersPage';
 import { socketService } from '../../services/socketService';
+import { firebaseRealtimeService } from '../../services/firebaseRealtimeService';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
@@ -48,6 +49,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
   const [notifications, setNotifications] = useState<Array<{ id: string; message: string; time: string; read: boolean }>>([]);
 
   const userId = currentUser.email;
+  const allPlayersRef = useRef<Player[]>([]);
   const seasonId = currentMatch?.id || '';
   const teamId = teamData?.id || '';
 
@@ -105,32 +107,74 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
     }
   }, [currentMatch?.id, currentUser?.email]);
 
+  // Fetch initial auction state on mount for page refresh
+  useEffect(() => {
+    if (!currentMatch?.id) return;
+
+    const fetchInitialState = async () => {
+      try {
+        // Fetch current auction state
+        const auctionStateDoc = await firebaseRealtimeService.getAuctionState(currentMatch.id);
+        if (auctionStateDoc && auctionStateDoc.status === 'LIVE' && auctionStateDoc.biddingActive) {
+          setAuctionStatus('live');
+          console.log('✅ Initial auction state: LIVE, currentPlayerId:', auctionStateDoc.currentPlayerId);
+
+          // If there's a current player, fetch from API (same approach as listener)
+          if (auctionStateDoc.currentPlayerId) {
+            const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+            const res = await fetch(`${API_BASE}/players/${auctionStateDoc.currentPlayerId}`);
+            const playerData = await res.json();
+            if (playerData.success && playerData.data) {
+              console.log('✅ Found initial player:', playerData.data.name);
+              setCurrentBiddingPlayer(playerData.data);
+              setCurrentBid(playerData.data.currentBid || playerData.data.basePrice || auctionStateDoc.currentBid || 0);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching initial auction state:', err);
+      }
+    };
+
+    fetchInitialState();
+  }, [currentMatch?.id]);
+
   // Real-time Firestore listeners for live updates
   useEffect(() => {
     if (!currentMatch?.id || !teamData?.id) return;
 
     console.log('🔥 Setting up real-time listeners for Team Rep dashboard');
 
-    // Join season
-    socketService.joinSeason(currentMatch.id, teamData.id, UserRole.TEAM_REP);
+    // Join season (AWAIT THIS to ensure currentSeasonId is set)
+    socketService.joinSeason(currentMatch.id, teamData.id, UserRole.TEAM_REP)
+      .then(() => {
+        console.log('✅ Successfully joined season:', currentMatch.id);
+      })
+      .catch(err => {
+        console.error('❌ Error joining season:', err);
+      });
 
     // Listen to players for live bidding updates
     const playersUnsubscribe = socketService.onPlayersUpdate(currentMatch.id, (updatedPlayers) => {
       console.log('🔥 Players live update:', updatedPlayers.length);
       setAllPlayers(updatedPlayers);
+      allPlayersRef.current = updatedPlayers;
 
-      // Check if there's a live player being auctioned
-      const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE');
-      if (livePlayer) {
-        console.log('🔥 Live player:', livePlayer.name, 'Bid:', livePlayer.currentBid);
-        setCurrentBiddingPlayer(livePlayer);
-        setCurrentBid(livePlayer.currentBid || livePlayer.basePrice || 0);
-        setLeadingTeam(livePlayer.leadingTeamId || null);
-        setIsLeadingBid(livePlayer.leadingTeamId === teamData.id);
-        setAuctionStatus('live');
-      } else {
-        setCurrentBiddingPlayer(null);
-      }
+      // IMPORTANT: Do NOT use this listener to clear currentBiddingPlayer
+      // The onAuctionStateUpdate listener is the authoritative source for that
+      // This listener only updates the player data if we're already showing someone
+      
+      // If we currently have a bidding player, find their updated data and refresh it
+      setCurrentBiddingPlayer(prev => {
+        if (prev) {
+          const updatedPlayer = updatedPlayers.find((p: any) => p.id === prev.id);
+          if (updatedPlayer) {
+            console.log('   → Updating currentBiddingPlayer data for:', updatedPlayer.name);
+            return updatedPlayer;
+          }
+        }
+        return prev;
+      });
     });
 
     // Listen to teams for budget updates
@@ -158,7 +202,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       
       // Add to activity feed
       setActivityFeed(prev => [{
-        id: bidData.bidId || Date.now().toString(),
+        id: `${Date.now()}-${Math.random()}`,
         message: `${bidData.teamName} bid ₹${(bidData.amount / 100000).toFixed(1)}L for ${bidData.playerName}`,
         time: new Date().toLocaleTimeString(),
         type: bidData.teamId === teamData.id ? 'success' : 'info'
@@ -186,21 +230,42 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
     // Listen for auction state updates (includes current player if auction is in progress)
     unsubscribers.push(socketService.onAuctionStateUpdate((data: any) => {
       console.log('AUCTION_STATE_UPDATE received:', data);
-      // If there's a current player being auctioned, set it
-      if (data.currentPlayerId && data.biddingActive) {
-        const player = allPlayers.find(p => p.id === data.currentPlayerId);
-        if (player) {
-          setCurrentBiddingPlayer(player);
-          setCurrentBid(data.currentBid || player.basePrice || 0);
-          setLeadingTeam(data.leadingTeamId || null);
-          setIsLeadingBid(data.leadingTeamId === teamId);
-          setAuctionStatus('live');
+      
+      // Update auction status based on state
+      if (data.status === 'LIVE' && data.biddingActive) {
+        setAuctionStatus('live');
+        
+        // If there's a current player being auctioned, fetch it from the API
+        // This is the same approach used in PlayerDashboardPage and works reliably
+        if (data.currentPlayerId) {
+          console.log('   → Fetching player from API:', data.currentPlayerId);
+          const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+          fetch(`${API_BASE}/players/${data.currentPlayerId}`)
+            .then(res => res.json())
+            .then(playerData => {
+              if (playerData.success && playerData.data) {
+                console.log('✅ Fetched player from API:', playerData.data.name);
+                setCurrentBiddingPlayer(playerData.data);
+                setCurrentBid(playerData.data.currentBid || playerData.data.basePrice || data.currentBid || 0);
+                setLeadingTeam(playerData.data.leadingTeamId ? { id: playerData.data.leadingTeamId, name: playerData.data.leadingTeamName } as Team : null);
+                setIsLeadingBid(playerData.data.leadingTeamId === teamId);
+              } else {
+                console.log('⚠️ API fetch failed or no player data:', playerData);
+              }
+            })
+            .catch(err => {
+              console.error('🚨 Error fetching player from API:', err);
+            });
         }
-      } else if (!data.biddingActive) {
+      } else if (data.status === 'PAUSED' || !data.biddingActive) {
+        console.log('   → Setting currentBiddingPlayer to NULL (auction paused)');
+        setAuctionStatus('paused');
         setCurrentBiddingPlayer(null);
         setCurrentBid(0);
-        setLeadingTeam(null);
-        setIsLeadingBid(false);
+      } else if (data.status === 'COMPLETED') {
+        console.log('   → Setting currentBiddingPlayer to NULL (auction completed)');
+        setAuctionStatus('completed');
+        setCurrentBiddingPlayer(null);
       }
     }));
 
@@ -249,6 +314,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       
       // If this player is currently being auctioned, update the bidding player
       if (currentBiddingPlayer && data.playerId === currentBiddingPlayer.id) {
+        console.log('   → Updating currentBiddingPlayer to:', data.player.name);
         setCurrentBiddingPlayer(data.player);
       }
     }));
@@ -257,6 +323,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
     unsubscribers.push(socketService.onPlayerBiddingStarted((data: { player: Player; basePrice: number } | null) => {
       console.log('PLAYER_BIDDING_STARTED received:', data);
       if (!data || !(data as any)?.player) {
+        console.log('   → Setting currentBiddingPlayer to NULL (no data)');
         setCurrentBiddingPlayer(null);
         setCurrentBid(0);
         setLeadingTeam(null);
@@ -264,6 +331,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
         setAuctionStatus('upcoming');
         return;
       }
+      console.log('   → Setting currentBiddingPlayer to:', data.player.name);
       setCurrentBiddingPlayer(data.player);
       setCurrentBid((data.player as any)?.currentBid || data.basePrice || data.player.basePrice || 0);
       setLeadingTeam(null);
@@ -404,6 +472,11 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       unsubscribers.forEach(unsubscribe => unsubscribe());
     };
   }, [seasonId, userId, teamId, allPlayers]);
+
+  // Debug effect: log when currentBiddingPlayer changes
+  useEffect(() => {
+    console.log('📊 currentBiddingPlayer state updated:', currentBiddingPlayer?.name || 'NULL', currentBiddingPlayer?.id || 'NO-ID');
+  }, [currentBiddingPlayer]);
 
   // VIEW-ONLY MODE: Team dashboard is now watch-only
   // All bidding is controlled by auctioneer on their dashboard
@@ -742,9 +815,9 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                       <p className="text-gray-400 text-sm">No activity yet</p>
                     </div>
                   ) : (
-                    activityFeed.map(item => (
+                    activityFeed.map((item, index) => (
                       <div
-                        key={item.id}
+                        key={`${item.id}-${index}`}
                         className={`flex items-start gap-3 p-3 rounded-xl border-2 ${
                           item.type === 'my-bid'
                             ? 'bg-green-50 border-green-300'
@@ -904,15 +977,34 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                     </select>
                   </div>
                   <div className="max-h-96 overflow-y-auto p-4 space-y-2">
-                    {getFilteredPlayers().slice(0, 20).map(player => (
-                      <div
-                        key={player.id}
-                        className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
-                          player.id === currentBiddingPlayer?.id
-                            ? 'bg-red-50 border-red-300'
-                            : 'bg-white border-gray-200 hover:bg-blue-50'
-                        }`}
-                      >
+                    {(() => {
+                      const filtered = getFilteredPlayers().slice(0, 20);
+                      const sorted = [...filtered].sort((a, b) => {
+                        if (a.status === 'UNSOLD' && b.status !== 'UNSOLD') return 1;
+                        if (a.status !== 'UNSOLD' && b.status === 'UNSOLD') return -1;
+                        return 0;
+                      });
+                      const unsoldCount = sorted.filter(p => p.status === 'UNSOLD').length;
+                      const regularCount = sorted.length - unsoldCount;
+                      
+                      return sorted.map((player, index) => (
+                        <React.Fragment key={player.id}>
+                          {index === regularCount && unsoldCount > 0 && (
+                            <div className="py-2 px-2 flex items-center gap-2 text-xs font-bold text-orange-600">
+                              <div className="flex-1 h-px bg-orange-200"></div>
+                              <span>Re-Auction</span>
+                              <div className="flex-1 h-px bg-orange-200"></div>
+                            </div>
+                          )}
+                        <div
+                          className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
+                            player.id === currentBiddingPlayer?.id
+                              ? 'bg-red-50 border-red-300'
+                              : player.status === 'UNSOLD' 
+                                ? 'bg-orange-50 border-orange-300 hover:bg-orange-100'
+                                : 'bg-white border-gray-200 hover:bg-blue-50'
+                          }`}
+                        >
                         <div className="w-10 h-10 rounded-lg bg-slate-200 flex items-center justify-center flex-shrink-0">
                           {player.imageUrl ? (
                             <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover rounded-lg" />
@@ -926,13 +1018,17 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                         </div>
                         <div className={`px-2 py-1 rounded-full text-xs font-bold ${
                           player.status === 'SOLD' ? 'bg-green-100 text-green-700' :
+                          player.status === 'UNSOLD' ? 'bg-orange-100 text-orange-700' :
                           player.status === 'PENDING' ? 'bg-yellow-100 text-yellow-700' :
+                          player.status === 'AVAILABLE' ? 'bg-blue-100 text-blue-700' :
                           'bg-gray-100 text-gray-700'
                         }`}>
                           {player.status}
                         </div>
                       </div>
-                    ))}
+                        </React.Fragment>
+                      ))
+                    })()}
                   </div>
                 </div>
               </div>

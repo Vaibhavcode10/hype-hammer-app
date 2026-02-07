@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { 
   Timer, Users, Gavel, Mic, MicOff, Play, Pause, Square, 
-  TrendingUp, DollarSign, Clock, AlertCircle, CheckCircle2, ArrowLeft
+  TrendingUp, DollarSign, Clock, AlertCircle, CheckCircle2, ArrowLeft, XCircle
 } from 'lucide-react';
 import { 
   LiveAuctionState, 
@@ -44,6 +44,7 @@ interface LiveAuctionRoomProps {
   onEndAuction?: () => void;
   onToggleMic?: () => void;
   onClose?: () => void;
+  onMarkUnsold?: () => void;
 }
 
 /**
@@ -76,7 +77,8 @@ export const LiveAuctionRoom: React.FC<LiveAuctionRoomProps> = ({
   onResumeAuction,
   onEndAuction,
   onToggleMic,
-  onClose
+  onClose,
+  onMarkUnsold
 }) => {
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [bidAmount, setBidAmount] = useState<number>(0);
@@ -188,6 +190,17 @@ export const LiveAuctionRoom: React.FC<LiveAuctionRoomProps> = ({
 
           {/* Right: Admin/Auctioneer Controls */}
           <div className="flex items-center gap-2">
+            {/* Close Auction Button - Admin & Auctioneer Only */}
+            {(userRole === UserRole.ADMIN || userRole === UserRole.AUCTIONEER) && onEndAuction && (
+              <button 
+                onClick={onEndAuction}
+                className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-bold text-xs flex items-center gap-2 transition-all shadow-md"
+              >
+                <Square size={14} />
+                CLOSE AUCTION
+              </button>
+            )}
+            
             {/* Admin Controls */}
             {userRole === UserRole.ADMIN && (
               <>
@@ -218,13 +231,6 @@ export const LiveAuctionRoom: React.FC<LiveAuctionRoomProps> = ({
                     RESUME
                   </button>
                 )}
-                <button 
-                  onClick={onEndAuction}
-                  className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-bold text-xs flex items-center gap-2 transition-all shadow-md"
-                >
-                  <Square size={14} />
-                  END
-                </button>
               </>
             )}
 
@@ -265,7 +271,14 @@ export const LiveAuctionRoom: React.FC<LiveAuctionRoomProps> = ({
                 )}
               </div>
 
-              <h2 className="text-2xl font-black text-slate-800 mb-2">{currentPlayer.name}</h2>
+              <h2 className="text-2xl font-black text-slate-800 mb-2 flex items-center gap-2">
+                {currentPlayer.name}
+                {currentPlayer.status === 'UNSOLD' && currentPlayer.unsoldCount && currentPlayer.unsoldCount > 0 && (
+                  <span className="px-2 py-1 bg-orange-100 border border-orange-300 rounded-lg text-[10px] font-bold text-orange-600 uppercase tracking-wider">
+                    Unsold ({currentPlayer.unsoldCount}x)
+                  </span>
+                )}
+              </h2>
               <p className="text-xs text-slate-400 uppercase tracking-wide mb-4">{currentPlayer.roleId}</p>
 
               <div className="space-y-2">
@@ -380,9 +393,10 @@ export const LiveAuctionRoom: React.FC<LiveAuctionRoomProps> = ({
                     SOLD
                   </button>
                   <button
-                    onClick={() => onCloseBidding && onCloseBidding(false)}
-                    className="py-4 bg-yellow-600 hover:bg-yellow-700 rounded-xl font-black uppercase text-sm transition-all"
+                    onClick={() => onMarkUnsold && onMarkUnsold()}
+                    className="py-4 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-black uppercase text-sm transition-all flex items-center justify-center gap-2 shadow-md"
                   >
+                    <XCircle size={16} />
                     UNSOLD
                   </button>
                 </div>

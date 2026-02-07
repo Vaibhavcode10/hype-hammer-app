@@ -11,6 +11,9 @@ import {
   updateDoc,
   addDoc,
   getDoc,
+  getDocs,
+  query,
+  where,
   Unsubscribe,
   Timestamp
 } from 'firebase/firestore';
@@ -499,6 +502,34 @@ class FirebaseRealtimeService {
 
   getCurrentUserId(): string | null {
     return this.currentUserId;
+  }
+
+  /**
+   * Get current auction state for a match
+   */
+  async getAuctionState(seasonId: string): Promise<any> {
+    try {
+      const docRef = doc(firestore, 'liveAuctions', seasonId);
+      const docSnap = await getDoc(docRef);
+      return docSnap.exists() ? docSnap.data() : null;
+    } catch (err) {
+      console.error('Error getting auction state:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Get all players for a match
+   */
+  async getPlayers(seasonId: string): Promise<any[]> {
+    try {
+      const q = query(collection(firestore, 'players'), where('seasonId', '==', seasonId));
+      const querySnapshot = await getDocs(q);
+      return querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+    } catch (err) {
+      console.error('Error getting players:', err);
+      return [];
+    }
   }
 }
 

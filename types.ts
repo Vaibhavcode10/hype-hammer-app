@@ -176,6 +176,7 @@ export interface Player {
   imageUrl?: string;
   email?: string; // For matching with user
   role?: string; // Alternative field for roleId
+  unsoldCount?: number; // Number of times marked as unsold
   // Real-world extensions
   age?: number;
   nationality?: string;
@@ -272,6 +273,7 @@ export interface LiveAuctionState {
   biddingActive: boolean;
   playerQueue: string[];
   completedPlayers: string[];
+  unsoldPlayers?: string[]; // Players marked as unsold
   bidHistory: BidHistoryItem[];
   bidStartTime?: string;
   lastBidTime?: string;

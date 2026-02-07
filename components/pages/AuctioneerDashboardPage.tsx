@@ -107,11 +107,29 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     playersRef.current = players;
   }, [players]);
 
+  // Sync currentPlayerName with currentPlayerId - if ID becomes null/invalid, clear name immediately
+  // This ensures the UI doesn't show stale player data when switching between players
+  useEffect(() => {
+    if (!auctionState.currentPlayerId) {
+      // If no current player ID, trigger immediate clear
+      if (auctionState.currentPlayerName !== null) {
+        console.log('🔄 Clearing stale currentPlayerName because currentPlayerId is null');
+        setAuctionState(prev => ({
+          ...prev,
+          currentPlayerName: null,
+          currentBid: 0,
+          leadingTeamId: null,
+          leadingTeamName: null
+        }));
+      }
+    }
+  }, [auctionState.currentPlayerId]);
+
   // Check auctioneer approval status
   useEffect(() => {
     const checkApprovalStatus = async () => {
       try {
-        // Fetch auctioneer by email to get approval status
+        // Fetch all auctioneers with this email
         const auctioneerResponse = await fetch(`${API_BASE}/auctioneers?email=${encodeURIComponent(currentUser.email)}`);
         const auctioneerData = await auctioneerResponse.json();
 
@@ -122,12 +140,33 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
           return;
         }
 
-        const auctioneer = auctioneerData.data[0];
+        // ✅ FIX: Find the auctioneer for THIS specific match (currentMatch)
+        let auctioneer = auctioneerData.data[0];
+        
+        if (currentMatch?.id && auctioneerData.data.length > 1) {
+          // Multiple registrations - find the one for current match
+          const matchAuctioneer = auctioneerData.data.find((a: any) => a.matchId === currentMatch.id);
+          if (matchAuctioneer) {
+            auctioneer = matchAuctioneer;
+            console.log('🎯 Found auctioneer for current match:', currentMatch.id);
+          } else {
+            console.warn('⚠️ No auctioneer found for current match:', currentMatch.id);
+            console.log('📋 Available auctioneers:');
+            auctioneerData.data.forEach((a: any) => {
+              console.log(`   - ID: ${a.id}, matchId: ${a.matchId}, name: ${a.name}`);
+            });
+            setApprovalStatus('pending');
+            setApprovalMessage(`You are not registered as an auctioneer for ${currentMatch.name}. Please contact support.`);
+            return;
+          }
+        }
+        
         const fetchedAuctioneerId = auctioneer.id || auctioneer.auctioneerId;
         setAuctioneerId(fetchedAuctioneerId);
 
         // Get approval status from auctioneer object
         console.log('🔍 Auctioneer data received:', auctioneer);
+        console.log('🔍 Auctioneer matchId:', auctioneer.matchId);
         console.log('🔍 Raw approvalStatus field:', auctioneer.approvalStatus);
         console.log('🔍 Raw status field:', auctioneer.status);
         
@@ -151,185 +190,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     };
 
     checkApprovalStatus();
-  }, [currentUser.email, currentMatch?.name]);
-
-  // Connect to WebSocket and join season
-  useEffect(() => {
-    if (approvalStatus !== 'approved' || !auctioneerId || !currentMatch) return;
-
-    // Connect to server
-    // socketService.connect('http://localhost:5000'); // Disabled: Cloud Functions don't support WebSocket
-
-    // Join season room
-    socketService.joinSeason(currentMatch.id, auctioneerId, currentUser.role);
-
-    const unsubscribers: Array<() => void> = [];
-
-    // Listen to auction state updates
-    unsubscribers.push(socketService.onAuctionStateUpdate((state) => {
-      console.log('Auction state update:', state);
-      setAuctionState(prev => ({ ...prev, ...state }));
-    }));
-
-    // Listen to auction started
-    unsubscribers.push(socketService.onAuctionStarted((data) => {
-      console.log('Auction started!', data);
-      setAuctionState(prev => ({ ...prev, status: 'LIVE' }));
-      
-      // Auto-start first player when auction goes LIVE
-      console.log('🚀 Auction went LIVE - auto-starting first player');
-      setTimeout(() => {
-        const alreadyActive = !!auctionStateRef.current.currentPlayerId || auctionStateRef.current.biddingActive;
-        const anyLivePlayer = playersRef.current.some(p => p.status === 'LIVE');
-        if (alreadyActive || anyLivePlayer) {
-          console.log('⏭️ Skipping auto-start (bidding already active)');
-          return;
-        }
-
-        const remainingPlayers = playersRef.current.filter(p => p.status !== 'SOLD');
-        if (remainingPlayers.length > 0) {
-          const firstPlayer = remainingPlayers[0];
-          console.log('Auto-starting first player:', firstPlayer.name);
-          setSelectedPlayerId(firstPlayer.id);
-          startPlayerBidding(firstPlayer.id, firstPlayer.basePrice);
-        }
-      }, 1000);
-    }));
-
-    // Listen to timer updates
-    unsubscribers.push(socketService.onTimerUpdate((data) => {
-      setAuctionState(prev => ({ ...prev, remainingSeconds: data.remainingSeconds }));
-    }));
-
-    // Listen to player bidding started
-    unsubscribers.push(socketService.onPlayerBiddingStarted((data) => {
-      console.log('Player bidding started:', data);
-      if (!data || !(data as any)?.player) {
-        setAuctionState(prev => ({
-          ...prev,
-          biddingActive: false,
-          currentPlayerId: null,
-          currentPlayerName: null,
-          currentBid: 0,
-          leadingTeamId: null,
-          leadingTeamName: null
-        }));
-        setBidHistory([]);
-        return;
-      }
-
-      const playerId = data.player.id;
-      setAuctionState(prev => ({
-        ...prev,
-        currentPlayerId: data.player.id,
-        currentPlayerName: data.player.name,
-        currentBid: data.player?.currentBid ?? data.basePrice ?? data.player.basePrice ?? 0,
-        leadingTeamId: data.player?.leadingTeamId ?? null,
-        leadingTeamName: data.player?.leadingTeamName ?? null,
-        biddingActive: true
-      }));
-      
-      // Fetch bid history for this player (restores state on page refresh)
-      fetchBidHistoryForPlayer(playerId);
-    }));
-
-    // Listen to new bids
-    unsubscribers.push(socketService.onNewBid((data) => {
-      console.log('New bid:', data);
-      setAuctionState(prev => ({
-        ...prev,
-        currentBid: data.amount,
-        leadingTeamId: data.teamId,
-        leadingTeamName: data.teamName
-      }));
-      setBidHistory(prev => [data, ...prev]);
-    }));
-
-    // Listen to player updated
-    unsubscribers.push(socketService.onPlayerUpdated((data) => {
-      console.log('Player updated:', data);
-      // Update the player in the players list
-      setPlayers(prev => prev.map(p => p.id === data.playerId ? data.player : p));
-      // Also refetch teams since player assignments may have changed
-      fetchTeams();
-    }));
-
-    // Listen to player sold
-    unsubscribers.push(socketService.onPlayerSold(async (data) => {
-      console.log('Player sold:', data);
-      setAuctionState(prev => ({
-        ...prev,
-        biddingActive: false,
-        currentPlayerId: null,
-        currentPlayerName: null
-      }));
-      // Refresh players list and teams to see updated budgets and player counts
-      const [fetchedPlayers] = await Promise.all([fetchPlayers(), fetchTeams()]);
-      console.log('Teams refetched after player sold');
-      
-      // Auto-advance to next pending player
-      setTimeout(() => {
-        setPlayers(prev => {
-          const remainingPlayers = prev.filter(p => p.status !== 'SOLD');
-          if (remainingPlayers.length > 0) {
-            const nextPlayer = remainingPlayers[0];
-            console.log('🎯 Auto-advancing to next player:', nextPlayer.name);
-            setSelectedPlayerId(nextPlayer.id);
-            // Auto-start bidding for next player
-            startPlayerBidding(nextPlayer.id, nextPlayer.basePrice);
-          } else {
-            console.log('✅ All players completed!');
-          }
-          return prev;
-        });
-      }, 2000);
-    }));
-
-    // Listen to player unsold
-    unsubscribers.push(socketService.onPlayerUnsold(async (data) => {
-      console.log('Player unsold:', data);
-      setAuctionState(prev => ({
-        ...prev,
-        biddingActive: false,
-        currentPlayerId: null,
-        currentPlayerName: null
-      }));
-      // Refresh players list and teams
-      await Promise.all([fetchPlayers(), fetchTeams()]);
-      
-      // Auto-advance to next pending player
-      setTimeout(() => {
-        setPlayers(prev => {
-          const remainingPlayers = prev.filter(p => p.status !== 'SOLD');
-          if (remainingPlayers.length > 0) {
-            const nextPlayer = remainingPlayers[0];
-            console.log('🎯 Auto-advancing to next player after unsold:', nextPlayer.name);
-            setSelectedPlayerId(nextPlayer.id);
-            // Auto-start bidding for next player
-            startPlayerBidding(nextPlayer.id, nextPlayer.basePrice);
-          } else {
-            console.log('✅ All players completed!');
-          }
-          return prev;
-        });
-      }, 2000);
-    }));
-
-    // Listen to approval events
-    unsubscribers.push(socketService.onAuctioneerApproved((data) => {
-      setApprovalStatus('approved');
-      alert('🎉 Your application has been approved! You can now access the auction dashboard.');
-    }));
-
-    unsubscribers.push(socketService.onAuctioneerRejected((data) => {
-      setApprovalStatus('rejected');
-      setApprovalMessage(data.reason || 'Application not approved');
-    }));
-
-    return () => {
-      unsubscribers.forEach(unsub => unsub());
-    };
-  }, [approvalStatus, auctioneerId, currentMatch?.id, currentUser.role]);
+  }, [currentUser.email, currentMatch?.id, currentMatch?.name]);
 
   // Fetch data
   const fetchPlayers = async () => {
@@ -410,6 +271,19 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         });
         console.log('✓ Fetched bid history:', sortedBids.length, 'bids');
         setBidHistory(sortedBids);
+
+        // IMPORTANT: Use bid history to restore current bid state
+        // This ensures auction state is accurate after login/refresh
+        if (sortedBids.length > 0) {
+          const latestBid = sortedBids[0];
+          console.log('📍 Restoring current bid from history:', latestBid.amount, 'by', latestBid.teamName);
+          setAuctionState(prev => ({
+            ...prev,
+            currentBid: latestBid.amount,
+            leadingTeamId: latestBid.teamId,
+            leadingTeamName: latestBid.teamName
+          }));
+        }
       } else {
         console.error('Failed to fetch bid history, status:', response.status);
         setBidHistory([]);
@@ -505,22 +379,181 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     // Join season to set up context
     socketService.joinSeason(currentMatch.id, auctioneerId || currentUser.email, currentUser.role);
 
-    // Immediately restore auction state from Firestore on mount/reconnect
-    // This handles logout/login and tab switching scenarios
-    // Do NOT wait for this to complete - set it up as a fire-and-forget with proper error handling
-    const restorePromise = restoreAuctionStateFromFirestore();
-    
-    // Log when restoration completes (for debugging)
-    if (restorePromise instanceof Promise) {
-      restorePromise.then(() => {
-        console.log('✅ State restoration completed');
-      }).catch(err => {
-        console.error('State restoration error (non-blocking):', err);
-      });
-    }
+    // Flag to track if initial restoration is complete
+    let restorationComplete = false;
+    let unsubscribers: Array<() => void> = [];
 
-    // Listen to players collection for live updates
-    const playersUnsubscribe = socketService.onPlayersUpdate(currentMatch.id, (updatedPlayers) => {
+    // First restore state, THEN set up listeners
+    // This ensures currentPlayerId is properly set before players updates arrive
+    (async () => {
+      try {
+        await restoreAuctionStateFromFirestore();
+        console.log('✅ State restoration completed');
+        restorationComplete = true;
+        
+        // NOW set up listeners after state is restored
+        setUpListeners();
+      } catch (err) {
+        console.error('State restoration error:', err);
+        restorationComplete = true;
+        // Still set up listeners even if restoration failed
+        setUpListeners();
+      }
+    })();
+
+    function setUpListeners() {
+      // Listen to auction state updates from backend
+      const stateUnsubscribe = socketService.onAuctionStateUpdate((state) => {
+        console.log('Auction state update:', state);
+        setAuctionState(prev => ({ ...prev, ...state }));
+      });
+      unsubscribers.push(stateUnsubscribe);
+
+      // Listen to auction started
+      const startedUnsubscribe = socketService.onAuctionStarted((data) => {
+        console.log('Auction started!', data);
+        setAuctionState(prev => ({ ...prev, status: 'LIVE' }));
+        
+        setTimeout(() => {
+          const alreadyActive = !!auctionStateRef.current.currentPlayerId || auctionStateRef.current.biddingActive;
+          const anyLivePlayer = playersRef.current.some(p => p.status === 'LIVE');
+          if (alreadyActive || anyLivePlayer) {
+            console.log('⏭️ Skipping auto-start (bidding already active)');
+            return;
+          }
+
+          const remainingPlayers = playersRef.current.filter(p => p.status !== 'SOLD');
+          if (remainingPlayers.length > 0) {
+            const firstPlayer = remainingPlayers[0];
+            console.log('Auto-starting first player:', firstPlayer.name);
+            setSelectedPlayerId(firstPlayer.id);
+            startPlayerBidding(firstPlayer.id, firstPlayer.basePrice);
+          }
+        }, 1000);
+      });
+      unsubscribers.push(startedUnsubscribe);
+
+      // Listen to timer updates
+      const timerUnsubscribe = socketService.onTimerUpdate((data) => {
+        setAuctionState(prev => ({ ...prev, remainingSeconds: data.remainingSeconds }));
+      });
+      unsubscribers.push(timerUnsubscribe);
+
+      // Listen to player bidding started
+      const biddingUnsubscribe = socketService.onPlayerBiddingStarted((data) => {
+        console.log('Player bidding started:', data);
+        if (!data?.player) {
+          setAuctionState(prev => ({
+            ...prev,
+            biddingActive: false,
+            currentPlayerId: null,
+            currentPlayerName: null,
+            currentBid: 0,
+            leadingTeamId: null,
+            leadingTeamName: null
+          }));
+          setBidHistory([]);
+          return;
+        }
+
+        const playerId = data.player.id;
+        setAuctionState(prev => ({
+          ...prev,
+          currentPlayerId: data.player.id,
+          currentPlayerName: data.player.name,
+          currentBid: data.player?.currentBid ?? data.basePrice ?? data.player.basePrice ?? 0,
+          leadingTeamId: data.player?.leadingTeamId ?? null,
+          leadingTeamName: data.player?.leadingTeamName ?? null,
+          biddingActive: true
+        }));
+        
+        fetchBidHistoryForPlayer(playerId);
+      });
+      unsubscribers.push(biddingUnsubscribe);
+
+      // Listen to new bids
+      const bidUnsubscribe = socketService.onNewBid((data) => {
+        console.log('New bid:', data);
+        setAuctionState(prev => ({
+          ...prev,
+          currentBid: data.amount,
+          leadingTeamId: data.teamId,
+          leadingTeamName: data.teamName
+        }));
+        setBidHistory(prev => [data, ...prev]);
+      });
+      unsubscribers.push(bidUnsubscribe);
+
+      // Listen to player updated
+      const playerUpdatedUnsubscribe = socketService.onPlayerUpdated((data) => {
+        console.log('Player updated:', data);
+        setPlayers(prev => prev.map(p => p.id === data.playerId ? data.player : p));
+        fetchTeams();
+      });
+      unsubscribers.push(playerUpdatedUnsubscribe);
+
+      // Listen to player sold
+      const soldUnsubscribe = socketService.onPlayerSold(async (data) => {
+        console.log('Player sold:', data);
+        setAuctionState(prev => ({
+          ...prev,
+          biddingActive: false,
+          currentPlayerId: null,
+          currentPlayerName: null
+        }));
+        await Promise.all([fetchPlayers(), fetchTeams()]);
+        console.log('Teams refetched after player sold');
+        
+        setTimeout(() => {
+          setPlayers(prev => {
+            let remainingPlayers = prev.filter(p => p.status === 'AVAILABLE');
+            if (remainingPlayers.length === 0) {
+              remainingPlayers = prev.filter(p => p.status === 'UNSOLD');
+            }
+            if (remainingPlayers.length > 0) {
+              const nextPlayer = remainingPlayers[0];
+              console.log('🎯 Auto-advancing to next player:', nextPlayer.name);
+              setSelectedPlayerId(nextPlayer.id);
+              startPlayerBidding(nextPlayer.id, nextPlayer.basePrice);
+            } else {
+              console.log('✅ All players completed!');
+            }
+            return prev;
+          });
+        }, 2000);
+      });
+      unsubscribers.push(soldUnsubscribe);
+
+      // Listen to player unsold
+      const unsoldUnsubscribe = socketService.onPlayerUnsold(async (data) => {
+        console.log('Player unsold:', data);
+        setAuctionState(prev => ({
+          ...prev,
+          biddingActive: false,
+          currentPlayerId: null,
+          currentPlayerName: null
+        }));
+        await Promise.all([fetchPlayers(), fetchTeams()]);
+        
+        setTimeout(() => {
+          setPlayers(prev => {
+            const remainingPlayers = prev.filter(p => p.status === 'AVAILABLE');
+            if (remainingPlayers.length > 0) {
+              const nextPlayer = remainingPlayers[0];
+              console.log('🎯 Auto-advancing to next player after unsold:', nextPlayer.name);
+              setSelectedPlayerId(nextPlayer.id);
+              startPlayerBidding(nextPlayer.id, nextPlayer.basePrice);
+            } else {
+              console.log('✅ All players pending sale completed!');
+            }
+            return prev;
+          });
+        }, 2000);
+      });
+      unsubscribers.push(unsoldUnsubscribe);
+
+      // Listen to players collection for live updates
+      const playersUnsubscribe = socketService.onPlayersUpdate(currentMatch.id, (updatedPlayers) => {
       console.log('🔥 Players live update:', updatedPlayers.length);
       setPlayers(updatedPlayers);
 
@@ -536,16 +569,40 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         
         if (livePlayer) {
           console.log('🔥 Live player found:', livePlayer.name, 'Current bid:', livePlayer.currentBid);
-          return {
-            ...prev,
-            currentPlayerId: livePlayer.id,
-            currentPlayerName: livePlayer.name,
-            currentBid: livePlayer.currentBid || livePlayer.basePrice || 0,
-            leadingTeamId: livePlayer.leadingTeamId || null,
-            leadingTeamName: livePlayer.leadingTeamName || null,
-            biddingActive: true,
-            status: 'LIVE'
-          };
+          
+          // Only update if backend hasn't already set the currentPlayerId
+          // Trust backend's currentPlayerId from liveAuctions document
+          if (prev.currentPlayerId === livePlayer.id) {
+            // Already correct, just update bid if needed
+            return {
+              ...prev,
+              currentBid: livePlayer.currentBid || livePlayer.basePrice || prev.currentBid || 0,
+              leadingTeamId: livePlayer.leadingTeamId || prev.leadingTeamId,
+              leadingTeamName: livePlayer.leadingTeamName || prev.leadingTeamName
+            };
+          } else if (!prev.currentPlayerId) {
+            // No current player set, use the LIVE player
+            console.log('ℹ️ No currentPlayerId set, using LIVE player from players list');
+
+            // IMPORTANT: Fetch bid history to ensure currentBid is accurate
+            // This handles scenarios where the player doc may have stale data
+            fetchBidHistoryForPlayer(livePlayer.id);
+            
+            return {
+              ...prev,
+              currentPlayerId: livePlayer.id,
+              currentPlayerName: livePlayer.name,
+              currentBid: livePlayer.currentBid || livePlayer.basePrice || 0,
+              leadingTeamId: livePlayer.leadingTeamId || null,
+              leadingTeamName: livePlayer.leadingTeamName || null,
+              biddingActive: true,
+              status: 'LIVE'
+            };
+          } else {
+            // currentPlayerId mismatch - backend's value should take precedence
+            console.log('ℹ️ Backend has currentPlayerId:', prev.currentPlayerId, '- not overriding with LIVE player:', livePlayer.id);
+            return prev;
+          }
         } else {
           // If no live player, check if auction has started
           const hasProcessedPlayers = updatedPlayers.some((p: any) => p.status === 'SOLD' || p.status === 'UNSOLD');
@@ -568,13 +625,17 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     const teamsUnsubscribe = socketService.onTeamsUpdate(currentMatch.id, (updatedTeams) => {
       console.log('🔥 Teams live update:', updatedTeams.length);
       setTeams(updatedTeams);
-    });
+      });
+
+      // Store unsubscribers for cleanup
+      unsubscribers.push(playersUnsubscribe);
+      unsubscribers.push(teamsUnsubscribe);
+    }
 
     // Cleanup listeners on unmount
     return () => {
       console.log('🔥 Cleaning up real-time listeners');
-      playersUnsubscribe();
-      teamsUnsubscribe();
+      unsubscribers.forEach(unsub => unsub());
     };
   }, [approvalStatus, currentMatch?.id]);
 
@@ -1222,7 +1283,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
           <div style={{ flex: `0 0 ${columnWidths.left}%` }} className="flex flex-col gap-4 overflow-hidden h-full pr-2">
             {/* Live Auction Stage */}
             <div className="bg-white rounded-2xl border-2 border-purple-200 shadow-xl p-6 flex flex-col items-center justify-center flex-1 overflow-y-auto hide-scrollbar">
-              {auctionState.biddingActive && auctionState.currentPlayerId ? (
+              {auctionState.biddingActive && auctionState.currentPlayerId && players.find(p => p.id === auctionState.currentPlayerId) ? (
                 <>
                   {/* Current Player - Compact */}
                   <div className="rounded-2xl border-3 border-white shadow-lg mb-3 bg-slate-200 flex items-center justify-center flex-shrink-0">
@@ -1238,7 +1299,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                   </div>
 
                   <h2 className="text-3xl font-black text-slate-800 uppercase mb-1 text-center leading-tight">
-                    {auctionState.currentPlayerName}
+                    {auctionState.currentPlayerName || 'Unknown Player'}
                   </h2>
                   
                   {/* Player Details - Compact */}
@@ -1468,39 +1529,112 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                   <div className="flex items-center justify-center py-8">
                     <Loader size={24} className="animate-spin text-blue-500" />
                   </div>
-                ) : (
-                  players
-                    .filter(p => p.status !== 'SOLD' && p.id !== auctionState.currentPlayerId)
-                    .map((player, index) => (
-                      <div
-                        key={player.id}
-                        className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
-                          auctionState.currentPlayerId === player.id
-                            ? 'bg-white border-green-400 shadow-[0_0_15px_rgba(34,197,94,0.6)]'
-                            : index === 0 && auctionState.status === 'LIVE'
-                            ? 'bg-white border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.6)]'
-                            : 'bg-white border-gray-200 hover:bg-blue-50 cursor-pointer'
-                        }`}
-                        onClick={() => handleStartPlayerBidding(player)}
-                      >
-                        <div className="w-10 h-10 rounded-lg bg-slate-200 flex items-center justify-center flex-shrink-0">
-                          {player.imageUrl ? (
-                            <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover rounded-lg" />
-                          ) : (
-                            <User size={20} className="text-slate-400" />
-                          )}
+                ) : (() => {
+                  // Get unique player IDs to prevent duplicates
+                  const seen = new Set<string>();
+                  
+                  // Get unsold player IDs from auction state for explicit tracking
+                  const unsoldPlayerIds = new Set(auctionState?.unsoldPlayers || []);
+                  
+                  // Build unique players list, excluding SOLD and current player
+                  const uniquePlayers: Player[] = [];
+                  players.forEach(p => {
+                    if (!seen.has(p.id) && p.status !== 'SOLD' && p.id !== auctionState?.currentPlayerId) {
+                      seen.add(p.id);
+                      uniquePlayers.push(p);
+                    }
+                  });
+
+                  // Separate into AVAILABLE and UNSOLD
+                  const availablePlayers = uniquePlayers.filter(p => !unsoldPlayerIds.has(p.id));
+                  const unsoldPlayers = uniquePlayers.filter(p => unsoldPlayerIds.has(p.id));
+
+                  // Log for debugging
+                  if (unsoldPlayers.length > 0) {
+                    console.log('🔍 Unsold players in queue:', unsoldPlayers.map(p => p.name));
+                  }
+
+                  return (
+                    <>
+                      {/* AVAILABLE Section */}
+                      {availablePlayers.map((player, index) => (
+                        <div
+                          key={`available-${player.id}`}
+                          className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
+                            auctionState?.currentPlayerId === player.id
+                              ? 'bg-white border-green-400 shadow-[0_0_15px_rgba(34,197,94,0.6)]'
+                              : index === 0 && auctionState?.status === 'LIVE'
+                              ? 'bg-white border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.6)]'
+                              : 'bg-white border-gray-200 hover:bg-blue-50 cursor-pointer'
+                          }`}
+                          onClick={() => handleStartPlayerBidding(player)}
+                        >
+                          <div className="w-10 h-10 rounded-lg bg-slate-200 flex items-center justify-center flex-shrink-0">
+                            {player.imageUrl ? (
+                              <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover rounded-lg" />
+                            ) : (
+                              <User size={20} className="text-slate-400" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-black text-sm text-slate-800 truncate">{player.name}</h4>
+                            <p className="text-xs text-gray-600">
+                              {player.roleId || '—'} • ₹{typeof player.basePrice === 'number' && Number.isFinite(player.basePrice) && player.basePrice > 0
+                                ? (player.basePrice / 100000).toFixed(1)
+                                : '—'}L
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-black text-sm text-slate-800 truncate">{player.name}</h4>
-                          <p className="text-xs text-gray-600">
-                            {player.roleId || '—'} • ₹{typeof player.basePrice === 'number' && Number.isFinite(player.basePrice) && player.basePrice > 0
-                              ? (player.basePrice / 100000).toFixed(1)
-                              : '—'}L
-                          </p>
+                      ))}
+
+                      {/* UNSOLD Divider */}
+                      {unsoldPlayers.length > 0 && availablePlayers.length > 0 && (
+                        <div className="py-2 px-2 flex items-center gap-2 text-xs font-bold text-orange-600">
+                          <div className="flex-1 h-px bg-orange-200"></div>
+                          <span>Re-Auction</span>
+                          <div className="flex-1 h-px bg-orange-200"></div>
                         </div>
-                      </div>
-                    ))
-                )}
+                      )}
+
+                      {/* UNSOLD Section */}
+                      {unsoldPlayers.map((player) => (
+                        <div
+                          key={`unsold-${player.id}`}
+                          className="flex items-center gap-3 p-3 rounded-xl border-2 bg-white border-orange-300 hover:bg-orange-50 cursor-pointer transition-all"
+                          onClick={() => handleStartPlayerBidding(player)}
+                        >
+                          <div className="w-10 h-10 rounded-lg bg-slate-200 flex items-center justify-center flex-shrink-0">
+                            {player.imageUrl ? (
+                              <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover rounded-lg" />
+                            ) : (
+                              <User size={20} className="text-slate-400" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-black text-sm text-slate-800 truncate">{player.name}</h4>
+                              <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[10px] font-bold whitespace-nowrap">
+                                Unsold
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-600">
+                              {player.roleId || '—'} • ₹{typeof player.basePrice === 'number' && Number.isFinite(player.basePrice) && player.basePrice > 0
+                                ? (player.basePrice / 100000).toFixed(1)
+                                : '—'}L
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* Empty State */}
+                      {uniquePlayers.length === 0 && (
+                        <div className="flex items-center justify-center py-8 text-gray-500 text-sm">
+                          No players in queue
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
 

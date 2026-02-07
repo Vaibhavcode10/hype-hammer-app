@@ -862,7 +862,7 @@ const AppContent: React.FC = () => {
   const isAuctionRoomActive = activeTab === 'room';
 
   // Handle login - route to appropriate dashboard based on role
-  const handleLogin = (user: { email: string; password: string; role: UserRole }) => {
+  const handleLogin = async (user: { email: string; password: string; role: UserRole }) => {
     console.log('🔐 Login attempt:', user.email, 'Role:', user.role);
     
     // Load full user data from localStorage
@@ -881,9 +881,9 @@ const AppContent: React.FC = () => {
     
     // Update current user with full data
     const updatedUser = {
-      email: user.email,
+      email: user.email || user.organizerEmail || user.adminEmail || '',
       role: user.role,
-      name: fullUserData?.name || user.email.split('@')[0],
+      name: fullUserData?.name || (user.email || user.organizerEmail || user.adminEmail || 'User').split('@')[0],
       teamName: fullUserData?.teamName,
       playerRole: fullUserData?.playerRole,
       basePrice: fullUserData?.basePrice,
@@ -922,27 +922,85 @@ const AppContent: React.FC = () => {
       return;
     }
 
-    // For other roles, try to select first available match
-    if (allSports.length === 0 || !allSports[0].matches || allSports[0].matches.length === 0) {
-      console.warn('⚠️ No matches available for', user.role);
-      // Default to marketplace for non-admin roles with no matches
-      setStatus(AuctionStatus.MARKETPLACE);
-      return;
+    // For auctioneers, team reps, and players: fetch their registration to find their match
+    console.log('🔍 Fetching', user.role, 'registration data for:', user.email);
+    
+    try {
+      let matchId: string | null = null;
+      
+      if (user.role === UserRole.AUCTIONEER) {
+        // Fetch auctioneer registration to get matchId
+        const response = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/auctioneers?email=${encodeURIComponent(user.email)}`);
+        const data = await response.json();
+        
+        if (data.success && data.data && data.data.length > 0) {
+          const auctioneer = data.data[0]; // Get first (should be only one per email due to duplicate check)
+          matchId = auctioneer.matchId;
+          console.log('✅ Found auctioneer matchId:', matchId);
+        } else {
+          console.warn('⚠️ No auctioneer registration found for:', user.email);
+        }
+      } else if (user.role === UserRole.TEAM_REP) {
+        // Fetch team registration to get matchId
+        const response = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/teams?email=${encodeURIComponent(user.email)}`);
+        const data = await response.json();
+        
+        if (data.success && data.data && data.data.length > 0) {
+          const team = data.data[0];
+          matchId = team.matchId;
+          console.log('✅ Found team matchId:', matchId);
+        } else {
+          console.warn('⚠️ No team registration found for:', user.email);
+        }
+      } else if (user.role === UserRole.PLAYER) {
+        // Fetch player registration to get matchId
+        const response = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/players?email=${encodeURIComponent(user.email)}`);
+        const data = await response.json();
+        
+        if (data.success && data.data && data.data.length > 0) {
+          const player = data.data[0];
+          matchId = player.matchId;
+          console.log('✅ Found player matchId:', matchId);
+        } else {
+          console.warn('⚠️ No player registration found for:', user.email);
+        }
+      }
+      
+      if (matchId) {
+        console.log('🎯 Found matchId:', matchId);
+        
+        // Fetch match details to get sport info
+        try {
+          const matchResponse = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/matches/${matchId}`);
+          const matchData = await matchResponse.json();
+          
+          if (matchData.success && matchData.data) {
+            const match = matchData.data;
+            const sport = match.sport || 'Cricket'; // Default to Cricket if not specified
+            console.log('✅ Found match sport:', sport);
+            
+            // Set both sport and match ID so currentMatch resolves correctly
+            setCurrentSport(sport);
+            sessionStorage.setItem('hypehammer_current_sport', sport);
+            setCurrentMatchId(matchId);
+            sessionStorage.setItem('hypehammer_current_match_id', matchId);
+          } else {
+            console.warn('⚠️ Could not fetch match details for:', matchId);
+            setCurrentMatchId(matchId); // Still set the ID even if we can't get sport
+          }
+        } catch (err) {
+          console.error('❌ Error fetching match details:', err);
+          setCurrentMatchId(matchId); // Still set the ID as fallback
+        }
+      } else {
+        console.warn('⚠️ Could not determine match for', user.role);
+      }
+    } catch (err) {
+      console.error('❌ Error fetching registration data:', err);
     }
 
-    const firstSport = allSports[0];
-    const firstMatch = firstSport.matches[0];
-    const sportName = firstSport.sportType || firstSport.customSportName || 'Cricket';
-    
-    console.log('🎯 Auto-selecting:', sportName, firstMatch.name);
-    
-    // Set current sport and match FIRST
-    setCurrentSport(sportName);
-    setCurrentMatchId(firstMatch.id);
-    
+    // Navigate to appropriate dashboard
     console.log('📍 Navigating to dashboard:', targetDashboard);
-    
-    // Use pending dashboard to wait for currentMatch to be ready
     setPendingDashboardStatus(targetDashboard);
   };
 
@@ -1001,7 +1059,12 @@ const AppContent: React.FC = () => {
       selectedSport={currentSportData}
       onRegister={async (registrationData) => {
         try {
-          console.log('Registration data:', registrationData);
+          console.log('================== REGISTRATION HANDLER START ==================');
+          console.log('📦 Received registrationData from form');
+          console.log('   - role:', registrationData.role);
+          console.log('   - governmentId:', registrationData.governmentId);
+          console.log('   - governmentIdFile:', registrationData.governmentIdFile);
+          console.log('   - Keys in registrationData:', Object.keys(registrationData));
           
           if (!registrationData.seasonId) {
             alert('No match selected. Please select a match first.');
@@ -1010,6 +1073,9 @@ const AppContent: React.FC = () => {
           
           // Upload files to Firebase Storage and get download URLs
           const processedData = { ...registrationData };
+          console.log('📋 processedData initialized with registrationData');
+          console.log('   - governmentId:', processedData.governmentId);
+          console.log('   - governmentIdFile (before upload):', processedData.governmentIdFile);
           
           try {
             // Upload team logo to Firebase Storage
@@ -1037,11 +1103,17 @@ const AppContent: React.FC = () => {
               console.log('✅ Authorization letter uploaded:', letterUrl);
             }
             
+            console.log('🔍 Before government ID upload check:');
+            console.log('   - registrationData.governmentIdFile:', registrationData.governmentIdFile);
+            console.log('   - Is File?', registrationData.governmentIdFile instanceof File);
+            
             if (registrationData.governmentIdFile && registrationData.governmentIdFile instanceof File) {
-              console.log('📤 Uploading government ID...');
+              console.log('📤 ✅ Uploading government ID...');
               const idUrl = await uploadDocument(registrationData.governmentIdFile, 'government-ids');
               processedData.governmentIdFile = idUrl;
               console.log('✅ Government ID uploaded:', idUrl);
+            } else {
+              console.log('⚠️ Government ID file not found or not a File instance');
             }
           } catch (uploadError: any) {
             console.error('❌ File upload error:', uploadError);
@@ -1049,11 +1121,27 @@ const AppContent: React.FC = () => {
             return false;
           }
           
+          console.log('================== BEFORE API CALL ==================');
+          console.log('processedData keys:', Object.keys(processedData));
+          console.log('   - governmentId:', processedData.governmentId);
+          console.log('   - governmentIdFile:', processedData.governmentIdFile);
+          console.log('   - role:', processedData.role);
+          
           let result = null;
           
           // Call appropriate registration endpoint
           switch (processedData.role) {
             case UserRole.AUCTIONEER:
+              console.log('📡 Calling registerAuctioneer with full payload:');
+              console.log(JSON.stringify({
+                governmentId: processedData.governmentId,
+                governmentIdFile: processedData.governmentIdFile,
+                role: processedData.role,
+                name: processedData.fullName,
+                email: processedData.email,
+                allKeys: Object.keys(processedData)
+              }, null, 2));
+              console.log('📡 Full processedData object:', processedData);
               result = await registerAuctioneer(processedData);
               if (result) {
                 setCurrentUser({
@@ -1141,6 +1229,7 @@ const AppContent: React.FC = () => {
       setStatus={setStatus}
       onRegisterAdmin={async (adminData) => {
         // Register admin to Cloud Function first
+        let adminRegistrationSuccess = false;
         try {
           const response = await fetch('https://us-central1-axilam.cloudfunctions.net/auction/register/admin', {
             method: 'POST',
@@ -1156,17 +1245,20 @@ const AppContent: React.FC = () => {
           });
           
           if (!response.ok) {
-            const errorData = await response.json();
+            const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
             console.error('Admin registration error:', errorData);
             alert(`Registration error: ${errorData.error || 'Failed to register admin'}`);
-            return;
+            throw new Error(errorData.error || 'Registration failed');
           }
           
+          adminRegistrationSuccess = true;
           console.log('✅ Admin registered successfully to Cloud Function');
         } catch (err) {
           console.error('Failed to register admin:', err);
-          alert('Failed to register admin. Please try again.');
-          return;
+          if (!adminRegistrationSuccess) {
+            alert('Failed to register admin. Please check your connection and try again.');
+            throw err; // Propagate error to prevent further processing
+          }
         }
         
         // Process admin registration locally
@@ -1182,7 +1274,7 @@ const AppContent: React.FC = () => {
         const newMatchId = `match-${Date.now()}`;
         const newMatch: MatchData = {
           id: newMatchId,
-          name: adminData.seasonName, // This is the season/match name entered by user
+          name: adminData.seasonName,
           createdAt: Date.now(),
           matchDate: new Date(adminData.auctionDateTime).getTime(),
           place: adminData.venueLocation || (adminData.venueMode === 'Online' ? 'Online' : 'TBD'),
@@ -1199,46 +1291,65 @@ const AppContent: React.FC = () => {
           teams: [],
           history: [],
           status: 'SETUP',
-          // Store organizer credentials for login (will be normalized to email/password in backend)
           organizerEmail: adminData.email,
+          adminEmail: adminData.email,
           organizerPassword: adminData.password,
           organizerName: adminData.fullName,
           organizationType: adminData.organizerType,
           organizationName: adminData.organizationName
         };
         
-        // Find or create sport data
+        // Update state immediately - don't wait for Firebase save
         const sportIndex = allSports.findIndex(s => 
           s.sportType === adminData.sportType || s.customSportName === adminData.sportType
         );
         
+        let updatedSports: SportData[];
         if (sportIndex >= 0) {
-          // Sport exists, add match to it
-          const updatedSports = [...allSports];
+          updatedSports = [...allSports];
           updatedSports[sportIndex].matches.push(newMatch);
           setAllSports(updatedSports);
-          
-          // Save to both localStorage AND backend API
-          localStorage.setItem('hypehammer_sports', JSON.stringify(updatedSports));
-          await saveSportsData(updatedSports);
         } else {
-          // Create new sport entry
           const newSportData: SportData = {
             sportType: adminData.sportType as SportType,
             matches: [newMatch]
           };
-          const updatedSports = [...allSports, newSportData];
+          updatedSports = [...allSports, newSportData];
           setAllSports(updatedSports);
-          
-          // Save to both localStorage AND backend API
-          localStorage.setItem('hypehammer_sports', JSON.stringify(updatedSports));
-          await saveSportsData(updatedSports);
         }
         
-        // IMPORTANT: Set the newly created match as current match
+        // Update currentMatchId IMMEDIATELY - this triggers dashboard to load with correct match
         setCurrentMatchId(newMatchId);
+        console.log('✅ Admin match created and set as current:', newMatchId);
         
-        // Note: Modal will show and redirect to marketplace
+        // Save to localStorage for persistence
+        localStorage.setItem('hypehammer_sports', JSON.stringify(updatedSports));
+        
+        // Save to Firebase in background (don't await - this was causing the delay)
+        saveSportsData(updatedSports).catch(err => {
+          console.warn('⚠️ Failed to save sports data to backend:', err);
+        });
+        
+        // Save match to Firebase in background
+        fetch('https://us-central1-axilam.cloudfunctions.net/auction/matches', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newMatch)
+        }).then(res => {
+          if (res.ok) {
+            console.log('✅ Match saved to Firebase');
+          } else {
+            console.warn('⚠️ Failed to save match to Firebase');
+          }
+        }).catch(err => {
+          console.warn('⚠️ Failed to save match to Firebase:', err);
+        });
+        
+        // Show success and redirect after a brief delay to allow state updates
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Redirect to admin dashboard - the currentMatchId will be available
+        setStatus(AuctionStatus.ADMIN_DASHBOARD);
       }}
     />;
   }

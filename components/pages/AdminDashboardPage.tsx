@@ -104,32 +104,100 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   // Sidebar collapse state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // Auto-fetch first available match if currentMatch is undefined
+  // Auto-fetch admin's own match if currentMatch is undefined
   useEffect(() => {
     if (currentMatch) {
+      console.log('✅ Using provided currentMatch:', currentMatch.id, currentMatch.name);
       setResolvedMatch(currentMatch);
       return;
     }
 
-    // Fetch first available match for Admin
-    const fetchFirstMatch = async () => {
+    // Fetch admin's own match based on their email
+    const fetchAdminMatch = async () => {
+      setLoading(true); // Start loading
+      
+      // Safety check - if currentUser.email is not set, can't fetch
+      if (!currentUser?.email) {
+        console.error('❌ CRITICAL: currentUser.email is undefined!', { currentUser });
+        setLoading(false);
+        setResolvedMatch(null);
+        return;
+      }
+      
       try {
+        const adminEmail = currentUser.email.toLowerCase().trim(); // Normalize
+        console.log('🔍 Fetching match for admin - currentUser:', { 
+          email: adminEmail, 
+          name: currentUser.name, 
+          role: currentUser.role 
+        });
+        
         const response = await fetch(`${API_BASE}/matches`);
         if (response.ok) {
           const data = await response.json();
-          if (data.data && data.data.length > 0) {
-            const firstMatch = data.data[0];
-            console.log('✅ Admin: Auto-selected first match:', firstMatch.name);
-            setResolvedMatch(firstMatch);
+          console.log('📦 All matches from API:', data.data?.length, 'matches');
+          
+          if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+            // Log each match for debugging
+            data.data.forEach((m: any) => {
+              console.log(`  Match: ${m.id} - ${m.name}`);
+              console.log(`    email: "${m.email}", organizerEmail: "${m.organizerEmail}", adminEmail: "${m.adminEmail}"`);
+            });
+            
+            // Find match that belongs to this admin (matches their email)
+            const adminMatch = data.data.find((match: any) => {
+              const matchEmail = (match.email || '').toLowerCase().trim();
+              const matchOrganizerEmail = (match.organizerEmail || '').toLowerCase().trim();
+              const matchAdminEmail = (match.adminEmail || '').toLowerCase().trim();
+              
+              const emailMatch = matchEmail === adminEmail;
+              const organizerMatch = matchOrganizerEmail === adminEmail;
+              const adminEmailMatch = matchAdminEmail === adminEmail;
+              
+              const isMatch = emailMatch || organizerMatch || adminEmailMatch;
+              
+              console.log(`🔎 Checking match ${match.id}:`);
+              console.log(`   email ("${matchEmail}") === adminEmail ("${adminEmail}") → ${emailMatch}`);
+              console.log(`   organizerEmail ("${matchOrganizerEmail}") === adminEmail ("${adminEmail}") → ${organizerMatch}`);
+              console.log(`   adminEmail ("${matchAdminEmail}") === adminEmail ("${adminEmail}") → ${adminEmailMatch}`);
+              console.log(`   Overall match: ${isMatch}`);
+              
+              return isMatch;
+            });
+            
+            if (adminMatch) {
+              console.log('✅ Found admin match:', adminMatch.name, adminMatch.id);
+              setResolvedMatch(adminMatch);
+              setLoading(false); // Finish loading after finding match
+            } else {
+              console.warn('⚠️ No match found for admin email:', adminEmail);
+              console.log('📋 Available matches:', data.data.map((m: any) => ({
+                id: m.id,
+                name: m.name,
+                email: m.email,
+                organizerEmail: m.organizerEmail,
+                adminEmail: m.adminEmail
+              })));
+              console.error('❌ CRITICAL: Admin email does not match any season. Check your email configuration in the database.');
+              setResolvedMatch(null);
+              setLoading(false); // Finish loading even if no match found
+            }
+          } else {
+            console.log('⚠️ No matches returned from API');
+            setLoading(false);
           }
+        } else {
+          console.error('Failed to fetch matches:', response.status);
+          setLoading(false);
         }
       } catch (error) {
-        console.error('Failed to fetch matches:', error);
+        console.error('Failed to fetch admin match:', error);
+        setLoading(false);
       }
     };
 
-    fetchFirstMatch();
-  }, [currentMatch]);
+    fetchAdminMatch();
+  }, [currentMatch, currentUser.email]);
 
   // Use resolvedMatch for all operations
   const activeMatch = resolvedMatch;
@@ -197,6 +265,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       actor: actor || currentUser.name
     };
     setSystemLogs(prev => [newLog, ...prev].slice(0, 100)); // Keep last 100 logs
+  };
+  
+  // Remove live notification
+  const removeLiveNotification = (notificationId: string) => {
+    setLiveNotifications(prev => prev.filter(n => n.id !== notificationId));
   };
   
   // Season Settings handlers
@@ -360,7 +433,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
   // Auctioneer approval handlers
   const handleApproveAuctioneer = async (auctioneerId: string) => {
-    if (!currentMatch?.id) {
+    if (!activeMatch?.id) {
       alert('No active season selected');
       return;
     }
@@ -381,7 +454,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   };
 
   const handleRejectAuctioneer = async (auctioneerId: string) => {
-    if (!currentMatch?.id) {
+    if (!activeMatch?.id) {
       alert('No active season selected');
       return;
     }
@@ -393,9 +466,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          auctioneerId,
-          seasonId: currentMatch.id,
-          adminId: currentUser.email
+          id: auctioneerId
         })
       });
       
@@ -428,9 +499,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              auctioneerId: confirmAction.data,
-              seasonId: currentMatch?.id,
-              adminId: currentUser.email
+              id: confirmAction.data
             })
           });
           const result = await response.json();
@@ -484,11 +553,18 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   useEffect(() => {
     const fetchData = async () => {
       try {
+        // Only fetch if we have an active match
+        if (!activeMatch?.id) {
+          console.log('⏸️ Skipping data fetch - no activeMatch yet');
+          setLoading(false);
+          return;
+        }
+        
         console.log('🔄 AdminDashboard: Starting data fetch, activeMatch:', activeMatch?.id);
         setLoading(true);
         
-        // Build query params - if there's a match, filter by it; otherwise get all data
-        const matchQuery = activeMatch?.id ? `?matchId=${activeMatch.id}` : '';
+        // Build query params - ALWAYS filter by matchId
+        const matchQuery = `?matchId=${activeMatch.id}`;
         
         console.log('📡 Fetching from:', `${API_BASE}/teams${matchQuery}`);
         
@@ -644,7 +720,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       addSystemLog('info', `Bid: ${bidData.teamName} - ₹${(bidData.amount / 100000).toFixed(1)}L`);
     }));
 
-    // AUCTION STATE UPDATE - PRIMARY SOURCE OF TRUTH
+    // AUCTION STATE UPDATE - PRIMARY SOURCE OF TRUTH FOR AUCTION STATUS ONLY
+    // Do NOT use this for bid data - use onPlayersUpdate instead
     unsubscribers.push(socketService.onAuctionStateUpdate((data: any) => {
       console.log('🚨 Admin: AUCTION_STATE_UPDATE received:', data);
       console.log('   → Status:', data.status);
@@ -663,13 +740,24 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         setCountdown(data.remainingSeconds);
       }
       
-      // Only clear the player if bidding is explicitly inactive
-      // onPlayersUpdate listener handles setting the player based on status
-      if (data.biddingActive === false) {
-        console.log('ℹ️ Bidding explicitly inactive, clearing current player');
-        setCurrentBiddingPlayer(null);
-        setCurrentBid(0);
-        setLeadingTeamName('');
+      // If auction is LIVE and we have a currentPlayerId, fetch the player data from API
+      // This acts as a fallback if onPlayersUpdate hasn't updated the LIVE status yet
+      if (data.status === 'LIVE' && data.biddingActive && data.currentPlayerId) {
+        console.log('   → Fetching player from API:', data.currentPlayerId);
+        fetch(`${API_BASE}/players/${data.currentPlayerId}`)
+          .then(res => res.json())
+          .then(playerData => {
+            if (playerData.success && playerData.data) {
+              console.log('✅ Admin: Fetched player from API:', playerData.data.name);
+              setCurrentBiddingPlayer(playerData.data);
+              setCurrentBid(playerData.data.currentBid || playerData.data.basePrice || data.currentBid || 0);
+              setLeadingTeamName(playerData.data.leadingTeamName || '');
+              setLiveAuctionStatus('LIVE');
+            }
+          })
+          .catch(err => {
+            console.error('❌ Admin: Error fetching player from API:', err);
+          });
       }
     }));
 
@@ -703,9 +791,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       console.log('🎯 Admin: PLAYER_BIDDING_STARTED', data);
       
       if (!data || !data.player) {
+        // IMPORTANT: When currentPlayer/active is null/empty, DO NOT clear the bid!
+        // This happens when auctioneer logs out mid-auction.
+        // The player document in Firestore still has currentBid and leadingTeamName.
+        // The onPlayersUpdate listener will keep the bid display up-to-date.
+        // Only clear the player itself, not the bid display.
         setCurrentBiddingPlayer(null);
-        setCurrentBid(0);
-        setLeadingTeamName('');
+        // DO NOT set currentBid to 0 - let onPlayersUpdate handle it
+        // DO NOT set leadingTeamName to '' - let onPlayersUpdate handle it
         return;
       }
       
@@ -933,6 +1026,19 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
   return (
     <>
+      {/* Loading State */}
+      {loading && (
+        <div className="h-screen w-screen flex items-center justify-center bg-gradient-to-br from-white via-blue-50 to-purple-50">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-blue-600 text-lg font-bold">Loading dashboard...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Main Dashboard - Only show if we have an active match */}
+      {!loading && activeMatch && (
+        <>
       {/* Custom Scrollbar Styles */}
       <style>{`
         .custom-scrollbar {
@@ -1603,6 +1709,81 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                   </div>
                 </div>
 
+                {/* Match Status Control */}
+                <div className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200 rounded-3xl p-6 shadow-lg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-black text-slate-900 mb-2">Match Status</h3>
+                      <p className="text-sm text-slate-600">Current status: <span className="font-bold text-purple-600">{resolvedMatch?.status || 'UNKNOWN'}</span></p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          const response = await fetch(`${API_BASE}/match-status/${resolvedMatch?.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status: 'SETUP', updatedBy: currentUser.email })
+                          });
+                          if (response.ok) {
+                            alert('Match status updated to SETUP');
+                            setResolvedMatch(prev => prev ? {...prev, status: 'SETUP'} : null);
+                            addSystemLog('admin', 'Match status changed to SETUP');
+                          }
+                        }}
+                        className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                          resolvedMatch?.status === 'SETUP'
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                        }`}
+                      >
+                        Upcoming
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const response = await fetch(`${API_BASE}/match-status/${resolvedMatch?.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status: 'ONGOING', updatedBy: currentUser.email })
+                          });
+                          if (response.ok) {
+                            alert('Match status updated to ONGOING');
+                            setResolvedMatch(prev => prev ? {...prev, status: 'ONGOING'} : null);
+                            addSystemLog('admin', 'Match status changed to ONGOING');
+                          }
+                        }}
+                        className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                          resolvedMatch?.status === 'ONGOING'
+                            ? 'bg-green-500 text-white animate-pulse'
+                            : 'bg-green-100 text-green-600 hover:bg-green-200'
+                        }`}
+                      >
+                        Live Now
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const response = await fetch(`${API_BASE}/match-status/${resolvedMatch?.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status: 'COMPLETED', updatedBy: currentUser.email })
+                          });
+                          if (response.ok) {
+                            alert('Match status updated to COMPLETED');
+                            setResolvedMatch(prev => prev ? {...prev, status: 'COMPLETED'} : null);
+                            addSystemLog('admin', 'Match status changed to COMPLETED');
+                          }
+                        }}
+                        className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                          resolvedMatch?.status === 'COMPLETED'
+                            ? 'bg-gray-500 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        Completed
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl">
                     <label className="block text-sm font-bold text-slate-600 mb-2 uppercase tracking-wider">Season Name</label>
@@ -1718,8 +1899,26 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                 </div>
 
                 <div className="grid gap-3">
-                  {filteredPlayers.map((player) => (
-                    <div key={player.id} className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-xl p-4 shadow-lg hover:shadow-xl transition-all">
+                  {(() => {
+                    const sorted = [...filteredPlayers].sort((a, b) => {
+                      if (a.status === 'UNSOLD' && b.status !== 'UNSOLD') return 1;
+                      if (a.status !== 'UNSOLD' && b.status === 'UNSOLD') return -1;
+                      return 0;
+                    });
+                    const unsoldCount = sorted.filter(p => p.status === 'UNSOLD').length;
+                    const regularCount = sorted.length - unsoldCount;
+                    return sorted.map((player, index) => (
+                      <>
+                        {index === regularCount && unsoldCount > 0 && (
+                          <div className="py-2 px-2 flex items-center gap-2 text-xs font-bold text-orange-600">
+                            <div className="flex-1 h-px bg-orange-200"></div>
+                            <span>Re-Auction</span>
+                            <div className="flex-1 h-px bg-orange-200"></div>
+                          </div>
+                        )}
+                    <div key={player.id} className={`bg-white/90 backdrop-blur-xl border-2 rounded-xl p-4 shadow-lg hover:shadow-xl transition-all ${
+                      player.status === 'UNSOLD' ? 'border-orange-300' : 'border-blue-200'
+                    }`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center text-white font-black text-lg overflow-hidden flex-shrink-0">
@@ -1758,7 +1957,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                           )}
                           <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
                             player.status === 'SOLD' ? 'bg-green-100 text-green-700' :
-                            player.status === 'UNSOLD' ? 'bg-red-100 text-red-700' :
+                            player.status === 'UNSOLD' ? 'bg-orange-100 text-orange-700' :
                             'bg-blue-100 text-blue-700'
                           }`}>
                             {player.status || 'AVAILABLE'}
@@ -1784,7 +1983,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         </div>
                       </div>
                     </div>
-                  ))}
+                      </>
+                    ))
+                  })}
                 </div>
               </div>
             )}
@@ -2025,22 +2226,22 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                             </h4>
                             <div className="grid grid-cols-3 gap-4 text-sm">
                               <div className="bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Experience</p>
-                                <p className="text-slate-800 font-semibold">{auctioneer.experience || '0'} years</p>
+                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Experience Level</p>
+                                <p className="text-slate-800 font-semibold">{auctioneer.experienceLevel || 'N/A'}</p>
                               </div>
                               <div className="bg-white rounded-xl p-3">
                                 <p className="text-xs font-bold text-slate-500 uppercase mb-1">License</p>
                                 <p className="text-slate-800 font-semibold">{auctioneer.auctioneerLicense || 'N/A'}</p>
                               </div>
                               <div className="bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Govt ID</p>
-                                <p className="text-slate-800 font-semibold">{auctioneer.auctioneerGovtId || 'N/A'}</p>
+                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Govt ID Number</p>
+                                <p className="text-slate-800 font-semibold">{auctioneer.governmentId || 'N/A'}</p>
                               </div>
                               <div className="col-span-3 bg-white rounded-xl p-3">
                                 <p className="text-xs font-bold text-slate-500 uppercase mb-2">Languages Known</p>
                                 <div className="flex flex-wrap gap-2">
-                                  {auctioneer.languagesKnown?.length > 0 ? (
-                                    auctioneer.languagesKnown.map((lang: string, idx: number) => (
+                                  {auctioneer.languages && auctioneer.languages.length > 0 ? (
+                                    auctioneer.languages.map((lang: string, idx: number) => (
                                       <span key={idx} className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-bold">
                                         {lang}
                                       </span>
@@ -2097,6 +2298,51 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                               )}
                             </div>
                           </div>
+
+                          {/* Government ID Proof */}
+                          {auctioneer.governmentIdFile && (
+                            <div>
+                              <h4 className="text-base font-black text-slate-800 mb-3 flex items-center gap-2">
+                                <Shield size={18} className="text-red-600" />
+                                Government ID Proof
+                              </h4>
+                              <div className="bg-white rounded-xl p-4">
+                                {auctioneer.governmentIdFile.includes('.pdf') ? (
+                                  <div className="flex items-center gap-3 p-4 bg-red-50 rounded-lg border-2 border-red-200">
+                                    <FileText size={32} className="text-red-600" />
+                                    <div className="flex-1">
+                                      <p className="text-sm font-bold text-slate-800">PDF Document</p>
+                                      <p className="text-xs text-slate-600">Click to download or view</p>
+                                    </div>
+                                    <a
+                                      href={auctioneer.governmentIdFile}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-bold text-sm transition-all"
+                                    >
+                                      View PDF
+                                    </a>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    <img
+                                      src={auctioneer.governmentIdFile}
+                                      alt="Government ID Proof"
+                                      className="w-full h-auto rounded-lg border-2 border-slate-200 max-h-96 object-contain"
+                                    />
+                                    <a
+                                      href={auctioneer.governmentIdFile}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-block px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-bold text-sm transition-all"
+                                    >
+                                      View Full Size
+                                    </a>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2643,6 +2889,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </>
   );

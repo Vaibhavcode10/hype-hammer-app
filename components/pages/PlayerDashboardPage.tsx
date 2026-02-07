@@ -19,6 +19,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
   const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom'>('dashboard');
   const [playerData, setPlayerData] = useState<Player | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const teamsRef = useRef<Team[]>([]);
   
@@ -413,6 +414,9 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
 
     // Listen to player status changes
     const playersUnsubscribe = socketService.onPlayersUpdate(seasonId, (updatedPlayers) => {
+      // Store all players for queue display
+      setPlayers(updatedPlayers);
+
       // Find if I'm being auctioned
       const myPlayer = updatedPlayers.find((p: any) => p.email === currentUser.email);
       if (myPlayer && myPlayer.status === 'LIVE') {
@@ -748,7 +752,75 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
           </div>
         ) : (
           <div className="grid grid-cols-12 gap-4 h-full overflow-hidden">
-            {/* Left Panel: Player Profile + Queue Info + Live Activity Feed */}
+            {/* Players Queue - Left (col-span-3) */}
+            <div className="col-span-3 flex flex-col gap-3 h-full overflow-hidden">
+              <div className="bg-white/90 backdrop-blur-lg rounded-2xl border-2 border-blue-200 shadow-xl overflow-hidden flex flex-col flex-1">
+                <div className="bg-gradient-to-r from-blue-100 to-cyan-100 px-4 py-3 border-b-2 border-blue-200">
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <Users size={14} className="text-blue-600" />
+                    Queue ({players.length})
+                  </h3>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                  {(() => {
+                    const sorted = [...players].sort((a, b) => {
+                      if (a.status === 'UNSOLD' && b.status !== 'UNSOLD') return 1;
+                      if (a.status !== 'UNSOLD' && b.status === 'UNSOLD') return -1;
+                      return 0;
+                    });
+                    const unsoldCount = sorted.filter(p => p.status === 'UNSOLD').length;
+                    const regularCount = sorted.length - unsoldCount;
+
+                    return sorted.map((player, index) => (
+                      <React.Fragment key={player.id}>
+                        {index === regularCount && unsoldCount > 0 && (
+                          <div className="py-1 px-2 flex items-center gap-2 text-xs font-bold text-orange-600">
+                            <div className="flex-1 h-px bg-orange-200"></div>
+                            <span>Re-Auction</span>
+                            <div className="flex-1 h-px bg-orange-200"></div>
+                          </div>
+                        )}
+                        <div
+                          className={`flex items-center gap-2 p-2 rounded-lg border-2 transition-all ${
+                            player.id === currentBiddingPlayer?.id
+                              ? 'bg-red-50 border-red-300'
+                              : player.status === 'UNSOLD'
+                                ? 'bg-orange-50 border-orange-300 hover:bg-orange-100'
+                                : player.status === 'SOLD'
+                                ? 'bg-green-50 border-green-300'
+                                : 'bg-white border-gray-200 hover:bg-blue-50'
+                          }`}
+                        >
+                          <div className="w-10 h-10 rounded-lg bg-slate-200 flex items-center justify-center flex-shrink-0">
+                            {player.imageUrl ? (
+                              <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover rounded-lg" />
+                            ) : (
+                              <User size={18} className="text-slate-400" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-bold text-sm text-slate-800 truncate">{player.name}</h4>
+                            <p className="text-xs text-gray-600 truncate">{player.roleId}</p>
+                          </div>
+                          <div className={`px-2 py-1 rounded text-xs font-bold whitespace-nowrap ${
+                            player.status === 'SOLD' ? 'bg-green-100 text-green-700' :
+                            player.status === 'UNSOLD' ? 'bg-orange-100 text-orange-700' :
+                            player.status === 'PENDING' ? 'bg-yellow-100 text-yellow-700' :
+                            player.status === 'AVAILABLE' ? 'bg-blue-100 text-blue-700' :
+                            player.status === 'LIVE' ? 'bg-red-100 text-red-700' :
+                            'bg-gray-100 text-gray-700'
+                          }`}>
+                            {player.status}
+                          </div>
+                        </div>
+                      </React.Fragment>
+                    ))
+                  })()}
+                </div>
+              </div>
+            </div>
+
+            {/* Left-Mid Panel: Player Profile + Queue Info + Activity Feed (col-span-3) */}
             <div className="col-span-3 flex flex-col gap-3 overflow-y-auto pr-2">
               {/* Player Profile */}
               <div className="bg-white/90 backdrop-blur-lg rounded-2xl border-2 border-cyan-200 shadow-xl overflow-hidden">
@@ -761,28 +833,28 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
                       <User size={24} className="text-slate-400" />
                     )}
                   </div>
-                  <h3 className="text-base font-black text-center mt-2 text-slate-800 uppercase leading-tight">{playerData.name}</h3>
-                  <p className="text-[10px] text-gray-600 text-center uppercase tracking-wider font-bold">{playerData.roleId}</p>
+                  <h3 className="text-lg font-black text-center mt-2 text-slate-800 uppercase leading-tight">{playerData.name}</h3>
+                  <p className="text-sm text-gray-600 text-center uppercase tracking-wider font-bold">{playerData.roleId}</p>
                   
                   {/* Status Badge */}
                   <div className="mt-2 flex items-center justify-center">
                     <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border-2 ${getPlayerStatus(playerData).color}`}>
                       {getPlayerStatus(playerData).icon}
-                      <span className="text-[9px] font-bold uppercase">{getPlayerStatus(playerData).label}</span>
+                      <span className="text-xs font-bold uppercase">{getPlayerStatus(playerData).label}</span>
                     </div>
                   </div>
                   
                   {/* Sold Information */}
                   {(playerData.status?.toLowerCase() === 'sold' || playerData.soldTo) && playerData.soldTo && (
-                    <div className="mt-2 p-2 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
+                    <div className="mt-2 p-3 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
                       <div className="grid grid-cols-2 gap-2">
                         <div className="text-center">
-                          <p className="text-[8px] text-gray-600 uppercase font-bold">Sold To</p>
-                          <p className="text-[10px] font-black text-green-600 truncate">{teams.find(t => t.id === playerData.soldTo)?.name || 'Team'}</p>
+                          <p className="text-xs text-gray-600 uppercase font-bold">Sold To</p>
+                          <p className="text-sm font-black text-green-600 truncate">{teams.find(t => t.id === playerData.soldTo)?.name || 'Team'}</p>
                         </div>
                         {playerData.soldAmount && (
                           <div className="text-center">
-                            <p className="text-[8px] text-gray-600 uppercase font-bold">Price</p>
+                            <p className="text-xs text-gray-600 uppercase font-bold">Price</p>
                             <p className="text-sm font-black text-green-600">₹{((playerData.soldAmount || 0) / 100000).toFixed(1)}L</p>
                           </div>
                         )}
@@ -792,8 +864,8 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
                   
                   {/* Base Price - Show only when not sold */}
                   {!(playerData.status?.toLowerCase() === 'sold' || playerData.soldTo) && (
-                    <div className="mt-2 p-2 bg-gradient-to-r from-cyan-50 to-blue-50 rounded-lg border border-cyan-200">
-                      <p className="text-[8px] text-gray-600 uppercase tracking-wider font-bold text-center">Base Price</p>
+                    <div className="mt-2 p-3 bg-gradient-to-r from-cyan-50 to-blue-50 rounded-lg border border-cyan-200">
+                      <p className="text-xs text-gray-600 uppercase tracking-wider font-bold text-center">Base Price</p>
                       <p className="text-lg font-black text-center text-cyan-600">₹{((playerData.basePrice || 0) / 100000).toFixed(1)}L</p>
                     </div>
                   )}
@@ -802,33 +874,33 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
 
               {/* Queue Position */}
               {queuePosition && queuePosition > 0 && (
-                <div className="bg-white/90 backdrop-blur-lg rounded-2xl border-2 border-purple-200 shadow-xl p-6">
-                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-2">
-                    <Users size={16} className="text-purple-600" />
+                <div className="bg-white/90 backdrop-blur-lg rounded-2xl border-2 border-purple-200 shadow-xl p-4">
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <Users size={14} className="text-purple-600" />
                     Queue Position
                   </h3>
-                  <div className="space-y-3">
+                  <div className="space-y-2 text-sm">
                     <div className="flex justify-between items-center">
-                      <span className="text-xs text-gray-600 uppercase font-bold">Your Position</span>
-                      <span className="text-xl font-black text-purple-600">#{queuePosition}</span>
+                      <span className="text-sm text-gray-600 uppercase font-bold">Position</span>
+                      <span className="text-2xl font-black text-purple-600">#{queuePosition}</span>
                     </div>
                     <div className="h-px bg-purple-200"></div>
                     <div className="flex justify-between items-center">
-                      <span className="text-xs text-gray-600 uppercase font-bold">Total Players</span>
+                      <span className="text-sm text-gray-600 uppercase font-bold">Total</span>
                       <span className="text-lg font-black text-slate-800">{totalPlayers}</span>
                     </div>
                     {estimatedTime > 0 && (
                       <>
                         <div className="h-px bg-purple-200"></div>
                         <div className="flex justify-between items-center">
-                          <span className="text-xs text-gray-600 uppercase font-bold">Est. Time</span>
+                          <span className="text-sm text-gray-600 uppercase font-bold">Est. Time</span>
                           <span className="text-lg font-black text-slate-800">~{estimatedTime} min</span>
                         </div>
                       </>
                     )}
                     {queuePosition === 1 && (
-                      <div className="mt-3 p-3 bg-yellow-50 border-2 border-yellow-300 rounded-lg">
-                        <p className="text-xs font-bold text-yellow-700 text-center uppercase">🔥 You're Next!</p>
+                      <div className="mt-2 p-3 bg-yellow-50 border-2 border-yellow-300 rounded-lg">
+                        <p className="text-sm font-bold text-yellow-700 text-center uppercase">🔥 You're Next!</p>
                       </div>
                     )}
                   </div>
@@ -836,14 +908,14 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
               )}
 
               {/* Live Activity Feed */}
-              <div className="bg-white/90 rounded-2xl border-2 border-green-200 shadow-xl overflow-hidden">
-                <div className="bg-gradient-to-r from-green-100 to-emerald-100 px-6 py-4 border-b-2 border-green-200">
+              <div className="bg-white/90 rounded-2xl border-2 border-green-200 shadow-xl overflow-hidden flex-1 flex flex-col">
+                <div className="bg-gradient-to-r from-green-100 to-emerald-100 px-4 py-3 border-b-2 border-green-200">
                   <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                    <Activity size={16} className="text-green-600" />
-                    Live Activity Feed
+                    <Activity size={14} className="text-green-600" />
+                    Activity Feed
                   </h3>
                 </div>
-                <div className="overflow-y-auto p-4 space-y-2 h-64">
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
                   {activityFeed.length === 0 ? (
                     <div className="flex items-center justify-center py-8">
                       <p className="text-gray-400 text-sm">No activity yet</p>
@@ -852,20 +924,24 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
                     activityFeed.map(item => (
                       <div
                         key={item.id}
-                        className={`flex items-start gap-3 p-3 rounded-xl border-2 ${
+                        className={`flex items-start gap-2 p-3 rounded-lg border-2 text-sm ${
                           item.type === 'bid'
                             ? 'bg-blue-50 border-blue-300'
                             : item.type === 'sold'
                             ? 'bg-green-50 border-green-300'
+                            : item.type === 'unsold'
+                            ? 'bg-orange-50 border-orange-300'
                             : 'bg-gray-50 border-gray-300'
                         }`}
                       >
-                        <div className={`w-2 h-2 rounded-full mt-1.5 ${
+                        <div className={`w-1.5 h-1.5 rounded-full mt-1 flex-shrink-0 ${
                           item.type === 'bid' ? 'bg-blue-500' :
-                          item.type === 'sold' ? 'bg-green-500' : 'bg-gray-500'
+                          item.type === 'sold' ? 'bg-green-500' :
+                          item.type === 'unsold' ? 'bg-orange-500' :
+                          'bg-gray-500'
                         }`}></div>
-                        <div className="flex-1">
-                          <p className="text-sm font-bold text-slate-800">{item.message}</p>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-sm text-slate-800 break-words">{item.message}</p>
                           <p className="text-xs text-gray-500 mt-0.5">{item.time}</p>
                         </div>
                       </div>
@@ -875,8 +951,8 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
               </div>
             </div>
 
-            {/* Center: Live Auction Room */}
-            <div className="col-span-6 flex flex-col gap-4 overflow-hidden">
+            {/* Center: Live Auction Room - col-span-3 */}
+            <div className="col-span-3 flex flex-col gap-4 overflow-hidden">
               {finalResult ? (
                 /* Result Panel */
                 <div className="bg-white/90 backdrop-blur-lg rounded-2xl border-2 border-cyan-200 shadow-xl h-full flex flex-col items-center justify-center p-8">
@@ -1037,44 +1113,44 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
               )}
             </div>
 
-            {/* Right: Teams Panel + Auction Info */}
+            {/* Right: Teams Panel + Auction Info - col-span-3 */}
             <div className="col-span-3 flex flex-col gap-3 h-full overflow-hidden">
               {/* All Teams (Scrollable) */}
               <div className="bg-white/90 backdrop-blur-lg rounded-2xl border-2 border-purple-200 shadow-xl overflow-hidden flex flex-col flex-1">
-                <div className="bg-gradient-to-r from-purple-100 via-pink-100 to-purple-100 px-5 py-3 border-b-2 border-purple-200">
+                <div className="bg-gradient-to-r from-purple-100 via-pink-100 to-purple-100 px-4 py-3 border-b-2 border-purple-200">
                   <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
                     <Shield size={14} className="text-purple-600" />
-                    All Teams ({teams.length})
+                    Teams ({teams.length})
                   </h3>
                 </div>
                 <div className="flex-1 overflow-y-auto p-3 space-y-2">
                   {teams.map(team => (
                     <div
                       key={team.id}
-                      className="bg-white hover:bg-purple-50 rounded-xl p-4 border-2 border-purple-100 transition-all cursor-pointer"
+                      className="bg-white hover:bg-purple-50 rounded-lg p-3 border-2 border-purple-100 transition-all cursor-pointer"
                     >
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-400 to-pink-500 flex items-center justify-center overflow-hidden">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-400 to-pink-500 flex items-center justify-center overflow-hidden flex-shrink-0">
                           {team.logo ? (
                             <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
                           ) : (
-                            <Shield size={20} className="text-white" />
+                            <Shield size={16} className="text-white" />
                           )}
                         </div>
-                        <div className="flex-1">
-                          <h4 className="font-black text-slate-800 text-sm uppercase">{team.name}</h4>
-                          <p className="text-[10px] text-gray-600 uppercase tracking-wider font-bold">
-                            {team.budget > 0 ? 'Active' : 'Budget Exhausted'}
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-black text-slate-800 text-xs uppercase truncate">{team.name}</h4>
+                          <p className="text-[9px] text-gray-600 uppercase tracking-wider font-bold">
+                            {team.budget > 0 ? 'Active' : 'Empty'}
                           </p>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 mt-2">
-                        <div className="text-center p-2 bg-green-50 rounded-lg border border-green-200">
-                          <p className="text-[9px] text-gray-600 uppercase font-bold">Budget</p>
+                      <div className="grid grid-cols-2 gap-1 mt-2">
+                        <div className="text-center p-1.5 bg-green-50 rounded border border-green-200">
+                          <p className="text-[8px] text-gray-600 uppercase font-bold">Budget</p>
                           <p className="text-xs font-black text-green-600">₹{(team.budget / 100000).toFixed(1)}L</p>
                         </div>
-                        <div className="text-center p-2 bg-blue-50 rounded-lg border border-blue-200">
-                          <p className="text-[9px] text-gray-600 uppercase font-bold">Players</p>
+                        <div className="text-center p-1.5 bg-blue-50 rounded border border-blue-200">
+                          <p className="text-[8px] text-gray-600 uppercase font-bold">Players</p>
                           <p className="text-xs font-black text-blue-600">{team.playerIds?.length || 0}</p>
                         </div>
                       </div>
@@ -1082,9 +1158,9 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
                   ))}
                 </div>
               </div>
-              
+
               {/* Auction Info (Fixed at bottom) */}
-              <div className="bg-green-50 rounded-xl border-2 border-green-200 p-4">
+              <div className="bg-green-50 rounded-xl border-2 border-green-200 p-4 shadow-lg">
                 <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-2">
                   <Trophy size={14} className="text-green-600" />
                   Auction Info

@@ -4,12 +4,14 @@ Single Cloud Function with all routes handled via path routing
 """
 
 from firebase_functions import https_fn, options
-from firebase_admin import credentials, firestore, initialize_app
+from firebase_admin import credentials, firestore, initialize_app, storage
 from datetime import datetime
 from typing import Dict, Any
 import uuid
 import json
 import traceback
+import os
+from werkzeug.utils import secure_filename
 
 # Initialize Firebase Admin
 try:
@@ -26,6 +28,15 @@ def get_db():
     if _db is None:
         _db = firestore.client()
     return _db
+
+# Lazy initialize Storage bucket
+_bucket = None
+
+def get_storage_bucket():
+    global _bucket
+    if _bucket is None:
+        _bucket = storage.bucket()
+    return _bucket
 
 # ====================
 # UTILITY FUNCTIONS
@@ -154,6 +165,105 @@ def emit_realtime_push(collection_name: str, data: Dict):
         return None
 
 # ====================
+# FILE UPLOAD FUNCTIONS
+# ====================
+
+ALLOWED_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'webp'}
+ALLOWED_PDF_EXTENSIONS = {'pdf'}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+def validate_file(file, file_type: str = 'image'):
+    """Validate file size and extension"""
+    allowed_extensions = ALLOWED_IMAGE_EXTENSIONS if file_type == 'image' else ALLOWED_PDF_EXTENSIONS
+    
+    if file.content_length and file.content_length > MAX_FILE_SIZE:
+        raise ValueError(f"File size exceeds {MAX_FILE_SIZE / (1024*1024)}MB limit")
+    
+    filename = secure_filename(file.filename)
+    ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+    
+    if ext not in allowed_extensions:
+        raise ValueError(f"File type .{ext} not allowed. Allowed: {', '.join(allowed_extensions)}")
+    
+    return filename, ext
+
+def upload_file_to_storage(file, folder: str, file_type: str = 'image') -> str:
+    """
+    Upload file to Firebase Storage and return download URL
+    
+    Args:
+        file: Flask file object
+        folder: Storage folder (e.g., 'players/photos', 'documents')
+        file_type: 'image' or 'pdf'
+    
+    Returns:
+        Download URL of the uploaded file
+    """
+    try:
+        # Validate file
+        filename, ext = validate_file(file, file_type)
+        
+        # Generate unique filename with timestamp
+        timestamp = int(datetime.now().timestamp() * 1000)
+        unique_filename = f"{timestamp}_{uuid.uuid4().hex[:8]}.{ext}"
+        storage_path = f"{folder}/{unique_filename}"
+        
+        # Get storage bucket
+        bucket = get_storage_bucket()
+        blob = bucket.blob(storage_path)
+        
+        # Upload file
+        print(f"📤 Uploading file: {storage_path}")
+        blob.upload_from_string(
+            file.read(),
+            content_type=file.content_type
+        )
+        
+        # Make blob publicly readable for getting download URL
+        blob.make_public()
+        
+        download_url = blob.public_url
+        print(f"✅ File uploaded successfully: {download_url}")
+        
+        return download_url
+    
+    except ValueError as e:
+        raise ValueError(f"File validation error: {str(e)}")
+    except Exception as e:
+        print(f"❌ File upload error: {e}")
+        raise Exception(f"Failed to upload file: {str(e)}")
+
+def handle_file_upload(req: https_fn.Request, folder: str, file_type: str = 'image'):
+    """Handle file upload request"""
+    try:
+        if 'file' not in req.files:
+            return create_response(error_response("No file provided"), 400)
+        
+        file = req.files['file']
+        
+        if file.filename == '':
+            return create_response(error_response("No file selected"), 400)
+        
+        # Upload to Firebase Storage
+        download_url = upload_file_to_storage(file, folder, file_type)
+        
+        response_data = {
+            'success': True,
+            'url': download_url,
+            'filename': file.filename,
+            'fileType': file_type,
+            'uploadedAt': datetime.now().isoformat()
+        }
+        
+        return create_response(response_data, 200)
+    
+    except ValueError as e:
+        return create_response(error_response(str(e)), 400)
+    except Exception as e:
+        print(f"❌ Upload handler error: {e}")
+        return create_response(error_response(f"Upload failed: {str(e)}"), 500)
+
+# ====================
 # UNIFIED API ENDPOINT
 # ====================
 
@@ -221,19 +331,47 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                 return get_auth_users(data)
             elif (action == 'complete-profile' or resource_id == 'complete-profile') and method == 'POST':
                 return complete_auth_profile(data)
+            elif (action == 'debug-admins' or resource_id == 'debug-admins') and method == 'GET':
+                # Debug endpoint - list all admin documents
+                try:
+                    docs = list(get_db().collection('matches').where('role', '==', 'ADMIN').stream())
+                    admins = []
+                    for doc in docs:
+                        data = doc.to_dict()
+                        admins.append({
+                            'id': doc.id,
+                            'email': data.get('email'),
+                            'name': data.get('name'),
+                            'password': data.get('password'),
+                            'role': data.get('role'),
+                            'has_password': 'password' in data
+                        })
+                    return create_response(success_response(admins, f"Found {len(admins)} admins"))
+                except Exception as e:
+                    return create_response(error_response(f"Debug error: {str(e)}"), 500)
         
         # ===== REGISTRATION ROUTES =====
         elif resource == 'register':
-            if action == 'admin' and method == 'POST':
+            # Handle both /register/admin and /register/admin as resource_id
+            reg_type = action or resource_id
+            print(f"📝 REGISTER: reg_type={reg_type}, action={action}, resource_id={resource_id}, method={method}")
+            if reg_type == 'admin' and method == 'POST':
+                print(f"✓ Handling admin registration")
                 return handle_register_admin(data)
-            elif action == 'auctioneer' and method == 'POST':
+            elif reg_type == 'auctioneer' and method == 'POST':
+                print(f"✓ Handling auctioneer registration")
                 return handle_register_auctioneer(data)
-            elif action == 'team' and method == 'POST':
+            elif reg_type == 'team' and method == 'POST':
+                print(f"✓ Handling team registration")
                 return handle_register_team(data)
-            elif action == 'player' and method == 'POST':
+            elif reg_type == 'player' and method == 'POST':
+                print(f"✓ Handling player registration")
                 return handle_register_player(data)
-            elif action == 'guest' and method == 'POST':
+            elif reg_type == 'guest' and method == 'POST':
+                print(f"✓ Handling guest registration")
                 return handle_register_guest(data)
+            else:
+                print(f"✗ No matching registration type for: {reg_type}")
         
         # ===== TEAM ROUTES =====
         elif resource == 'teams':
@@ -268,9 +406,9 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                 return delete_auctioneer(resource_id)
         
         elif resource == 'auctioneer':
-            if action == 'approve' and method == 'POST':
+            if resource_id == 'approve' and method == 'POST':
                 return approve_auctioneer(data)
-            elif action == 'reject' and method == 'POST':
+            elif resource_id == 'reject' and method == 'POST':
                 return reject_auctioneer(data)
         
         # ===== PLAYER ROUTES =====
@@ -288,11 +426,13 @@ def auction(req: https_fn.Request) -> https_fn.Response:
         
         # ===== PLAYER AUCTION ACTIONS =====
         elif resource == 'player':
-            # For routes like /player/start, /player/close
+            # For routes like /player/start, /player/close, /player/unsold
             if resource_id == 'start' and method == 'POST':
                 return start_player_bidding(data)
             elif resource_id == 'close' and method == 'POST':
                 return close_player_bidding(data)
+            elif resource_id == 'unsold' and method == 'POST':
+                return mark_player_unsold(data)
             elif resource_id == 'reset' and method == 'POST':
                 return reset_live_auction(data)
         
@@ -329,18 +469,24 @@ def auction(req: https_fn.Request) -> https_fn.Response:
             elif resource == 'end' and method == 'POST':
                 return end_auction(data)
         
+        # ===== MATCH STATUS UPDATE (Admin only) =====
+        elif resource == 'match-status' and method == 'PUT' and resource_id:
+            return update_match_status(resource_id, data)
+        
         # ===== AUCTION (OLD STRUCTURE) =====
         elif resource == 'auction':
             # For routes like /auction/start, /auction/player/start
             auction_action = resource_id
             auction_subaction = action
             
-            # Player-specific auction actions: /auction/player/start, /auction/player/close
+            # Player-specific auction actions: /auction/player/start, /auction/player/close, /auction/player/unsold
             if auction_action == 'player':
                 if auction_subaction == 'start' and method == 'POST':
                     return start_player_bidding(data)
                 elif auction_subaction == 'close' and method == 'POST':
                     return close_player_bidding(data)
+                elif auction_subaction == 'unsold' and method == 'POST':
+                    return mark_player_unsold(data)
             # General auction actions
             elif auction_action == 'start' and method == 'POST':
                 return start_auction(data)
@@ -352,6 +498,11 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                 return resume_auction(data)
             elif auction_action == 'end' and method == 'POST':
                 return end_auction(data)
+        
+        # ===== RE-AUCTION ROUTES =====
+        elif resource == 'reauction':
+            if resource_id == 'start' and method == 'POST':
+                return start_reauction_unsold(data)
         
         # ===== HISTORY ROUTES =====
         elif resource == 'history':
@@ -374,6 +525,30 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                 return get_sports(data)
             elif method == 'POST':
                 return save_sports(data)
+        
+        # ===== FILE UPLOAD ROUTES =====
+        elif resource == 'upload':
+            if method == 'POST':
+                upload_type = resource_id  # e.g., 'player-photo', 'team-logo', 'document'
+                
+                if upload_type == 'player-photo':
+                    return handle_file_upload(req, 'players/photos', 'image')
+                elif upload_type == 'team-logo':
+                    return handle_file_upload(req, 'teams/logos', 'image')
+                elif upload_type == 'profile-picture':
+                    return handle_file_upload(req, 'users/profiles', 'image')
+                elif upload_type == 'auction-recording':
+                    return handle_file_upload(req, 'auctions/recordings', 'video')
+                elif upload_type == 'auction-replay':
+                    return handle_file_upload(req, 'auctions/replays', 'video')
+                elif upload_type == 'document':
+                    return handle_file_upload(req, 'documents', 'pdf')
+                elif upload_type == 'match-highlight':
+                    return handle_file_upload(req, 'matches/highlights', 'video')
+                else:
+                    return create_response(error_response(f"Unknown upload type: {upload_type}"), 400)
+            else:
+                return create_response(error_response("Use POST method for file uploads"), 405)
         
         # ===== AUCTIONS (CRUD) ROUTES =====
         elif resource == 'auctions':
@@ -459,7 +634,7 @@ def delete_user(user_id):
 def handle_login(data):
     """Login user with email and password - checks all collections"""
     try:
-        email = data.get('email')
+        email = data.get('email', '').lower().strip()
         password = data.get('password')
         
         if not email or not password:
@@ -472,50 +647,86 @@ def handle_login(data):
         
         for collection_name in collections:
             try:
+                print(f"🔍 Searching in {collection_name} for email={email}")
+                # Query by email first
                 docs = list(get_db().collection(collection_name).where('email', '==', email).stream())
+                
+                # For matches collection, also check adminEmail and organizerEmail fields
+                if collection_name == 'matches' and not docs:
+                    print(f"🔍 Not found by 'email', trying 'adminEmail' and 'organizerEmail'")
+                    admin_docs = list(get_db().collection(collection_name).where('adminEmail', '==', email).stream())
+                    org_docs = list(get_db().collection(collection_name).where('organizerEmail', '==', email).stream())
+                    docs = admin_docs + org_docs
+                
+                print(f"📦 Found {len(docs)} documents in {collection_name}")
                 
                 if docs:
                     user_doc = docs[0]
                     user_data = user_doc.to_dict()
                     
-                    # Check password
-                    if user_data.get('password') != password:
-                        print(f"❌ Password mismatch for {email}")
-                        continue
+                    # Get password from various possible fields
+                    stored_password = user_data.get('password') or user_data.get('organizerPassword')
+                    doc_id = user_doc.id
+                    is_admin = user_data.get('role') == 'ADMIN' or collection_name == 'matches'
                     
-                    print(f"✅ Login successful for {email} from {collection_name}")
-                    # Return user data (excluding password)
-                    response_data = {k: v for k, v in user_data.items() if k != 'password'}
-                    response_data['id'] = user_doc.id
-                    response_data['collection'] = collection_name
+                    print(f"📋 Found user in {collection_name}: id={doc_id}, is_admin={is_admin}, has_password={'Yes' if stored_password else 'No'}")
                     
-                    # Set role based on collection
-                    if collection_name == 'auctioneers' and 'role' not in response_data:
-                        response_data['role'] = 'AUCTIONEER'
-                    elif collection_name == 'teams' and 'role' not in response_data:
-                        response_data['role'] = 'TEAM_REP'
-                    elif collection_name == 'players' and 'role' not in response_data:
-                        response_data['role'] = 'PLAYER'
-                    elif collection_name == 'guests' and 'role' not in response_data:
-                        response_data['role'] = 'GUEST'
-                    elif collection_name == 'matches' and 'role' not in response_data:
-                        response_data['role'] = 'ADMIN'  # Admins are stored in matches collection
-                    
-                    return create_response(success_response({'user': response_data}, "Login successful"))
+                    # For matches collection, accept as admin if it's a match document
+                    if collection_name == 'matches':
+                        # This is a match document - treat as admin login
+                        if stored_password != password:
+                            print(f"❌ Password mismatch: stored='{stored_password}', provided='{password}'")
+                            continue
+                        
+                        print(f"✅ Login successful for {email} from {collection_name} (match document)")
+                        response_data = {k: v for k, v in user_data.items() if k not in ['password', 'organizerPassword']}
+                        response_data['id'] = doc_id
+                        response_data['collection'] = collection_name
+                        response_data['role'] = 'ADMIN'
+                        # Ensure email field exists for frontend consistency
+                        response_data['email'] = response_data.get('email') or response_data.get('adminEmail') or response_data.get('organizerEmail') or email
+                        
+                        return create_response(success_response({'user': response_data}, "Login successful"))
+                    else:
+                        # Check password for other collections
+                        if stored_password != password:
+                            print(f"❌ Password mismatch for {email} in {collection_name}")
+                            continue
+                        
+                        print(f"✅ Login successful for {email} from {collection_name}")
+                        response_data = {k: v for k, v in user_data.items() if k != 'password'}
+                        response_data['id'] = doc_id
+                        response_data['collection'] = collection_name
+                        
+                        # Set role based on collection
+                        if collection_name == 'auctioneers' and 'role' not in response_data:
+                            response_data['role'] = 'AUCTIONEER'
+                        elif collection_name == 'teams' and 'role' not in response_data:
+                            response_data['role'] = 'TEAM_REP'
+                        elif collection_name == 'players' and 'role' not in response_data:
+                            response_data['role'] = 'PLAYER'
+                        elif collection_name == 'guests' and 'role' not in response_data:
+                            response_data['role'] = 'GUEST'
+                        
+                        return create_response(success_response({'user': response_data}, "Login successful"))
             except Exception as e:
                 print(f"Error checking {collection_name}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
         
         print(f"❌ User not found: {email}")
         return create_response(error_response("Invalid email or password", 401), 401)
     except Exception as e:
         print(f"❌ Login error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return create_response(error_response(f"Login failed: {str(e)}", 500), 500)
 
 def handle_auth_register(data):
     """Register user via auth endpoint"""
     try:
-        email = data.get('email')
+        email = data.get('email', '').lower().strip()
         password = data.get('password')
         role = data.get('role', 'GUEST').upper()
         
@@ -693,7 +904,7 @@ def approve_auctioneer(data):
             return create_response(error_response("Auctioneer not found", 404), 404)
         
         doc_ref.update({
-            'approvalStatus': 'APPROVED',
+            'status': 'approved',
             'approvedAt': datetime.now().isoformat()
         })
         
@@ -716,7 +927,7 @@ def reject_auctioneer(data):
             return create_response(error_response("Auctioneer not found", 404), 404)
         
         doc_ref.update({
-            'approvalStatus': 'REJECTED',
+            'status': 'rejected',
             'rejectionReason': reason,
             'rejectedAt': datetime.now().isoformat()
         })
@@ -796,8 +1007,11 @@ def delete_player(player_id):
     return create_response(success_response(None, "Deleted"))
 
 def get_matches(data):
-    docs = get_db().collection('matches').stream()
-    return create_response(success_response(serialize_firestore_docs(docs)))
+    """Get all match documents (excluding admin user documents)"""
+    docs = list(get_db().collection('matches').stream())
+    # Filter out admin user documents - keep only actual match documents
+    match_docs = [doc for doc in docs if doc.to_dict().get('role') != 'ADMIN']
+    return create_response(success_response(serialize_firestore_docs(match_docs)))
 
 def get_match(match_id):
     """Get match details and include current live auction state"""
@@ -1080,6 +1294,32 @@ def resume_auction(data):
     emit_realtime_event('auctionResumed', data, match_id)
     return create_response(success_response(data))
 
+def update_match_status(match_id, data):
+    """Update match status (SETUP, ONGOING, or COMPLETED) - Admin/Auctioneer only"""
+    try:
+        new_status = data.get('status')
+        if not new_status or new_status not in ['SETUP', 'ONGOING', 'COMPLETED']:
+            return create_response(error_response(f"Invalid status. Must be SETUP, ONGOING, or COMPLETED"), 400)
+        
+        doc_ref = get_db().collection('matches').document(match_id)
+        if not doc_ref.get().exists:
+            return create_response(error_response(f"Match {match_id} not found", 404), 404)
+        
+        # Update the status
+        doc_ref.update({
+            'status': new_status,
+            'updatedAt': datetime.now().isoformat(),
+            'statusUpdatedBy': data.get('updatedBy', 'system'),
+            'statusUpdatedAt': datetime.now().isoformat()
+        })
+        
+        print(f"✅ Match {match_id} status updated to {new_status}")
+        emit_realtime_event('matchStatusUpdated', {'status': new_status}, match_id)
+        return create_response(success_response({'status': new_status}, f"Match status updated to {new_status}"))
+    except Exception as e:
+        print(f"❌ Error updating match status: {str(e)}")
+        return create_response(error_response(f"Failed to update match status: {str(e)}"), 500)
+
 def end_auction(data):
     match_id = data.get('matchId')
     get_db().collection('matches').document(match_id).update({
@@ -1140,11 +1380,50 @@ def handle_register_admin(data):
         
         email = data.get('email', '').lower().strip()
         
-        # Check if email already exists in any collection
-        for collection in ['matches', 'auctioneers', 'teams', 'players', 'guests']:
-            existing = list(get_db().collection(collection).where('email', '==', email).stream())
-            if existing:
-                return create_response(error_response(f"Email {email} already registered", 409), 409)
+        # 🔐 CRITICAL: Check if email is ALREADY USED in ANY collection for ANY match/role
+        print(f"\n🔐 ADMIN EMAIL VALIDATION - checking if {email} exists in ANY collection...")
+        
+        # Check matches collection (other admins)
+        matches_with_email = list(get_db().collection('matches').where('email', '==', email).stream())
+        if matches_with_email:
+            match_doc = matches_with_email[0].to_dict()
+            existing_match_id = match_doc.get('id', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as an ADMIN for another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check auctioneers collection
+        auctioneers_with_email = list(get_db().collection('auctioneers').where('email', '==', email).stream())
+        if auctioneers_with_email:
+            auctioneer_doc = auctioneers_with_email[0].to_dict()
+            existing_match_id = auctioneer_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as an AUCTIONEER in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check teams collection
+        teams_with_email = list(get_db().collection('teams').where('email', '==', email).stream())
+        if teams_with_email:
+            team_doc = teams_with_email[0].to_dict()
+            existing_match_id = team_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as a TEAM in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check players collection
+        players_with_email = list(get_db().collection('players').where('email', '==', email).stream())
+        if players_with_email:
+            player_doc = players_with_email[0].to_dict()
+            existing_match_id = player_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as a PLAYER in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        print(f"✅ Email {email} is unique - no conflicts found in any match")
         
         # Create admin user in 'matches' collection
         user_id = generate_id('admin')
@@ -1176,20 +1455,82 @@ def handle_register_admin(data):
 def handle_register_auctioneer(data):
     """Register an auctioneer for a specific match"""
     try:
+        print("=" * 80)
+        print("AUCTIONEER REGISTRATION HANDLER STARTED")
+        print("=" * 80)
+        
+        print(f"📦 Received data keys: {list(data.keys())}")
+        print(f"📦 Full data object: {data}")
+        
         required_fields = ['fullName', 'email', 'password', 'seasonId']
         if not all(field in data for field in required_fields):
             return create_response(error_response(f"Missing required fields: {required_fields}"), 400)
         
-        for collection in ['auctioneers', 'teams', 'players', 'guests', 'matches', 'users']:
-            existing = list(get_db().collection(collection).where('email', '==', data['email']).stream())
-            if existing:
-                return create_response(error_response(f"Email {data['email']} already registered", 409), 409)
+        print(f"✅ All required fields present")
+        print(f"\n🔍 GOVERNMENT ID FIELDS:")
+        print(f"   - 'governmentId' in data: {'governmentId' in data}")
+        print(f"   - data.get('governmentId'): {data.get('governmentId')}")
+        print(f"   - 'governmentIdFile' in data: {'governmentIdFile' in data}")
+        print(f"   - data.get('governmentIdFile'): {data.get('governmentIdFile')}")
+        
+        season_id = data['seasonId']
+        email = data['email'].lower().strip()
+        
+        # Check if this email is already registered for THIS SPECIFIC MATCH
+        existing = list(get_db().collection('auctioneers').where('email', '==', email).where('matchId', '==', season_id).stream())
+        if existing:
+            return create_response(error_response(f"Email {email} already registered for this match", 409), 409)
+        
+        # CHECK IF EMAIL IS REGISTERED IN ANY OTHER MATCH (across all collections and matches)
+        print(f"\n🔐 DUPLICATE EMAIL CHECK - checking if {email} exists in ANY match...")
+        
+        # Check auctioneers collection
+        auctioneers_with_email = list(get_db().collection('auctioneers').where('email', '==', email).stream())
+        if auctioneers_with_email:
+            auctioneer_doc = auctioneers_with_email[0].to_dict()
+            existing_match_id = auctioneer_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as an AUCTIONEER in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check teams collection
+        teams_with_email = list(get_db().collection('teams').where('email', '==', email).stream())
+        if teams_with_email:
+            team_doc = teams_with_email[0].to_dict()
+            existing_match_id = team_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as a TEAM in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check players collection
+        players_with_email = list(get_db().collection('players').where('email', '==', email).stream())
+        if players_with_email:
+            player_doc = players_with_email[0].to_dict()
+            existing_match_id = player_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as a PLAYER in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check matches collection (admins)
+        matches_with_email = list(get_db().collection('matches').where('email', '==', email).stream())
+        if matches_with_email:
+            match_doc = matches_with_email[0].to_dict()
+            existing_match_id = match_doc.get('id', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as an ADMIN for a match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        print(f"✅ Email {email} is unique - no conflicts found in any match")
         
         user_id = generate_id('auctioneer')
         user_data = {
             'id': user_id,
             'name': data['fullName'],
-            'email': data['email'],
+            'email': email,
             'password': data['password'],
             'phone': data.get('phone', ''),
             'role': 'AUCTIONEER',
@@ -1199,14 +1540,26 @@ def handle_register_auctioneer(data):
             'languages': data.get('languages', []),
             'previousAuctions': data.get('previousAuctions', ''),
             'availability': data.get('availability', 'Yes'),
+            'governmentId': data.get('governmentId', ''),
+            'governmentIdFile': data.get('governmentIdFile', ''),
+            'auctioneerLicense': data.get('auctioneerLicense', ''),
+            'experience': data.get('experience', 0),
             'createdAt': datetime.now().isoformat(),
             'updatedAt': datetime.now().isoformat(),
+            'status': 'pending',
             'profileComplete': True
         }
         
-        print(f"✅ Creating auctioneer: {user_id} - {data['email']}")
+        print(f"\n✅ Creating auctioneer: {user_id} - {data['email']}")
+        print(f"\n📝 USER_DATA TO BE STORED:")
+        print(f"   - governmentId: {user_data['governmentId']}")
+        print(f"   - governmentIdFile: {user_data['governmentIdFile']}")
+        print(f"   - name: {user_data['name']}")
+        print(f"   - email: {user_data['email']}")
+        
         get_db().collection('auctioneers').document(user_id).set(user_data)
         print(f"✅ Auctioneer registered successfully in Firebase")
+        print("=" * 80)
         
         return create_response(success_response({'userId': user_id, 'auctioneerId': user_id}, "Auctioneer registered successfully"), 201)
     except Exception as e:
@@ -1219,10 +1572,58 @@ def handle_register_team(data):
         if not all(field in data for field in required_fields):
             return create_response(error_response(f"Missing required fields: {required_fields}"), 400)
         
-        for collection in ['auctioneers', 'teams', 'players', 'guests', 'matches', 'users']:
-            existing = list(get_db().collection(collection).where('email', '==', data['email']).stream())
-            if existing:
-                return create_response(error_response(f"Email {data['email']} already registered", 409), 409)
+        season_id = data['seasonId']
+        email = data['email'].lower().strip()
+        
+        # Check if this email is already registered for THIS SPECIFIC MATCH
+        existing = list(get_db().collection('teams').where('email', '==', email).where('matchId', '==', season_id).stream())
+        if existing:
+            return create_response(error_response(f"Email {email} already registered for this match", 409), 409)
+        
+        # CHECK IF EMAIL IS REGISTERED IN ANY OTHER MATCH (across all collections and matches)
+        print(f"\n🔐 DUPLICATE EMAIL CHECK - checking if {email} exists in ANY match...")
+        
+        # Check auctioneers collection
+        auctioneers_with_email = list(get_db().collection('auctioneers').where('email', '==', email).stream())
+        if auctioneers_with_email:
+            auctioneer_doc = auctioneers_with_email[0].to_dict()
+            existing_match_id = auctioneer_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as an AUCTIONEER in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check teams collection
+        teams_with_email = list(get_db().collection('teams').where('email', '==', email).stream())
+        if teams_with_email:
+            team_doc = teams_with_email[0].to_dict()
+            existing_match_id = team_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as a TEAM in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check players collection
+        players_with_email = list(get_db().collection('players').where('email', '==', email).stream())
+        if players_with_email:
+            player_doc = players_with_email[0].to_dict()
+            existing_match_id = player_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as a PLAYER in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check matches collection (admins)
+        matches_with_email = list(get_db().collection('matches').where('email', '==', email).stream())
+        if matches_with_email:
+            match_doc = matches_with_email[0].to_dict()
+            existing_match_id = match_doc.get('id', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as an ADMIN for a match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        print(f"✅ Email {email} is unique - no conflicts found in any match")
         
         team_id = generate_id('team')
         team_data = {
@@ -1236,7 +1637,7 @@ def handle_register_team(data):
             'matchId': data['seasonId'],
             'players': [],
             'ownerName': data['fullName'],
-            'email': data['email'],
+            'email': email,
             'password': data['password'],
             'phone': data.get('phone', ''),
             'role': 'TEAM_REP',
@@ -1259,16 +1660,64 @@ def handle_register_player(data):
         if not all(field in data for field in required_fields):
             return create_response(error_response(f"Missing required fields: {required_fields}"), 400)
         
-        for collection in ['auctioneers', 'teams', 'players', 'guests', 'matches', 'users']:
-            existing = list(get_db().collection(collection).where('email', '==', data['email']).stream())
-            if existing:
-                return create_response(error_response(f"Email {data['email']} already registered", 409), 409)
+        season_id = data['seasonId']
+        email = data['email'].lower().strip()
+        
+        # Check if this email is already registered for THIS SPECIFIC MATCH
+        existing = list(get_db().collection('players').where('email', '==', email).where('matchId', '==', season_id).stream())
+        if existing:
+            return create_response(error_response(f"Email {email} already registered for this match", 409), 409)
+        
+        # CHECK IF EMAIL IS REGISTERED IN ANY OTHER MATCH (across all collections and matches)
+        print(f"\n🔐 DUPLICATE EMAIL CHECK - checking if {email} exists in ANY match...")
+        
+        # Check auctioneers collection
+        auctioneers_with_email = list(get_db().collection('auctioneers').where('email', '==', email).stream())
+        if auctioneers_with_email:
+            auctioneer_doc = auctioneers_with_email[0].to_dict()
+            existing_match_id = auctioneer_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as an AUCTIONEER in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check teams collection
+        teams_with_email = list(get_db().collection('teams').where('email', '==', email).stream())
+        if teams_with_email:
+            team_doc = teams_with_email[0].to_dict()
+            existing_match_id = team_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as a TEAM in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check players collection
+        players_with_email = list(get_db().collection('players').where('email', '==', email).stream())
+        if players_with_email:
+            player_doc = players_with_email[0].to_dict()
+            existing_match_id = player_doc.get('matchId', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as a PLAYER in another match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        # Check matches collection (admins)
+        matches_with_email = list(get_db().collection('matches').where('email', '==', email).stream())
+        if matches_with_email:
+            match_doc = matches_with_email[0].to_dict()
+            existing_match_id = match_doc.get('id', 'unknown')
+            return create_response(error_response(
+                f"❌ EMAIL ALREADY IN USE: {email} is already registered as an ADMIN for a match (ID: {existing_match_id}). One email can only be used for ONE match.",
+                409
+            ), 409)
+        
+        print(f"✅ Email {email} is unique - no conflicts found in any match")
         
         player_id = generate_id('player')
         player_data = {
             'id': player_id,
             'name': data['fullName'],
-            'email': data['email'],
+            'email': email,
             'password': data['password'],
             'phone': data.get('phone', ''),
             'role': 'PLAYER',
@@ -1308,16 +1757,19 @@ def handle_register_guest(data):
         if not all(field in data for field in required_fields):
             return create_response(error_response(f"Missing required fields: {required_fields}"), 400)
         
-        for collection in ['auctioneers', 'teams', 'players', 'guests', 'matches', 'users']:
-            existing = list(get_db().collection(collection).where('email', '==', data['email']).stream())
-            if existing:
-                return create_response(error_response(f"Email {data['email']} already registered", 409), 409)
+        season_id = data['seasonId']
+        email = data['email'].lower().strip()
+        
+        # Check if this email is already registered for THIS SPECIFIC MATCH
+        existing = list(get_db().collection('guests').where('email', '==', email).where('matchId', '==', season_id).stream())
+        if existing:
+            return create_response(error_response(f"Email {email} already registered for this match", 409), 409)
         
         user_id = generate_id('guest')
         user_data = {
             'id': user_id,
             'name': data['fullName'],
-            'email': data['email'],
+            'email': email,
             'password': data['password'],
             'phone': data.get('phone', ''),
             'role': 'GUEST',
@@ -1393,6 +1845,9 @@ def start_player_bidding(data):
             print(f"❌ {error_msg}")
             return create_response(error_response(error_msg), 404)
         
+        player_current_data = serialize_firestore_doc(player_doc)
+        is_resuming_live = player_current_data.get('status') == 'LIVE'
+        
         # Ensure only ONE player is LIVE at a time for this season.
         # If previous runs left multiple players as LIVE, normalize them back to AVAILABLE.
         try:
@@ -1413,16 +1868,57 @@ def start_player_bidding(data):
         except Exception as e:
             print(f"⚠ Warning clearing previous LIVE players: {e}")
 
-        # Update player status to LIVE and reset bid data
+        # Determine if we should preserve existing bid or reset to base price
+        should_preserve_bid = False
+        existing_current_bid = player_current_data.get('currentBid')
+        
+        if is_resuming_live and existing_current_bid and existing_current_bid > base_price:
+            # If resuming and player already has bids above basePrice, preserve them
+            should_preserve_bid = True
+            print(f"📌 Resuming LIVE player with existing bid ₹{existing_current_bid} - preserving bid state")
+        else:
+            # Otherwise, check if there are any bids in history for this player
+            try:
+                existing_bids = list(
+                    get_db()
+                    .collection('bids')
+                    .where('seasonId', '==', season_id)
+                    .where('playerId', '==', player_id)
+                    .order_by('timestamp', direction=firestore.Query.DESCENDING)
+                    .limit(1)
+                    .stream()
+                )
+                if existing_bids:
+                    latest_bid_doc = existing_bids[0]
+                    latest_bid = serialize_firestore_doc(latest_bid_doc)
+                    latest_bid_amount = latest_bid.get('amount', 0)
+                    if latest_bid_amount > base_price:
+                        should_preserve_bid = True
+                        existing_current_bid = latest_bid_amount
+                        print(f"⚠️ Found existing bid ₹{latest_bid_amount} in history - will preserve if resuming")
+            except Exception as e:
+                print(f"⚠ Warning checking bid history: {e}")
+        
+        # Update player status to LIVE (preserve or reset bid data based on above logic)
         try:
-            player_ref.update({
+            update_data = {
                 'status': 'LIVE',
-                'currentBid': base_price,
                 'basePrice': base_price,
-                'leadingTeamId': None,
-                'leadingTeamName': None,
                 'updatedAt': datetime.now().isoformat()
-            })
+            }
+            
+            if should_preserve_bid and existing_current_bid:
+                # PRESERVE existing bid state
+                update_data['currentBid'] = existing_current_bid
+                print(f"✓ Preserved existing bid: ₹{existing_current_bid}")
+            else:
+                # RESET to base price for new bidding
+                update_data['currentBid'] = base_price
+                update_data['leadingTeamId'] = None
+                update_data['leadingTeamName'] = None
+                print(f"✓ Reset bidding to base price: ₹{base_price}")
+            
+            player_ref.update(update_data)
             print(f"✓ Updated player {player_id} to LIVE")
         except Exception as e:
             print(f"❌ Failed to update player: {e}")
@@ -1437,9 +1933,11 @@ def start_player_bidding(data):
             return create_response(error_response(f"Failed to fetch updated player: {str(e)}"), 400)
 
         # Canonical current player doc (all dashboards listen here)
+        # Use the actual currentBid that was set (preserved or reset)
+        actual_current_bid = existing_current_bid if (should_preserve_bid and existing_current_bid) else base_price
         try:
-            _set_current_player(season_id, updated_player, base_price)
-            print(f"✓ Set canonical current player doc")
+            _set_current_player(season_id, updated_player, actual_current_bid)
+            print(f"✓ Set canonical current player doc with currentBid={actual_current_bid}")
         except Exception as e:
             print(f"❌ Failed to set current player doc: {e}")
             return create_response(error_response(f"Failed to set current player: {str(e)}"), 400)
@@ -1450,13 +1948,13 @@ def start_player_bidding(data):
                 'status': 'LIVE',
                 'currentPlayerId': player_id,
                 'currentPlayerName': updated_player.get('name'),
-                'currentBid': base_price,
-                'leadingTeamId': None,
-                'leadingTeamName': None,
+                'currentBid': actual_current_bid,
+                'leadingTeamId': updated_player.get('leadingTeamId') if should_preserve_bid else None,
+                'leadingTeamName': updated_player.get('leadingTeamName') if should_preserve_bid else None,
                 'biddingActive': True,
                 'remainingSeconds': 0
             })
-            print(f"✓ Updated live auction state")
+            print(f"✓ Updated live auction state with currentBid={actual_current_bid}")
         except Exception as e:
             print(f"❌ Failed to update auction state: {e}")
             return create_response(error_response(f"Failed to update auction state: {str(e)}"), 400)
@@ -1559,11 +2057,14 @@ def close_player_bidding(data):
             update_data['soldAmount'] = player_data.get('currentBid', 0)
             update_data['soldAt'] = datetime.now().isoformat()
             print(f"✓ Recording SOLD: soldTo={player_data.get('leadingTeamId')}, soldAmount={player_data.get('currentBid')}")
-        # If unsold, clear bid data
+        # If unsold, clear bid data and increment unsold count
         else:
+            unsold_count = player_data.get('unsoldCount', 0) + 1
             update_data['currentBid'] = player_data.get('basePrice', 0)
             update_data['leadingTeamId'] = None
             update_data['leadingTeamName'] = None
+            update_data['unsoldCount'] = unsold_count
+            print(f"✓ Recording UNSOLD: count={unsold_count}")
         
         try:
             player_ref.update(update_data)
@@ -1572,15 +2073,31 @@ def close_player_bidding(data):
             print(f"❌ Failed to update player status: {e}")
             return create_response(error_response(f"Failed to update player: {str(e)}"), 400)
 
+        # Update auction state - add to unsold list if unsold
+        auction_updates = {
+            'currentPlayerId': None,
+            'currentPlayerName': None,
+            'biddingActive': False,
+            'leadingTeamId': None,
+            'leadingTeamName': None
+        }
+        
+        # Track unsold players
+        if not sold:
+            try:
+                auction_doc = get_db().collection('liveAuctions').document(season_id).get()
+                auction_state = auction_doc.to_dict() if auction_doc.exists else {}
+                unsold_players = auction_state.get('unsoldPlayers', [])
+                if target_player_id not in unsold_players:
+                    unsold_players.append(target_player_id)
+                auction_updates['unsoldPlayers'] = unsold_players
+                print(f"✓ Added player to unsold list (total: {len(unsold_players)})")
+            except Exception as e:
+                print(f"⚠ Warning tracking unsold player: {e}")
+
         # Update live auction state + clear current player
         try:
-            _set_live_auction_state(season_id, {
-                'currentPlayerId': None,
-                'currentPlayerName': None,
-                'biddingActive': False,
-                'leadingTeamId': None,
-                'leadingTeamName': None
-            })
+            _set_live_auction_state(season_id, auction_updates)
             print(f"✓ Updated live auction state")
         except Exception as e:
             print(f"⚠ Warning updating auction state: {e}")
@@ -1641,6 +2158,194 @@ def close_player_bidding(data):
         import traceback
         traceback.print_exc()
         return create_response(error_response(f"Failed to close player bidding: {error_msg}"), 400)
+
+
+def mark_player_unsold(data):
+    """Mark current player as unsold without closing bidding - adds to unsold list"""
+    try:
+        season_id = data.get('seasonId')
+        
+        print(f"📋 Mark player unsold request: season={season_id}")
+        
+        if not season_id:
+            return create_response(error_response("Missing seasonId"), 400)
+        
+        # Get current player from canonical doc
+        player_id = None
+        try:
+            current_player_doc = get_db().collection('liveAuctions').document(season_id).collection('currentPlayer').document('active').get()
+            if current_player_doc.exists:
+                cp = current_player_doc.to_dict() or {}
+                player_obj = cp.get('player') or {}
+                player_id = cp.get('playerId') or player_obj.get('id')
+                player_name = cp.get('playerName') or player_obj.get('name', 'Unknown')
+                print(f"✓ Found player from canonical doc: {player_id}")
+            else:
+                return create_response(error_response("No player currently up for bidding"), 404)
+        except Exception as e:
+            print(f"❌ Failed to fetch canonical player doc: {e}")
+            return create_response(error_response(f"Failed to fetch player: {str(e)}"), 400)
+        
+        # Get player doc
+        try:
+            player_doc = get_db().collection('players').document(player_id).get()
+            if not player_doc.exists:
+                return create_response(error_response(f"Player {player_id} not found"), 404)
+            player_data = serialize_firestore_doc(player_doc)
+        except Exception as e:
+            print(f"❌ Failed to fetch player: {e}")
+            return create_response(error_response(f"Failed to fetch player: {str(e)}"), 400)
+        
+        # Increment unsold count
+        unsold_count = player_data.get('unsoldCount', 0) + 1
+        
+        # Update player status
+        try:
+            get_db().collection('players').document(player_id).update({
+                'status': 'UNSOLD',
+                'unsoldCount': unsold_count,
+                'updatedAt': datetime.now().isoformat()
+            })
+            print(f"✓ Marked player {player_id} as UNSOLD (count: {unsold_count})")
+        except Exception as e:
+            print(f"❌ Failed to update player: {e}")
+            return create_response(error_response(f"Failed to update player: {str(e)}"), 400)
+        
+        # Update auction state - add to unsold players list and player queue
+        try:
+            auction_doc = get_db().collection('liveAuctions').document(season_id).get()
+            auction_state = auction_doc.to_dict() if auction_doc.exists else {}
+            
+            unsold_players = auction_state.get('unsoldPlayers', [])
+            if player_id not in unsold_players:
+                unsold_players.append(player_id)
+            
+            # Add to end of player queue for re-auctioning
+            player_queue = auction_state.get('playerQueue', [])
+            if player_id not in player_queue:
+                player_queue.append(player_id)
+            
+            _set_live_auction_state(season_id, {
+                'currentPlayerId': None,
+                'currentPlayerName': None,
+                'biddingActive': False,
+                'leadingTeamId': None,
+                'leadingTeamName': None,
+                'currentBid': 0,
+                'unsoldPlayers': unsold_players,
+                'playerQueue': player_queue
+            })
+            print(f"✓ Updated auction state with unsold player in queue")
+        except Exception as e:
+            print(f"⚠ Warning updating auction state: {e}")
+        
+        # Clear canonical current player doc
+        try:
+            _clear_current_player(season_id)
+            print(f"✓ Cleared canonical current player doc")
+        except Exception as e:
+            print(f"⚠ Warning clearing current player: {e}")
+        
+        # Emit player unsold event
+        try:
+            _emit_named_event_doc(season_id, 'playerUnsold', {
+                'playerId': player_id,
+                'playerName': player_name,
+                'unsoldCount': unsold_count,
+                'seasonId': season_id
+            })
+            print(f"✓ Emitted playerUnsold event")
+        except Exception as e:
+            print(f"⚠ Warning emitting event: {e}")
+        
+        print(f"✅ Successfully marked player {player_id} as UNSOLD")
+        return create_response(success_response({
+            'playerId': player_id,
+            'playerName': player_name,
+            'unsoldCount': unsold_count
+        }, "Player marked as unsold"))
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Unexpected error in mark_player_unsold: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Failed to mark player unsold: {error_msg}"), 400)
+
+
+def start_reauction_unsold(data):
+    """Start re-auctioning unsold players"""
+    try:
+        season_id = data.get('seasonId')
+        
+        print(f"📋 Start re-auction request: season={season_id}")
+        
+        if not season_id:
+            return create_response(error_response("Missing seasonId"), 400)
+        
+        # Get auction state
+        try:
+            auction_doc = get_db().collection('liveAuctions').document(season_id).get()
+            if not auction_doc.exists:
+                return create_response(error_response("Auction state not found"), 404)
+            auction_state = auction_doc.to_dict()
+        except Exception as e:
+            print(f"❌ Failed to fetch auction state: {e}")
+            return create_response(error_response(f"Failed to fetch auction state: {str(e)}"), 400)
+        
+        unsold_players = auction_state.get('unsoldPlayers', [])
+        
+        if not unsold_players:
+            return create_response(error_response("No unsold players to re-auction"), 400)
+        
+        print(f"✓ Found {len(unsold_players)} unsold players to re-auction")
+        
+        # Reset unsold players status to AVAILABLE for re-auction
+        try:
+            for player_id in unsold_players:
+                get_db().collection('players').document(player_id).update({
+                    'status': 'AVAILABLE',
+                    'updatedAt': datetime.now().isoformat()
+                })
+            print(f"✓ Reset {len(unsold_players)} players to AVAILABLE")
+        except Exception as e:
+            print(f"❌ Failed to reset player status: {e}")
+            return create_response(error_response(f"Failed to reset player status: {str(e)}"), 400)
+        
+        # Update auction state with unsold players in queue
+        try:
+            _set_live_auction_state(season_id, {
+                'playerQueue': unsold_players,
+                'unsoldPlayers': [],  # Clear the unsold list
+                'status': 'LIVE'
+            })
+            print(f"✓ Updated auction state with re-auction queue")
+        except Exception as e:
+            print(f"❌ Failed to update auction state: {e}")
+            return create_response(error_response(f"Failed to update auction state: {str(e)}"), 400)
+        
+        # Emit re-auction started event
+        try:
+            emit_realtime_event('reAuctionStarted', {
+                'seasonId': season_id,
+                'reAuctionPlayerCount': len(unsold_players),
+                'playerIds': unsold_players
+            }, season_id)
+            print(f"✓ Emitted reAuctionStarted event")
+        except Exception as e:
+            print(f"⚠ Warning emitting event: {e}")
+        
+        print(f"✅ Successfully started re-auction for {len(unsold_players)} players")
+        return create_response(success_response({
+            'seasonId': season_id,
+            'reAuctionPlayerCount': len(unsold_players),
+            'playerIds': unsold_players
+        }, "Re-auction started for unsold players"))
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Unexpected error in start_reauction_unsold: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Failed to start re-auction: {error_msg}"), 400)
 
 
 def reset_live_auction(data):
@@ -1883,6 +2588,17 @@ def get_sports(data):
         
         for match_doc in matches_docs:
             match_data = serialize_firestore_doc(match_doc)
+            
+            # Skip admin user documents - only process actual match documents
+            # Admin documents have role='ADMIN', actual matches have sport/status fields
+            if match_data.get('role') == 'ADMIN':
+                print(f"⏭️  Skipping admin document: {match_doc.id}")
+                continue
+            
+            # Skip if doesn't look like a match (no id or name)
+            if not match_data.get('id') or not match_data.get('name'):
+                print(f"⏭️  Skipping non-match document: {match_doc.id}")
+                continue
             
             # Get players for this match
             players_docs = get_db().collection('players').where('matchId', '==', match_doc.id).stream()

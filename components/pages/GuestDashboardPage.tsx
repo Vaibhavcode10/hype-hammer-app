@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Eye, Trophy, Users, DollarSign, Bell, User, LogOut, Clock, 
-  Zap, Shield, Timer,
+  Zap, Shield, Timer, Radio,
   CheckCircle, XCircle, Loader, Mic, 
   Calendar, MapPin, Mail, X, ArrowLeft
 } from 'lucide-react';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { firestore } from '../../services/firebaseConfig';
 import { AuctionStatus, MatchData, UserRole, Team, Player } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
 import { useAudioListener } from '../../services/useAudioListener';
 import socketService from '../../services/socketService';
+import firebaseRealtimeService from '../../services/firebaseRealtimeService';
 
 interface GuestDashboardPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -179,11 +182,11 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       setLeadingTeam('');
     }));
 
-    unsubscribers.push(socketService.onPlayerUnsold(async (data: any) => {
+    unsubscribers.push(socketService.onPlayerUnsold((data: any) => {
+      console.log('🔴 Guest: Player unsold event received:', data);
       addActivity(`❌ ${data.playerName} went unsold`, 'unsold');
       
-      // Firebase listeners will automatically update players
-      // No need to refetch - just clear current bidding player
+      // Clear current bidding player - onPlayersUpdate listener will refresh the list
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);
       setLeadingTeam('');
@@ -329,7 +332,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
       case 'SOLD':
         return <span className="px-2 py-1 bg-green-500 text-white text-xs font-black rounded-full flex items-center gap-1"><CheckCircle size={10} />SOLD</span>;
       case 'UNSOLD':
-        return <span className="px-2 py-1 bg-gray-500 text-white text-xs font-black rounded-full flex items-center gap-1"><XCircle size={10} />UNSOLD</span>;
+        return <span className="px-2 py-1 bg-orange-500 text-white text-xs font-black rounded-full flex items-center gap-1"><XCircle size={10} />UNSOLD</span>;
       default:
         return <span className="px-2 py-1 bg-blue-500 text-white text-xs font-black rounded-full">UPCOMING</span>;
     }
@@ -510,36 +513,57 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                   <Users size={48} className="mx-auto mb-4 opacity-50" />
                   <p className="font-bold">No players yet</p>
                 </div>
-              ) : (
-                players.map((player) => (
-                  <div 
-                    key={player.id}
-                    className={`bg-white hover:bg-blue-50 rounded-xl p-3 border-2 transition-all cursor-pointer ${
-                      currentBiddingPlayer?.id === player.id 
-                        ? 'border-red-400 bg-red-50' 
-                        : 'border-cyan-100'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-200 flex items-center justify-center flex-shrink-0 border-2 border-cyan-200">
-                        {player.imageUrl ? (
-                          <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <User size={20} className="text-gray-500" />
-                        )}
+              ) : (() => {
+                const sorted = [...players].sort((a, b) => {
+                  if (a.status === 'UNSOLD' && b.status !== 'UNSOLD') return 1;
+                  if (a.status !== 'UNSOLD' && b.status === 'UNSOLD') return -1;
+                  return 0;
+                });
+                const unsoldCount = sorted.filter(p => p.status === 'UNSOLD').length;
+                const regularCount = sorted.length - unsoldCount;
+                console.log('📊 Player list sorting:', {
+                  total: sorted.length,
+                  unsoldCount,
+                  regularCount,
+                  unsoldPlayers: sorted.filter(p => p.status === 'UNSOLD').map(p => p.name)
+                });
+                return sorted.map((player, index) => (
+                  <React.Fragment key={player.id}>
+                    {index === regularCount && unsoldCount > 0 && (
+                      <div className="py-2 px-2 flex items-center gap-2 text-xs font-bold text-orange-600">
+                        <div className="flex-1 h-px bg-orange-200"></div>
+                        <span>Re-Auction</span>
+                        <div className="flex-1 h-px bg-orange-200"></div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-slate-800 font-bold text-sm truncate">{player.name}</p>
-                        <p className="text-cyan-600 text-xs uppercase tracking-wider">{player.roleId || 'Player'}</p>
-                        <p className="text-gray-600 text-xs mt-1">Base: {formatCurrency(player.basePrice || 0)}</p>
-                      </div>
-                      <div className="flex-shrink-0">
-                        {getPlayerStatusBadge(player)}
+                    )}
+                    <div 
+                      className={`bg-white hover:bg-blue-50 rounded-xl p-3 border-2 transition-all cursor-pointer ${
+                        currentBiddingPlayer?.id === player.id 
+                          ? 'border-red-400 bg-red-50' 
+                          : player.status === 'UNSOLD' ? 'border-orange-300 hover:bg-orange-50' : 'border-cyan-100'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-200 flex items-center justify-center flex-shrink-0 border-2 border-cyan-200">
+                          {player.imageUrl ? (
+                            <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <User size={20} className="text-gray-500" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-slate-800 font-bold text-sm truncate">{player.name}</p>
+                          <p className="text-cyan-600 text-xs uppercase tracking-wider">{player.roleId || 'Player'}</p>
+                          <p className="text-gray-600 text-xs mt-1">Base: {formatCurrency(player.basePrice || 0)}</p>
+                        </div>
+                        <div className="flex-shrink-0">
+                          {getPlayerStatusBadge(player)}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </React.Fragment>
                 ))
-              )}
+              })()}
             </div>
           </div>
 

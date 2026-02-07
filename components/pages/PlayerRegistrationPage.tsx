@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { User, DollarSign, Upload, ArrowLeft } from 'lucide-react';
+import { User, DollarSign, Upload, ArrowLeft, AlertCircle, CheckCircle } from 'lucide-react';
 import { SportData, Player, SportType } from '../../types';
+import { uploadPlayerPhotoViaAPI, uploadDocumentViaAPI } from '../../services/cloudFunctionUploadService';
 
 interface PlayerRegistrationPageProps {
   allSports: SportData[];
@@ -31,12 +32,60 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
     bio: '',
     stats: ''
   });
+  const [uploadProgress, setUploadProgress] = useState<{ photo?: number; document?: number }>({});
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   const selectedSportData = allSports.find(s => 
     `${s.sportType}-${s.customSportName || ''}` === selectedSport
   );
   
   const selectedMatchData = selectedSportData?.matches.find(m => m.id === selectedMatch);
+
+  // Handle photo upload
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    setUploadErrors([]);
+
+    try {
+      const photoURL = await uploadPlayerPhotoViaAPI(file, (progress) => {
+        setUploadProgress(prev => ({ ...prev, photo: progress }));
+      });
+      setPlayerData(prev => ({ ...prev, imageUrl: photoURL }));
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Photo upload failed';
+      setUploadErrors(prev => [...prev, `Photo: ${msg}`]);
+    } finally {
+      setUploading(false);
+      setUploadProgress(prev => ({ ...prev, photo: undefined }));
+    }
+  };
+
+  // Handle document upload
+  const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    setUploadErrors([]);
+
+    try {
+      const documentURL = await uploadDocumentViaAPI(file, (progress) => {
+        setUploadProgress(prev => ({ ...prev, document: progress }));
+      });
+      // Store document URL in a new field
+      setPlayerData(prev => ({ ...prev, documentUrl: documentURL }));
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Document upload failed';
+      setUploadErrors(prev => [...prev, `Document: ${msg}`]);
+    } finally {
+      setUploading(false);
+      setUploadProgress(prev => ({ ...prev, document: undefined }));
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -246,6 +295,78 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                     rows={3}
                     className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none resize-none"
                   />
+                </div>
+
+                {/* Upload Errors */}
+                {uploadErrors.length > 0 && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    {uploadErrors.map((error, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-red-700 text-sm">
+                        <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                        <span>{error}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Photo Upload */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+                  <label className="block text-sm font-semibold mb-3 text-gray-700">
+                    <Upload size={16} className="inline mr-2" />
+                    Player Photo <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePhotoUpload}
+                    disabled={uploading}
+                    className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:border-blue-500 outline-none cursor-pointer disabled:opacity-50"
+                  />
+                  <p className="text-xs text-gray-600 mt-2">Supported: JPG, PNG, GIF, WebP (Max 50MB)</p>
+                  
+                  {uploadProgress.photo !== undefined && (
+                    <div className="mt-3">
+                      <progress value={uploadProgress.photo} max={100} className="w-full h-2 rounded" />
+                      <p className="text-xs text-gray-600 mt-1">{Math.round(uploadProgress.photo)}% uploaded</p>
+                    </div>
+                  )}
+                  
+                  {playerData.imageUrl && (
+                    <div className="mt-3 flex items-center gap-2 text-green-700">
+                      <CheckCircle size={16} />
+                      <span className="text-sm">Photo uploaded successfully</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Document Upload */}
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-6">
+                  <label className="block text-sm font-semibold mb-3 text-gray-700">
+                    <Upload size={16} className="inline mr-2" />
+                    Authorization Document (PDF) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    onChange={handleDocumentUpload}
+                    disabled={uploading}
+                    className="w-full px-4 py-2 border border-orange-300 rounded-lg focus:border-orange-500 outline-none cursor-pointer disabled:opacity-50"
+                  />
+                  <p className="text-xs text-gray-600 mt-2">PDF only - Authorization letter or government ID (Max 50MB)</p>
+                  
+                  {uploadProgress.document !== undefined && (
+                    <div className="mt-3">
+                      <progress value={uploadProgress.document} max={100} className="w-full h-2 rounded" />
+                      <p className="text-xs text-gray-600 mt-1">{Math.round(uploadProgress.document)}% uploaded</p>
+                    </div>
+                  )}
+                  
+                  {playerData.documentUrl && (
+                    <div className="mt-3 flex items-center gap-2 text-green-700">
+                      <CheckCircle size={16} />
+                      <span className="text-sm">Document uploaded successfully</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-4 pt-4">

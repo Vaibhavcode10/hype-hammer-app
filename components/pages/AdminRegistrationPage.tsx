@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Trophy, Building2, Calendar, MapPin, Users, DollarSign, Upload, ArrowLeft, CheckCircle, X } from 'lucide-react';
+import { Trophy, Building2, Calendar, MapPin, Users, DollarSign, Upload, ArrowLeft, CheckCircle, X, AlertCircle } from 'lucide-react';
 import { AuctionStatus, SportType } from '../../types';
+import { uploadProfilePictureViaAPI, uploadDocumentViaAPI } from '../../services/cloudFunctionUploadService';
 
 interface AdminRegistrationPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -18,6 +19,7 @@ export interface AdminFormData {
   email: string;
   phone: string;
   password: string;
+  profilePhotoURL?: string;
   
   // Season/Match Creation
   seasonName: string;
@@ -34,7 +36,9 @@ export interface AdminFormData {
   // Verification
   governmentId: string;
   governmentIdFile?: File;
+  governmentIdURL?: string;
   organizerProof?: File;
+  organizerProofURL?: string;
 }
 
 export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ setStatus, onRegisterAdmin }) => {
@@ -60,6 +64,9 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
   const [currentStep, setCurrentStep] = useState(1);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const totalSteps = 4;
+  const [uploadProgress, setUploadProgress] = useState<{ photo?: number; govId?: number; proof?: number }>({});
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   const handleInputChange = (field: keyof AdminFormData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -68,6 +75,72 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
   const handleFileChange = (field: 'governmentIdFile' | 'organizerProof', file: File | null) => {
     if (file) {
       setFormData(prev => ({ ...prev, [field]: file }));
+    }
+  };
+
+  // Handle profile photo upload
+  const handleProfilePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    setUploadErrors([]);
+
+    try {
+      const photoURL = await uploadProfilePictureViaAPI(file, (progress) => {
+        setUploadProgress(prev => ({ ...prev, photo: progress }));
+      });
+      setFormData(prev => ({ ...prev, profilePhotoURL: photoURL }));
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Photo upload failed';
+      setUploadErrors(prev => [...prev, `Photo: ${msg}`]);
+    } finally {
+      setUploading(false);
+      setUploadProgress(prev => ({ ...prev, photo: undefined }));
+    }
+  };
+
+  // Handle government ID upload
+  const handleGovIdUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    setUploadErrors([]);
+
+    try {
+      const docURL = await uploadDocumentViaAPI(file, (progress) => {
+        setUploadProgress(prev => ({ ...prev, govId: progress }));
+      });
+      setFormData(prev => ({ ...prev, governmentIdURL: docURL }));
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Document upload failed';
+      setUploadErrors(prev => [...prev, `Gov ID: ${msg}`]);
+    } finally {
+      setUploading(false);
+      setUploadProgress(prev => ({ ...prev, govId: undefined }));
+    }
+  };
+
+  // Handle organizer proof upload
+  const handleProofUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    setUploadErrors([]);
+
+    try {
+      const docURL = await uploadDocumentViaAPI(file, (progress) => {
+        setUploadProgress(prev => ({ ...prev, proof: progress }));
+      });
+      setFormData(prev => ({ ...prev, organizerProofURL: docURL }));
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Document upload failed';
+      setUploadErrors(prev => [...prev, `Proof: ${msg}`]);
+    } finally {
+      setUploading(false);
+      setUploadProgress(prev => ({ ...prev, proof: undefined }));
     }
   };
 
@@ -89,8 +162,25 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isStepValid(4)) {
-      await onRegisterAdmin(formData);
-      setShowSuccessModal(true);
+      try {
+        // Show loading state
+        setShowSuccessModal(false);
+        
+        // Call registration
+        await onRegisterAdmin(formData);
+        
+        // Show success modal - onRegisterAdmin doesn't throw if successful
+        setShowSuccessModal(true);
+        
+        // Auto-redirect after 2 seconds
+        setTimeout(() => {
+          setStatus(AuctionStatus.ADMIN_DASHBOARD);
+        }, 2000);
+      } catch (error) {
+        // Error was already handled in onRegisterAdmin with alert
+        console.error('Registration failed:', error);
+        setShowSuccessModal(false);
+      }
     }
   };
 
@@ -211,6 +301,48 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                     required
                   />
                 </div>
+              </div>
+
+              {/* Upload Errors */}
+              {uploadErrors.length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  {uploadErrors.map((error, idx) => (
+                    <div key={idx} className="flex items-start gap-2 text-red-700 text-sm mb-2">
+                      <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                      <span>{error}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Profile Photo Upload */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+                <label className="block text-sm font-bold text-slate-700 mb-3">
+                  <Upload size={16} className="inline mr-2" />
+                  Profile Photo
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleProfilePhotoUpload}
+                  disabled={uploading}
+                  className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:border-blue-500 outline-none cursor-pointer disabled:opacity-50"
+                />
+                <p className="text-xs text-slate-600 mt-2">Supported: JPG, PNG, GIF, WebP (Max 50MB)</p>
+                
+                {uploadProgress.photo !== undefined && (
+                  <div className="mt-3">
+                    <progress value={uploadProgress.photo} max={100} className="w-full h-2 rounded" />
+                    <p className="text-xs text-slate-600 mt-1">{Math.round(uploadProgress.photo)}% uploaded</p>
+                  </div>
+                )}
+                
+                {formData.profilePhotoURL && (
+                  <div className="mt-3 flex items-center gap-2 text-green-700">
+                    <CheckCircle size={16} />
+                    <span className="text-sm">Profile photo uploaded</span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -447,46 +579,64 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Upload Government ID <span className="text-red-500">*</span>
+                  {/* Government ID Upload */}
+                  <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-6">
+                    <label className="block text-sm font-bold text-slate-700 mb-3">
+                      <Upload size={16} className="inline mr-2" />
+                      Government ID <span className="text-red-500">*</span>
                     </label>
-                    <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:border-blue-500 transition-colors cursor-pointer">
-                      <Upload className="mx-auto text-slate-400 mb-2" size={32} />
-                      <input
-                        type="file"
-                        onChange={(e) => handleFileChange('governmentIdFile', e.target.files?.[0] || null)}
-                        className="hidden"
-                        id="govId"
-                        accept=".pdf,.jpg,.jpeg,.png"
-                      />
-                      <label htmlFor="govId" className="cursor-pointer">
-                        <span className="text-sm text-slate-600">
-                          {formData.governmentIdFile ? formData.governmentIdFile.name : 'Click to upload PDF/Image'}
-                        </span>
-                      </label>
-                    </div>
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      onChange={handleGovIdUpload}
+                      disabled={uploading}
+                      className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:border-blue-500 outline-none cursor-pointer disabled:opacity-50"
+                    />
+                    <p className="text-xs text-slate-600 mt-2">PDF or Image - Passport, Aadhar, License (Max 50MB)</p>
+                    
+                    {uploadProgress.govId !== undefined && (
+                      <div className="mt-3">
+                        <progress value={uploadProgress.govId} max={100} className="w-full h-2 rounded" />
+                        <p className="text-xs text-slate-600 mt-1">{Math.round(uploadProgress.govId)}% uploaded</p>
+                      </div>
+                    )}
+                    
+                    {formData.governmentIdURL && (
+                      <div className="mt-3 flex items-center gap-2 text-green-700">
+                        <CheckCircle size={16} />
+                        <span className="text-sm">ID uploaded successfully</span>
+                      </div>
+                    )}
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                  {/* Organization Proof Upload */}
+                  <div className="bg-orange-50 border-2 border-orange-200 rounded-lg p-6">
+                    <label className="block text-sm font-bold text-slate-700 mb-3">
+                      <Upload size={16} className="inline mr-2" />
                       Organization Proof (Optional)
                     </label>
-                    <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:border-blue-500 transition-colors cursor-pointer">
-                      <Upload className="mx-auto text-slate-400 mb-2" size={32} />
-                      <input
-                        type="file"
-                        onChange={(e) => handleFileChange('organizerProof', e.target.files?.[0] || null)}
-                        className="hidden"
-                        id="orgProof"
-                        accept=".pdf,.jpg,.jpeg,.png"
-                      />
-                      <label htmlFor="orgProof" className="cursor-pointer">
-                        <span className="text-sm text-slate-600">
-                          {formData.organizerProof ? formData.organizerProof.name : 'Click to upload PDF/Image'}
-                        </span>
-                      </label>
-                    </div>
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      onChange={handleProofUpload}
+                      disabled={uploading}
+                      className="w-full px-4 py-2 border border-orange-300 rounded-lg focus:border-orange-500 outline-none cursor-pointer disabled:opacity-50"
+                    />
+                    <p className="text-xs text-slate-600 mt-2">Registration certificate, Incorporation documents, etc. (Max 50MB)</p>
+                    
+                    {uploadProgress.proof !== undefined && (
+                      <div className="mt-3">
+                        <progress value={uploadProgress.proof} max={100} className="w-full h-2 rounded" />
+                        <p className="text-xs text-slate-600 mt-1">{Math.round(uploadProgress.proof)}% uploaded</p>
+                      </div>
+                    )}
+                    
+                    {formData.organizerProofURL && (
+                      <div className="mt-3 flex items-center gap-2 text-green-700">
+                        <CheckCircle size={16} />
+                        <span className="text-sm">Proof uploaded successfully</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 

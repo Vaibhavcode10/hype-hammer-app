@@ -95,6 +95,32 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('================== FORM SUBMISSION DEBUG ==================');
+    console.log('1️⃣ Form submit initiated for role:', selectedRole);
+    console.log('   - governmentId state:', governmentId);
+    console.log('   - governmentIdFile state:', governmentIdFile);
+    
+    // Validate government ID fields for non-guest users
+    if (selectedRole !== UserRole.GUEST) {
+      console.log('2️⃣ Validating government ID fields...');
+      if (!governmentId || governmentId.trim() === '') {
+        console.log('❌ Government ID is empty!');
+        alert('Please enter your Government ID Number');
+        return;
+      }
+      if (!governmentIdFile) {
+        console.log('❌ Government ID file is missing!');
+        alert('Please upload your ID Proof document');
+        return;
+      }
+      console.log('✅ Government ID validation passed');
+    }
+    
+    // Ensure government ID fields are not undefined
+    const finalGovernmentId = governmentId || '';
+    const finalGovernmentIdFile = governmentIdFile || null;
+    
+    console.log('3️⃣ Building baseData object...');
     const baseData = {
       fullName,
       email,
@@ -102,9 +128,11 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
       password,
       role: selectedRole,
       seasonId: selectedMatch?.id,
-      governmentId,
-      governmentIdFile
+      governmentId: finalGovernmentId,
+      governmentIdFile: finalGovernmentIdFile
     };
+    console.log('   - baseData.governmentId:', baseData.governmentId);
+    console.log('   - baseData.governmentIdFile:', baseData.governmentIdFile);
 
     let roleSpecificData = {};
 
@@ -731,7 +759,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       className="hidden"
                       id="govId"
                       accept=".pdf,.jpg,.jpeg,.png"
-                      required
                     />
                     <label htmlFor="govId" className="cursor-pointer block">
                       {governmentIdFile ? (

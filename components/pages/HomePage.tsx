@@ -31,8 +31,11 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
         const user = data.data.user;
         
         // Auto-detect role from Firebase user data
+        // Email might be in different fields depending on user type
+        const userEmail = user.email || user.organizerEmail || user.adminEmail || loginEmail;
+        
         const authenticatedUser = {
-          email: user.email,
+          email: userEmail,
           password: loginPassword,
           role: user.role as UserRole,
         };
