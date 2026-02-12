@@ -60,6 +60,36 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
     }
   }, [seasonId, userId]);
 
+  // Fetch bid history for current player to get actual current bid and leading team
+  const fetchBidHistoryForCurrentPlayer = async (playerId: string) => {
+    if (!seasonId || !playerId) return;
+    try {
+      console.log('📋 Fetching bid history for player:', playerId);
+      const response = await fetch(`${API_BASE}/bids?seasonId=${seasonId}&playerId=${playerId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const bids = data.data || [];
+        // Sort bids by timestamp descending (most recent first)
+        const sortedBids = bids.sort((a: any, b: any) => {
+          const timeA = new Date(a.timestamp || 0).getTime();
+          const timeB = new Date(b.timestamp || 0).getTime();
+          return timeB - timeA;
+        });
+        console.log('✓ Fetched bid history:', sortedBids.length, 'bids');
+        
+        // Use the latest bid to set actual current bid and leading team
+        if (sortedBids.length > 0) {
+          const latestBid = sortedBids[0];
+          console.log('📍 Restoring current bid from history:', latestBid.amount, 'by', latestBid.teamName);
+          setCurrentBid(latestBid.amount);
+          setLeadingTeam({ id: latestBid.teamId, name: latestBid.teamName } as any);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch bid history:', error);
+    }
+  };
+
   // View-only mode - teams watch auction, auctioneer controls all bidding
   useEffect(() => {
     if (auctionStatus === 'live') {
@@ -338,6 +368,9 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       setIsLeadingBid(false);
       setAuctionStatus('live');
       
+      // Fetch actual bid history to get accurate current bid and leading team
+      fetchBidHistoryForCurrentPlayer(data.player.id);
+      
       setActivityFeed(prev => [{
         id: Date.now().toString(),
         message: `${data.player.name} is now being auctioned - Base: ₹${((data.basePrice || data.player.basePrice) / 100000).toFixed(1)}L`,
@@ -509,10 +542,13 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
 
   const getBudgetPercentage = () => {
     if (!teamData) return 0;
-    const totalBudget = teamData.budget || 0; // Initial/Total budget
-    const currentBudget = teamData.remainingBudget !== undefined ? teamData.remainingBudget : totalBudget;
-    if (totalBudget === 0) return 0;
-    return ((currentBudget / totalBudget) * 100);
+    // ALWAYS use 10Cr default, never fall back to teamData.budget (which could be negative)
+    const initialBudget = (teamData as any).initialBudget || 10000000;
+    const currentBudget = teamData.remainingBudget !== undefined ? teamData.remainingBudget : initialBudget;
+    if (initialBudget === 0) return 0;
+    // Clamp percentage between 0-100
+    const percentage = Math.max(0, Math.min(100, (currentBudget / initialBudget) * 100));
+    return percentage;
   };
 
   const getBudgetColor = () => {
@@ -780,7 +816,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                 <div className="space-y-4">
                   <div>
                     <p className="text-xs text-gray-600 uppercase font-bold mb-2">Remaining Budget</p>
-                    <p className="text-3xl font-black text-purple-600">{formatCurrency(teamData.remainingBudget !== undefined ? teamData.remainingBudget : (teamData.budget || 0))}</p>
+                    <p className="text-3xl font-black text-purple-600">{formatCurrency(Math.max(0, teamData.remainingBudget !== undefined ? teamData.remainingBudget : ((teamData as any).initialBudget || teamData.budget || 0)))}</p>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-3">
                     <div 
@@ -789,13 +825,13 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                     ></div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="text-center p-3 bg-green-50 rounded-lg border border-green-200">
-                      <p className="text-xs text-gray-600 uppercase font-bold">Total</p>
-                      <p className="text-sm font-black text-green-600">{formatCurrency(teamData.budget || 0)}</p>
+                    <div className="text-center p-3 bg-blue-50 rounded-lg border border-blue-200">
+                      <p className="text-xs text-gray-600 uppercase font-bold">Initial Purse</p>
+                      <p className="text-sm font-black text-blue-600">{formatCurrency((teamData as any).initialBudget || 10000000)}</p>
                     </div>
                     <div className="text-center p-3 bg-red-50 rounded-lg border border-red-200">
-                      <p className="text-xs text-gray-600 uppercase font-bold">Used</p>
-                      <p className="text-sm font-black text-red-600">{formatCurrency((teamData.budget || 0) - (teamData.remainingBudget !== undefined ? teamData.remainingBudget : (teamData.budget || 0)))}</p>
+                      <p className="text-xs text-gray-600 uppercase font-bold">Spent</p>
+                      <p className="text-sm font-black text-red-600">{formatCurrency(Math.max(0, ((teamData as any).initialBudget || 10000000) - Math.max(0, teamData.remainingBudget !== undefined ? teamData.remainingBudget : 0)))}</p>
                     </div>
                   </div>
                 </div>

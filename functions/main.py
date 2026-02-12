@@ -426,13 +426,15 @@ def auction(req: https_fn.Request) -> https_fn.Response:
         
         # ===== PLAYER AUCTION ACTIONS =====
         elif resource == 'player':
-            # For routes like /player/start, /player/close, /player/unsold
+            # For routes like /player/start, /player/close, /player/unsold, /player/next
             if resource_id == 'start' and method == 'POST':
                 return start_player_bidding(data)
             elif resource_id == 'close' and method == 'POST':
                 return close_player_bidding(data)
             elif resource_id == 'unsold' and method == 'POST':
                 return mark_player_unsold(data)
+            elif resource_id == 'next' and method == 'POST':
+                return get_next_player(data)
             elif resource_id == 'reset' and method == 'POST':
                 return reset_live_auction(data)
         
@@ -479,7 +481,7 @@ def auction(req: https_fn.Request) -> https_fn.Response:
             auction_action = resource_id
             auction_subaction = action
             
-            # Player-specific auction actions: /auction/player/start, /auction/player/close, /auction/player/unsold
+            # Player-specific auction actions: /auction/player/start, /auction/player/close, /auction/player/unsold, /auction/player/next
             if auction_action == 'player':
                 if auction_subaction == 'start' and method == 'POST':
                     return start_player_bidding(data)
@@ -487,6 +489,8 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                     return close_player_bidding(data)
                 elif auction_subaction == 'unsold' and method == 'POST':
                     return mark_player_unsold(data)
+                elif auction_subaction == 'next' and method == 'POST':
+                    return get_next_player(data)
             # General auction actions
             elif auction_action == 'start' and method == 'POST':
                 return start_auction(data)
@@ -529,7 +533,7 @@ def auction(req: https_fn.Request) -> https_fn.Response:
         # ===== FILE UPLOAD ROUTES =====
         elif resource == 'upload':
             if method == 'POST':
-                upload_type = resource_id  # e.g., 'player-photo', 'team-logo', 'document'
+                upload_type = resource_id  # e.g., 'player-photo', 'team-logo', 'document', 'custom'
                 
                 if upload_type == 'player-photo':
                     return handle_file_upload(req, 'players/photos', 'image')
@@ -545,6 +549,13 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                     return handle_file_upload(req, 'documents', 'pdf')
                 elif upload_type == 'match-highlight':
                     return handle_file_upload(req, 'matches/highlights', 'video')
+                elif upload_type == 'custom':
+                    # Custom folder upload: /upload/custom?folder=folder_name&type=image
+                    folder = data.get('folder') or req.args.get('folder')
+                    file_type = data.get('type') or req.args.get('type', 'image')
+                    if not folder:
+                        return create_response(error_response("folder query parameter required for custom uploads"), 400)
+                    return handle_file_upload(req, folder, file_type)
                 else:
                     return create_response(error_response(f"Unknown upload type: {upload_type}"), 400)
             else:
@@ -836,9 +847,10 @@ def get_auctioneers(data):
         if data.get('email'):
             query = query.where('email', '==', data.get('email'))
         
-        # Filter by matchId if provided
-        if data.get('matchId'):
-            query = query.where('matchId', '==', data.get('matchId'))
+        # Filter by matchId/seasonId if provided (accept both for backward compatibility)
+        match_id = data.get('matchId') or data.get('seasonId')
+        if match_id:
+            query = query.where('matchId', '==', match_id)
         
         docs = list(query.stream())
         auctioneers = [serialize_firestore_doc(doc) for doc in docs]
@@ -938,7 +950,8 @@ def reject_auctioneer(data):
         return create_response(error_response(str(e)), 400)
 
 def get_teams(data):
-    match_id = data.get('matchId')
+    # Accept both 'matchId' and 'seasonId' for backward compatibility
+    match_id = data.get('matchId') or data.get('seasonId')
     query = get_db().collection('teams')
     if match_id:
         query = query.where('matchId', '==', match_id)
@@ -971,7 +984,8 @@ def delete_team(team_id):
     return create_response(success_response(None, "Deleted"))
 
 def get_players(data):
-    match_id = data.get('matchId')
+    # Accept both 'matchId' and 'seasonId' for backward compatibility
+    match_id = data.get('matchId') or data.get('seasonId')
     email = data.get('email')
     query = get_db().collection('players')
     if match_id:
@@ -2211,7 +2225,7 @@ def mark_player_unsold(data):
             print(f"❌ Failed to update player: {e}")
             return create_response(error_response(f"Failed to update player: {str(e)}"), 400)
         
-        # Update auction state - add to unsold players list and player queue
+        # Update auction state - add to unsold players list (do NOT add to player queue yet)
         try:
             auction_doc = get_db().collection('liveAuctions').document(season_id).get()
             auction_state = auction_doc.to_dict() if auction_doc.exists else {}
@@ -2220,10 +2234,7 @@ def mark_player_unsold(data):
             if player_id not in unsold_players:
                 unsold_players.append(player_id)
             
-            # Add to end of player queue for re-auctioning
-            player_queue = auction_state.get('playerQueue', [])
-            if player_id not in player_queue:
-                player_queue.append(player_id)
+            # Do NOT add to playerQueue - unsold players come later after all AVAILABLE players
             
             _set_live_auction_state(season_id, {
                 'currentPlayerId': None,
@@ -2232,10 +2243,9 @@ def mark_player_unsold(data):
                 'leadingTeamId': None,
                 'leadingTeamName': None,
                 'currentBid': 0,
-                'unsoldPlayers': unsold_players,
-                'playerQueue': player_queue
+                'unsoldPlayers': unsold_players
             })
-            print(f"✓ Updated auction state with unsold player in queue")
+            print(f"✓ Updated auction state with unsold player (will re-auction later)")
         except Exception as e:
             print(f"⚠ Warning updating auction state: {e}")
         
@@ -2270,6 +2280,113 @@ def mark_player_unsold(data):
         import traceback
         traceback.print_exc()
         return create_response(error_response(f"Failed to mark player unsold: {error_msg}"), 400)
+
+
+def get_next_player(data):
+    """Get next available player for auction - prioritizes AVAILABLE players, then UNSOLD for re-auction"""
+    try:
+        season_id = data.get('seasonId')
+        
+        print(f"📋 Get next player request: season={season_id}")
+        
+        if not season_id:
+            return create_response(error_response("Missing seasonId"), 400)
+        
+        # PHASE 1: Try to find AVAILABLE players (never auctioned yet)
+        try:
+            print(f"🔍 PHASE 1: Searching for AVAILABLE players in season {season_id}...")
+            available_players = list(
+                get_db()
+                .collection('players')
+                .where('matchId', '==', season_id)
+                .where('status', '==', 'AVAILABLE')
+                .limit(1)
+                .stream()
+            )
+            
+            print(f"📊 Found {len(available_players)} AVAILABLE players")
+            
+            if available_players:
+                next_player_doc = available_players[0]
+                next_player = serialize_firestore_doc(next_player_doc)
+                player_id = next_player['id']
+                player_name = next_player.get('name', 'Unknown')
+                base_price = next_player.get('basePrice', 0)
+                
+                print(f"✅ Found AVAILABLE player: {player_name} (ID: {player_id})")
+                
+                # Automatically start bidding for this player
+                start_result = start_player_bidding({
+                    'seasonId': season_id,
+                    'playerId': player_id,
+                    'basePrice': base_price
+                })
+                
+                return start_result
+            else:
+                print("⚠️ No AVAILABLE players found, moving to PHASE 2...")
+        except Exception as e:
+            print(f"❌ Error finding AVAILABLE players: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # PHASE 2: No AVAILABLE players - check for UNSOLD players for re-auction
+        try:
+            print(f"🔍 PHASE 2: Searching for UNSOLD players in season {season_id}...")
+            unsold_players = list(
+                get_db()
+                .collection('players')
+                .where('matchId', '==', season_id)
+                .where('status', '==', 'UNSOLD')
+                .limit(1)
+                .stream()
+            )
+            
+            print(f"📊 Found {len(unsold_players)} UNSOLD players")
+            
+            if unsold_players:
+                next_player_doc = unsold_players[0]
+                next_player = serialize_firestore_doc(next_player_doc)
+                player_id = next_player['id']
+                player_name = next_player.get('name', 'Unknown')
+                base_price = next_player.get('basePrice', 0)
+                
+                print(f"✅ Found UNSOLD player for re-auction: {player_name} (ID: {player_id})")
+                
+                # Reset to AVAILABLE for re-auction
+                get_db().collection('players').document(player_id).update({
+                    'status': 'AVAILABLE',
+                    'updatedAt': datetime.now().isoformat()
+                })
+                
+                # Automatically start bidding for this player
+                start_result = start_player_bidding({
+                    'seasonId': season_id,
+                    'playerId': player_id,
+                    'basePrice': base_price
+                })
+                
+                return start_result
+            else:
+                print("⚠️ No UNSOLD players found, moving to PHASE 3...")
+        except Exception as e:
+            print(f"❌ Error finding UNSOLD players: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # PHASE 3: No players left - auction complete
+        print(f"✅ No more players available - auction complete")
+        return create_response(success_response({
+            'message': 'All players have been auctioned',
+            'auctionComplete': True
+        }, "Auction complete"))
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Unexpected error in get_next_player: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Failed to get next player: {error_msg}"), 400)
 
 
 def start_reauction_unsold(data):

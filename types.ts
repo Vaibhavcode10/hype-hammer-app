@@ -182,6 +182,12 @@ export interface Player {
   nationality?: string;
   bio?: string;
   stats?: string; // High-level stats summary
+  gender?: string;
+  battingStyle?: string;
+  bowlingStyle?: string;
+  experienceLevel?: string;
+  playerCategory?: string;
+  previousTeams?: string;
 }
 
 export interface Team {

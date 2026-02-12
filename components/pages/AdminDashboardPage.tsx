@@ -33,7 +33,7 @@ interface SystemLog {
 
 export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   // Main navigation state
-  const [activeSection, setActiveSection] = useState<'overview' | 'settings' | 'players' | 'teams' | 'auctioneers' | 'liveMonitor' | 'analytics' | 'reports'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'settings' | 'players' | 'teams' | 'auctioneers' | 'liveMonitor' | 'liveRoom' | 'analytics' | 'reports'>('overview');
   
   // Resolved match state - if currentMatch is undefined, we'll fetch the first available match
   const [resolvedMatch, setResolvedMatch] = useState<MatchData | null>(currentMatch);
@@ -270,6 +270,36 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   // Remove live notification
   const removeLiveNotification = (notificationId: string) => {
     setLiveNotifications(prev => prev.filter(n => n.id !== notificationId));
+  };
+
+  // Fetch bid history for current player to get actual current bid and leading team
+  const fetchBidHistoryForCurrentPlayer = async (playerId: string) => {
+    if (!activeMatch?.id || !playerId) return;
+    try {
+      console.log('📋 Fetching bid history for player:', playerId);
+      const response = await fetch(`${API_BASE}/bids?seasonId=${activeMatch.id}&playerId=${playerId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const bids = data.data || [];
+        // Sort bids by timestamp descending (most recent first)
+        const sortedBids = bids.sort((a: any, b: any) => {
+          const timeA = new Date(a.timestamp || 0).getTime();
+          const timeB = new Date(b.timestamp || 0).getTime();
+          return timeB - timeA;
+        });
+        console.log('✓ Fetched bid history:', sortedBids.length, 'bids');
+        
+        // Use the latest bid to set actual current bid and leading team
+        if (sortedBids.length > 0) {
+          const latestBid = sortedBids[0];
+          console.log('📍 Restoring current bid from history:', latestBid.amount, 'by', latestBid.teamName);
+          setCurrentBid(latestBid.amount);
+          setLeadingTeamName(latestBid.teamName);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch bid history:', error);
+    }
   };
   
   // Season Settings handlers
@@ -807,6 +837,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       setLeadingTeamName(data.player?.leadingTeamName || '');
       setCountdown(data.duration || 120);
       setLiveAuctionStatus('LIVE');
+      
+      // Fetch actual bid history to get accurate current bid and leading team
+      fetchBidHistoryForCurrentPlayer(data.player.id);
+      
       addSystemLog('info', `Bidding started for ${data.player.name}`);
     }));
 
@@ -1218,9 +1252,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
               <div className="flex items-center gap-4">
                 {/* Live Room Button */}
                 <button
-                  onClick={() => setActiveSection('liveMonitor')}
+                  onClick={() => setActiveSection('liveRoom')}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition-all shadow-lg ${
-                    activeSection === 'liveMonitor'
+                    activeSection === 'liveRoom'
                       ? 'bg-red-500 text-white'
                       : 'bg-red-500/10 border-2 border-red-500/20 hover:bg-red-500 hover:text-white text-red-600'
                   }`}
@@ -2847,6 +2881,20 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                       </tbody>
                     </table>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Live Room Section */}
+            {activeSection === 'liveRoom' && (resolvedMatch || currentMatch) && (
+              <div className="animate-in fade-in duration-500">
+                <div className="fixed inset-0 z-40 bg-black">
+                  <LiveAuctionPage
+                    seasonId={(resolvedMatch || currentMatch)!.id}
+                    userId={currentUser.email}
+                    userRole={UserRole.ADMIN}
+                    onClose={() => setActiveSection('overview')}
+                  />
                 </div>
               </div>
             )}

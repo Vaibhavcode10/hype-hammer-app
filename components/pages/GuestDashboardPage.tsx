@@ -129,6 +129,10 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
         setCurrentBid(data.player?.currentBid || data.basePrice || data.player.basePrice || 0);
         setLeadingTeam('');
         setAuctionStatus('LIVE'); // Ensure status is set to LIVE
+        
+        //Fetch actual bid history to get accurate current bid and leading team
+        fetchBidHistoryForCurrentPlayer(data.player.id);
+        
         addActivity(`🔨 Bidding started for ${data.player.name}`, 'bid');
         
         // Update players list if player exists
@@ -324,6 +328,37 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Fetch bid history for current player to get actual current bid and leading team
+  const fetchBidHistoryForCurrentPlayer = async (playerId: string) => {
+    if (!currentMatch?.id || !playerId) return;
+    try {
+      const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+      console.log('📋 Fetching bid history for player:', playerId);
+      const response = await fetch(`${API_BASE}/bids?seasonId=${currentMatch.id}&playerId=${playerId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const bids = data.data || [];
+        // Sort bids by timestamp descending (most recent first)
+        const sortedBids = bids.sort((a: any, b: any) => {
+          const timeA = new Date(a.timestamp || 0).getTime();
+          const timeB = new Date(b.timestamp || 0).getTime();
+          return timeB - timeA;
+        });
+        console.log('✓ Fetched bid history:', sortedBids.length, 'bids');
+        
+        // Use the latest bid to set actual current bid and leading team
+        if (sortedBids.length > 0) {
+          const latestBid = sortedBids[0];
+          console.log('📍 Restoring current bid from history:', latestBid.amount, 'by', latestBid.teamName);
+          setCurrentBid(latestBid.amount);
+          setLeadingTeam(latestBid.teamName);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch bid history:', error);
+    }
+  };
+
   const getPlayerStatusBadge = (player: Player) => {
     if (currentBiddingPlayer?.id === player.id) {
       return <span className="px-2 py-1 bg-red-500 text-white text-xs font-black rounded-full flex items-center gap-1"><Zap size={10} />LIVE</span>;
@@ -479,10 +514,19 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
               )}
             </div>
 
+            {/* Live Room Button */}
+            <button
+              onClick={() => setActiveSection('liveRoom')}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-sm transition-all shadow-lg"
+            >
+              <Radio size={16} />
+              Live Room
+            </button>
+
             {/* Go Back Button */}
             <button
               onClick={() => setStatus(AuctionStatus.MARKETPLACE)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-sm transition-all shadow-lg"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-700 hover:bg-gray-800 text-white font-bold text-sm transition-all shadow-lg"
             >
               <ArrowLeft size={16} />
               Go Back

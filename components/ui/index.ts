@@ -7,4 +7,8 @@ export { SoldCelebration } from './SoldCelebration';
 export { SettingsSidebar } from './SettingsSidebar';
 export { LiveAuctionRoom } from './LiveAuctionRoom';
 export { LiveBiddingPanel } from './LiveBiddingPanel';
+export { PlayerQueueCarousel } from './PlayerQueueCarousel';
+export { AuctioneerLiveRoom } from './AuctioneerLiveRoom';
+export { SpectatorLiveRoom } from './SpectatorLiveRoom';
+export { AuctionCardStack } from './AuctionCardStack';
 

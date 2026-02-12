@@ -22,6 +22,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const teamsRef = useRef<Team[]>([]);
+  const activityFeedIdRef = useRef<number>(0);
   
   // Live auction state
   const [currentBiddingPlayer, setCurrentBiddingPlayer] = useState<Player | null>(null);
@@ -96,6 +97,42 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
   useEffect(() => {
     teamsRef.current = teams;
   }, [teams]);
+
+  // Helper function to generate unique activity feed IDs
+  const generateActivityId = () => {
+    return `${Date.now()}-${++activityFeedIdRef.current}`;
+  };
+
+  // Fetch bid history for current player to get actual current bid and leading team
+  const fetchBidHistoryForCurrentPlayer = async (playerId: string) => {
+    if (!seasonId || !playerId) return;
+    try {
+      console.log('📋 Fetching bid history for player:', playerId);
+      const response = await fetch(`${API_BASE}/bids?seasonId=${seasonId}&playerId=${playerId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const bids = data.data || [];
+        // Sort bids by timestamp descending (most recent first)
+        const sortedBids = bids.sort((a: any, b: any) => {
+          const timeA = new Date(a.timestamp || 0).getTime();
+          const timeB = new Date(b.timestamp || 0).getTime();
+          return timeB - timeA;
+        });
+        console.log('✓ Fetched bid history:', sortedBids.length, 'bids');
+        
+        // Use the latest bid to set actual current bid and leading team
+        if (sortedBids.length > 0) {
+          const latestBid = sortedBids[0];
+          console.log('📍 Restoring current bid from history:', latestBid.amount, 'by', latestBid.teamName);
+          setCurrentBid(latestBid.amount);
+          const team = teamsRef.current.find(t => t.id === latestBid.teamId);
+          setLeadingTeam(team || ({ id: latestBid.teamId, name: latestBid.teamName } as any));
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch bid history:', error);
+    }
+  };
 
   useEffect(() => {
     currentPlayerIdRef.current = currentBiddingPlayer?.id || null;
@@ -212,7 +249,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       console.log('🚀 AUCTION_STARTED received:', data);
       setAuctionStatus('live');
       setActivityFeed(prev => [{
-        id: Date.now().toString(),
+        id: generateActivityId(),
         message: '🚀 Auction has started!',
         time: new Date().toLocaleTimeString(),
         type: 'system'
@@ -223,7 +260,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       console.log('⏸️ AUCTION_PAUSED received:', data);
       setAuctionStatus('paused');
       setActivityFeed(prev => [{
-        id: Date.now().toString(),
+        id: generateActivityId(),
         message: '⏸️ Auction paused',
         time: new Date().toLocaleTimeString(),
         type: 'system'
@@ -234,7 +271,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       console.log('▶️ AUCTION_RESUMED received:', data);
       setAuctionStatus('live');
       setActivityFeed(prev => [{
-        id: Date.now().toString(),
+        id: generateActivityId(),
         message: '▶️ Auction resumed',
         time: new Date().toLocaleTimeString(),
         type: 'system'
@@ -269,17 +306,20 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       setLeadingTeam(hydratedLeadingTeamId ? (teamsRef.current.find(t => t.id === hydratedLeadingTeamId) || null) : null);
       setAuctionStatus('live');
       
+      // Fetch actual bid history to get accurate current bid and leading team
+      fetchBidHistoryForCurrentPlayer(data.player.id);
+      
       // Check if it's this player
       if (data.player.email === currentUser.email) {
         setActivityFeed(prev => [{
-          id: Date.now().toString(),
+          id: generateActivityId(),
           message: `Your bidding has started! Base price: ₹${((data.basePrice || data.player.basePrice) / 100000).toFixed(1)}L`,
           time: new Date().toLocaleTimeString(),
           type: 'bid'
         }, ...prev]);
       } else {
         setActivityFeed(prev => [{
-          id: Date.now().toString(),
+          id: generateActivityId(),
           message: `${data.player.name} is now being auctioned`,
           time: new Date().toLocaleTimeString(),
           type: 'bid'
@@ -302,7 +342,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       setLeadingTeam(team || ({ id: data.teamId, name: data.teamName } as any));
       
       setActivityFeed(prev => [{
-        id: Date.now().toString(),
+        id: generateActivityId(),
         message: `${data.teamName} bid ₹${(data.amount / 100000).toFixed(1)}L`,
         time: new Date().toLocaleTimeString(),
         type: 'bid'
@@ -319,7 +359,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
         
         // Add notification about the update
         setNotifications(prev => [{
-          id: Date.now().toString(),
+          id: generateActivityId(),
           message: `Your player profile was updated`,
           time: new Date().toLocaleTimeString(),
           read: false
@@ -337,7 +377,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       const soldMessage = `${data.playerName} SOLD to ${data.teamName} for ₹${(data.finalAmount / 100000).toFixed(1)}L`;
       
       setActivityFeed(prev => [{
-        id: Date.now().toString(),
+        id: generateActivityId(),
         message: soldMessage,
         time: new Date().toLocaleTimeString(),
         type: 'sold'
@@ -345,7 +385,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       
       // Add to notifications
       setNotifications(prev => [{
-        id: Date.now().toString(),
+        id: generateActivityId(),
         message: soldMessage,
         time: new Date().toLocaleTimeString(),
         read: false
@@ -370,7 +410,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
     // Player unsold
     unsubscribers.push(socketService.onPlayerUnsold(async (data: { playerId: string; playerName: string }) => {
       setActivityFeed(prev => [{
-        id: Date.now().toString(),
+        id: generateActivityId(),
         message: `${data.playerName} went UNSOLD`,
         time: new Date().toLocaleTimeString(),
         type: 'unsold'
@@ -428,7 +468,7 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
       const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE');
       if (livePlayer) {
         setCurrentBiddingPlayer(livePlayer);
-        setAuctionLive(true);
+        setAuctionStatus('live');
       }
     });
 

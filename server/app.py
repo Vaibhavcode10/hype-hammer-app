@@ -739,15 +739,25 @@ def get_teams():
         
         teams = serialize_firestore_docs(docs)
         
-        # Sync playerIds for each team from players collection
+        # Normalize budget fields for all teams (handle both old and new field names)
         for team in teams:
             team_id = team.get('id')
+            
+            # Normalize budget field (use baseBudget or budget, default to totalBudget if available)
+            if 'budget' not in team or team.get('budget') == 0:
+                team['budget'] = team.get('baseBudget', team.get('totalBudget', 0))
+            
+            # Normalize remainingBudget field
+            if 'remainingBudget' not in team or team.get('remainingBudget') == 0:
+                team['remainingBudget'] = team.get('budget', 0)
+            
+            # Sync playerIds for each team from players collection
             sold_player_ids = sync_team_player_ids(team_id)
             team['playerIds'] = sold_player_ids
         
         print(f'GET /api/teams - Retrieved {len(teams)} teams')
         for team in teams:
-            print(f'  Team: {team.get("name")} - playerIds: {team.get("playerIds", [])} (count: {len(team.get("playerIds", []))})')
+            print(f'  Team: {team.get("name")} - Budget: {team.get("budget")/1000000}M - playerIds: {team.get("playerIds", [])} (count: {len(team.get("playerIds", []))})')
         
         return success_response(teams, f"Retrieved {len(teams)} teams")
     except Exception as e:
@@ -764,6 +774,13 @@ def get_team(team_id):
             return error_response(f"Team {team_id} not found", 404)
         
         team = serialize_firestore_doc(doc)
+        
+        # Normalize budget fields
+        if 'budget' not in team or team.get('budget') == 0:
+            team['budget'] = team.get('baseBudget', team.get('totalBudget', 0))
+        
+        if 'remainingBudget' not in team or team.get('remainingBudget') == 0:
+            team['remainingBudget'] = team.get('budget', 0)
         
         # Get team players
         players_docs = db.collection('teams').document(team_id).collection('players').stream()
