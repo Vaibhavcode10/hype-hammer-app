@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Timer, Users, Gavel, Mic, MicOff, Play, Pause, Square, 
   TrendingUp, DollarSign, Clock, AlertCircle, CheckCircle2, ArrowLeft, XCircle,
-  Zap, Shield, Award, Activity, Radio, Crown, Trophy, Target, Calendar, Hash
+  Zap, Shield, Award, Activity, Radio, Crown, Trophy, Target, Calendar, Hash, AlertTriangle,
+  Wallet, UserCheck, PieChart, AlertOctagon
 } from 'lucide-react';
 import { isValidImageUrl } from '../../services/imageUrlValidator';
 import { 
@@ -14,6 +15,14 @@ import {
   LiveRoomPermissions,
   BidHistoryItem 
 } from '../../types';
+import { MatchConfig } from '../../services/matchConfigService';
+import { 
+  calculateTeamPurseInsights, 
+  validateBidAgainstPurse, 
+  formatCurrencyShort, 
+  getWarningLevel,
+  TeamPurseInsights 
+} from '../../services/purseIntelligenceService';
 
 interface AuctioneerLiveRoomProps {
   auctionState: LiveAuctionState | null;
@@ -35,7 +44,9 @@ interface AuctioneerLiveRoomProps {
   onMarkUnsold?: () => void;
   onPlaceBid?: (teamId: string, incrementAmount: number) => void;
   onDirectSell?: (teamId: string) => void;
+  onSwitchPlayer?: (playerId: string) => void;
   currentMatch?: { id: string } | null;
+  matchConfig?: MatchConfig | null;
 }
 
 /**
@@ -62,10 +73,32 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
   onMarkUnsold,
   onPlaceBid,
   onDirectSell,
-  currentMatch
+  onSwitchPlayer,
+  currentMatch,
+  matchConfig
 }) => {
   // Custom bid state per team
   const [customBidAmounts, setCustomBidAmounts] = useState<Record<string, string>>({});
+  const [switchPlayerModal, setSwitchPlayerModal] = useState<{ show: boolean; player: Player | null }>({ show: false, player: null });
+  
+  // Purse warning modal state
+  const [purseWarningModal, setPurseWarningModal] = useState<{
+    show: boolean;
+    teamId: string | null;
+    teamName: string;
+    incrementAmount: number;
+    warningMessage: string;
+    safeMaxBid: number;
+    newTotalBid: number;
+  }>({
+    show: false,
+    teamId: null,
+    teamName: '',
+    incrementAmount: 0,
+    warningMessage: '',
+    safeMaxBid: 0,
+    newTotalBid: 0
+  });
 
   const handleCustomBidChange = (teamId: string, value: string) => {
     // Allow only numbers and decimal point
@@ -97,6 +130,26 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
     onPlaceBid?.(teamId, incrementAmount);
     setCustomBidAmounts(prev => ({ ...prev, [teamId]: '' }));
   };
+
+  const handlePlayerCardClick = (player: Player) => {
+    // Don't allow switching to the same player
+    if (currentPlayer && player.id === currentPlayer.id) {
+      return;
+    }
+    
+    // Only allow switching if there's an active player
+    if (currentPlayer && auctionState?.biddingActive) {
+      setSwitchPlayerModal({ show: true, player });
+    }
+  };
+
+  const confirmPlayerSwitch = () => {
+    if (switchPlayerModal.player && onSwitchPlayer) {
+      onSwitchPlayer(switchPlayerModal.player.id);
+      setSwitchPlayerModal({ show: false, player: null });
+    }
+  };
+
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -118,11 +171,83 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
   // Calculate stats
   const remainingPlayers = allPlayers.filter(p => p.status !== 'SOLD').length;
   const soldPlayers = allPlayers.filter(p => p.status === 'SOLD').length;
-  const leadingTeam = auctionState?.leadingTeamId 
-    ? teams.find(t => t.id === auctionState.leadingTeamId)
-    : null;
   const currentBid = auctionState?.currentBid || auctionState?.currentBidAmount || currentPlayer?.basePrice || 0;
-  const maxBudget = Math.max(...teams.map(t => t.remainingBudget || 0));
+  
+  // Calculate actual remaining budget for each team - memoized for performance
+  const teamsWithRemainingBudget = useMemo(() => {
+    return teams.map(team => {
+      // If remainingBudget is explicitly set and valid, use it
+      if (team.remainingBudget !== undefined && team.remainingBudget !== null && team.remainingBudget > 0) {
+        return team;
+      }
+      
+      // Otherwise calculate from initial budget minus player costs
+      const initialBudget = team.budget || 0;
+      const soldPlayersForTeam = allPlayers.filter(p => p.status === 'SOLD' && p.buyingTeamId === team.id);
+      const totalSpent = soldPlayersForTeam.reduce((sum, p) => sum + (p.soldPrice || 0), 0);
+      const calculatedRemaining = initialBudget - totalSpent;
+      
+      console.log(`💰 Budget calc for ${team.name}: initial=${initialBudget/100000}L, spent=${totalSpent/100000}L (${soldPlayersForTeam.length} players), remaining=${calculatedRemaining/100000}L`);
+      
+      return {
+        ...team,
+        remainingBudget: Math.max(0, calculatedRemaining)
+      };
+    });
+  }, [teams, allPlayers]);
+  
+  const leadingTeam = auctionState?.leadingTeamId 
+    ? teamsWithRemainingBudget.find(t => t.id === auctionState.leadingTeamId)
+    : null;
+  
+  const maxBudget = Math.max(...teamsWithRemainingBudget.map(t => t.remainingBudget || 0));
+
+  // Calculate purse insights for leading team
+  const leadingTeamInsights = useMemo(() => {
+    if (!leadingTeam || !matchConfig) return null;
+    return calculateTeamPurseInsights(leadingTeam, allPlayers, matchConfig);
+  }, [leadingTeam, allPlayers, matchConfig]);
+
+  // Handle bid with purse check - shows warning but doesn't block
+  const handleBidWithPurseCheck = (teamId: string, incrementAmount: number) => {
+    const team = teamsWithRemainingBudget.find(t => t.id === teamId);
+    if (!team) {
+      onPlaceBid?.(teamId, incrementAmount);
+      return;
+    }
+
+    const newTotalBid = currentBid + incrementAmount;
+    const validation = validateBidAgainstPurse(team, allPlayers, matchConfig, newTotalBid);
+
+    if (!validation.isSafe && validation.warningMessage) {
+      // Show warning modal but allow proceeding
+      setPurseWarningModal({
+        show: true,
+        teamId,
+        teamName: team.name,
+        incrementAmount,
+        warningMessage: validation.warningMessage,
+        safeMaxBid: validation.safeMaxBid,
+        newTotalBid
+      });
+    } else {
+      // Safe bid - proceed directly
+      onPlaceBid?.(teamId, incrementAmount);
+    }
+  };
+
+  // Confirm bid despite warning
+  const confirmBidDespiteWarning = () => {
+    if (purseWarningModal.teamId) {
+      onPlaceBid?.(purseWarningModal.teamId, purseWarningModal.incrementAmount);
+    }
+    setPurseWarningModal({ show: false, teamId: null, teamName: '', incrementAmount: 0, warningMessage: '', safeMaxBid: 0, newTotalBid: 0 });
+  };
+
+  // Cancel bid
+  const cancelBidWarning = () => {
+    setPurseWarningModal({ show: false, teamId: null, teamName: '', incrementAmount: 0, warningMessage: '', safeMaxBid: 0, newTotalBid: 0 });
+  };
 
   // Calculate dynamic card width based on total players to fit in screen
   const totalBottomPlayers = allPlayers.filter(p => p.status === 'UNSOLD' || p.status === 'AVAILABLE').length;
@@ -195,31 +320,72 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
             </div>
           </div>
 
-          {/* Right: Meta Stats */}
-          <div className="flex items-center gap-6">
-            <div className="text-right">
-              <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider">
+          {/* CENTER: Diagonal Separating Line */}
+          <div className="relative mx-6 h-12 flex items-center">
+            <div 
+              className="absolute"
+              style={{
+                width: '2px',
+                height: '56px',
+                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.3) 0%, rgba(239, 68, 68, 0.6) 50%, rgba(239, 68, 68, 0.3) 100%)',
+                transform: 'skewX(-20deg)',
+                boxShadow: '0 0 12px rgba(239, 68, 68, 0.5)',
+              }}
+            />
+          </div>
+
+          {/* Right: Auction Statistics */}
+          <div className="flex items-center gap-8">
+            <div className="text-center">
+              <div className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-1">
+                Total Players
+              </div>
+              <div className="text-red-400 font-black text-xl tabular-nums">
+                {allPlayers.length}
+              </div>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-1">
+                Sold Players
+              </div>
+              <div className="text-red-400 font-black text-xl tabular-nums">
+                {allPlayers.filter(p => p.status === 'SOLD').length}
+              </div>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-1">
                 Available Players
               </div>
               <div className="text-red-400 font-black text-xl tabular-nums">
-                {remainingPlayers}
+                {allPlayers.filter(p => p.status === 'AVAILABLE').length}
               </div>
             </div>
             
-            <div className="text-right">
-              <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider">
-                Available Teams
+            <div className="text-center">
+              <div className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-1">
+                Unsold Players
               </div>
               <div className="text-red-400 font-black text-xl tabular-nums">
-                {teams.length}
+                {allPlayers.filter(p => p.status === 'UNSOLD').length}
               </div>
             </div>
             
+            <div className="text-center">
+              <div className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-1">
+                Filled Teams
+              </div>
+              <div className="text-red-400 font-black text-xl tabular-nums">
+                {teams.filter(t => (t.players?.length || t.playerIds?.length || 0) >= (t.squadSize || 11)).length}
+              </div>
+            </div>
           </div>
         </div>
 
         {currentPlayer ? (
-          <div className="flex-1 flex flex-col min-h-0 relative">
+          <>
+            <div className="flex-1 flex flex-col min-h-0 relative">
             
             {/* 🧍 2️⃣ MAIN PLAYER PROFILE ZONE - 3-Column Layout */}
             <div className="flex-1 flex gap-4 px-6 py-6 pr-[560px] min-h-0">
@@ -238,8 +404,9 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                     
                     {/* Player Image */}
                     <img
-                      src={currentPlayer.imageUrl || `/api/placeholder/300/400`}
-                      alt={currentPlayer.name}
+                      key={currentPlayer?.id}
+                      src={currentPlayer?.imageUrl || `/api/placeholder/300/400`}
+                      alt={currentPlayer?.name}
                       className="w-full h-full object-cover"
                     />
                     
@@ -457,7 +624,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                   
                   {/* CARD 1: BASE PRICE - Red HUD Style */}
                   <div 
-                    className="relative overflow-hidden"
+                    className="relative overflow-hidden transition-all duration-300"
                     style={{
                       width: '165px',
                       height: '105px',
@@ -474,31 +641,58 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                     <span style={{ fontSize: '9px', color: 'rgba(239, 68, 68, 0.7)', fontWeight: '600', letterSpacing: '1px', textTransform: 'uppercase' }}>
                       BASE PRICE
                     </span>
-                    <span style={{ fontSize: '18px', color: '#EF4444', fontWeight: '900', marginTop: '6px', textShadow: '0 0 10px rgba(239, 68, 68, 0.6)' }}>
+                    <span 
+                      className="transition-all duration-300"
+                      style={{ fontSize: '18px', color: '#EF4444', fontWeight: '900', marginTop: '6px', textShadow: '0 0 10px rgba(239, 68, 68, 0.6)' }}
+                    >
                       {formatCurrency(currentPlayer.basePrice || 0)}
                     </span>
                   </div>
 
-                  {/* CARD 2: TEAM - Center with Logo */}
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                    {leadingTeam?.logo && isValidImageUrl(leadingTeam.logo) ? (
-                      <img 
-                        src={leadingTeam.logo} 
-                        alt={leadingTeam.name} 
-                        className="h-12 w-auto object-contain"
-                        style={{ filter: 'drop-shadow(0 0 10px rgba(239, 68, 68, 0.5))' }}
-                      />
-                    ) : (
-                      <Crown size={32} className="text-red-400" style={{ filter: 'drop-shadow(0 0 10px rgba(239, 68, 68, 0.5))' }} />
+                  {/* CARD 2: TEAM - Center with Logo - ✅ ALWAYS RENDERED */}
+                  <div 
+                    className="transition-all duration-300"
+                    style={{ 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      gap: '6px', 
+                      minHeight: '80px', 
+                      minWidth: '120px',
+                      opacity: leadingTeam ? 1 : 0,
+                      pointerEvents: leadingTeam ? 'auto' : 'none'
+                    }}
+                  >
+                    {leadingTeam && (
+                      <>
+                        {leadingTeam.logo && isValidImageUrl(leadingTeam.logo) ? (
+                          <img 
+                            src={leadingTeam.logo} 
+                            alt={leadingTeam.name} 
+                            className="h-12 w-auto object-contain transition-all duration-300"
+                            style={{ filter: 'drop-shadow(0 0 10px rgba(239, 68, 68, 0.5))' }}
+                          />
+                        ) : (
+                          <Crown 
+                            size={32} 
+                            className="text-red-400 transition-all duration-300" 
+                            style={{ filter: 'drop-shadow(0 0 10px rgba(239, 68, 68, 0.5))' }} 
+                          />
+                        )}
+                        <span 
+                          className="transition-all duration-300"
+                          style={{ fontSize: '13px', color: 'rgba(239, 68, 68, 0.9)', fontWeight: '700', letterSpacing: '0.5px', textAlign: 'center' }}
+                        >
+                          {leadingTeam.name}
+                        </span>
+                      </>
                     )}
-                    <span style={{ fontSize: '13px', color: 'rgba(239, 68, 68, 0.9)', fontWeight: '700', letterSpacing: '0.5px', textAlign: 'center' }}>
-                      {leadingTeam?.name || 'NO TEAM'}
-                    </span>
                   </div>
 
                   {/* CARD 3: CURRENT BID - Red Pulsing HUD */}
                   <div 
-                    className="relative overflow-hidden"
+                    className="relative overflow-hidden transition-all duration-300"
                     style={{
                       width: '165px',
                       height: '105px',
@@ -515,12 +709,114 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                     <span style={{ fontSize: '9px', color: 'rgba(239, 68, 68, 0.8)', fontWeight: '700', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
                       LIVE BID
                     </span>
-                    <span style={{ fontSize: '18px', color: '#EF4444', fontWeight: '900', marginTop: '6px', textShadow: '0 0 15px rgba(239, 68, 68, 0.8), 0 0 30px rgba(239, 68, 68, 0.5)' }}>
+                    <span 
+                      className="transition-all duration-300"
+                      style={{ fontSize: '18px', color: '#EF4444', fontWeight: '900', marginTop: '6px', textShadow: '0 0 15px rgba(239, 68, 68, 0.8), 0 0 30px rgba(239, 68, 68, 0.5)' }}
+                    >
                       {formatCurrency(currentBid)}
                     </span>
                   </div>
 
                 </div>
+
+                {/* PURSE INTELLIGENCE PANEL - Only show when we have leading team insights */}
+                {leadingTeamInsights && leadingTeam && auctionState?.biddingActive && (
+                  <div className="flex justify-center mt-6">
+                    <div 
+                      className="relative overflow-hidden"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(15, 15, 25, 0.95) 0%, rgba(25, 20, 35, 0.95) 100%)',
+                        border: `1.5px solid ${getWarningLevel(leadingTeamInsights.safeMaxBid, currentBid) === 'danger' 
+                          ? 'rgba(239, 68, 68, 0.6)' 
+                          : getWarningLevel(leadingTeamInsights.safeMaxBid, currentBid) === 'warning'
+                          ? 'rgba(245, 158, 11, 0.6)'
+                          : 'rgba(34, 197, 94, 0.4)'}`,
+                        borderRadius: '12px',
+                        padding: '12px 20px',
+                        minWidth: '400px',
+                        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.4)'
+                      }}
+                    >
+                      {/* Header */}
+                      <div className="flex items-center justify-between mb-3 pb-2" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                        <div className="flex items-center gap-2">
+                          <Wallet size={14} className="text-amber-400" />
+                          <span style={{ fontSize: '10px', color: 'rgba(245, 158, 11, 0.9)', fontWeight: '700', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
+                            PURSE INTELLIGENCE
+                          </span>
+                        </div>
+                        <span style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.6)' }}>
+                          {leadingTeam.name}
+                        </span>
+                      </div>
+
+                      {/* Stats Grid */}
+                      <div className="grid grid-cols-4 gap-3">
+                        {/* Remaining Budget */}
+                        <div className="text-center">
+                          <div className="flex items-center justify-center gap-1 mb-1">
+                            <DollarSign size={10} className="text-green-400" />
+                            <span style={{ fontSize: '8px', color: 'rgba(34, 197, 94, 0.8)', fontWeight: '600', textTransform: 'uppercase' }}>Remaining</span>
+                          </div>
+                          <span style={{ fontSize: '14px', color: '#22C55E', fontWeight: '800' }}>
+                            {formatCurrencyShort(leadingTeamInsights.remainingBudget)}
+                          </span>
+                        </div>
+
+                        {/* Players Left */}
+                        <div className="text-center">
+                          <div className="flex items-center justify-center gap-1 mb-1">
+                            <UserCheck size={10} className="text-blue-400" />
+                            <span style={{ fontSize: '8px', color: 'rgba(59, 130, 246, 0.8)', fontWeight: '600', textTransform: 'uppercase' }}>Need</span>
+                          </div>
+                          <span style={{ fontSize: '14px', color: '#3B82F6', fontWeight: '800' }}>
+                            {leadingTeamInsights.playersLeft} Players
+                          </span>
+                        </div>
+
+                        {/* Safe Max Bid */}
+                        <div className="text-center">
+                          <div className="flex items-center justify-center gap-1 mb-1">
+                            <Shield size={10} className={currentBid > leadingTeamInsights.safeMaxBid ? 'text-red-400' : 'text-amber-400'} />
+                            <span style={{ fontSize: '8px', color: currentBid > leadingTeamInsights.safeMaxBid ? 'rgba(239, 68, 68, 0.8)' : 'rgba(245, 158, 11, 0.8)', fontWeight: '600', textTransform: 'uppercase' }}>Safe Max</span>
+                          </div>
+                          <span style={{ 
+                            fontSize: '14px', 
+                            color: currentBid > leadingTeamInsights.safeMaxBid ? '#EF4444' : '#F59E0B', 
+                            fontWeight: '800' 
+                          }}>
+                            {formatCurrencyShort(leadingTeamInsights.safeMaxBid)}
+                          </span>
+                        </div>
+
+                        {/* Squad Progress */}
+                        <div className="text-center">
+                          <div className="flex items-center justify-center gap-1 mb-1">
+                            <PieChart size={10} className="text-purple-400" />
+                            <span style={{ fontSize: '8px', color: 'rgba(147, 51, 234, 0.8)', fontWeight: '600', textTransform: 'uppercase' }}>Squad</span>
+                          </div>
+                          <span style={{ fontSize: '14px', color: '#9333EA', fontWeight: '800' }}>
+                            {leadingTeamInsights.playersBought}/{leadingTeamInsights.squadSizeRequired}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Warning Message - Show only when over safe max */}
+                      {currentBid > leadingTeamInsights.safeMaxBid && (
+                        <div 
+                          className="mt-3 pt-2 flex items-center justify-center gap-2"
+                          style={{ borderTop: '1px solid rgba(239, 68, 68, 0.3)' }}
+                        >
+                          <AlertOctagon size={14} className="text-red-400 animate-pulse" />
+                          <span style={{ fontSize: '11px', color: '#EF4444', fontWeight: '600' }}>
+                            ⚠️ Current bid exceeds safe maximum!
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
               </div>
 
               {/* Right: AUCTION WAR ROOM - Championship Bidding Console */}
@@ -592,17 +888,20 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                             }}>
                         SELL TO
                       </span>
-                      {leadingTeam?.logo && isValidImageUrl(leadingTeam.logo) ? (
-                        <img 
-                          src={leadingTeam.logo} 
-                          alt={leadingTeam.name}
-                          className="w-7 h-7 object-contain"
-                          style={{ filter: 'drop-shadow(0 0 8px rgba(255, 255, 255, 0.9))' }}
-                        />
-                      ) : (
-                        <Crown size={20} className="text-green-300" style={{ filter: 'drop-shadow(0 0 8px rgba(34, 197, 94, 1))' }} />
-                      )}
-                      <span className="text-green-100 font-black text-base uppercase tracking-wider truncate"
+                      <div className="flex items-center justify-center transition-all duration-300" style={{ minWidth: '28px', minHeight: '28px' }}>
+                        {leadingTeam?.logo && isValidImageUrl(leadingTeam.logo) ? (
+                          <img 
+                            key={leadingTeam.id}
+                            src={leadingTeam.logo} 
+                            alt={leadingTeam.name}
+                            className="w-7 h-7 object-contain"
+                            style={{ filter: 'drop-shadow(0 0 8px rgba(255, 255, 255, 0.9))' }}
+                          />
+                        ) : (
+                          <Crown size={20} className="text-green-300" style={{ filter: 'drop-shadow(0 0 8px rgba(34, 197, 94, 1))' }} />
+                        )}
+                      </div>
+                      <span className="text-green-100 font-black text-base uppercase tracking-wider truncate transition-all duration-300"
                             style={{ textShadow: '0 0 10px rgba(34, 197, 94, 1), 0 2px 8px rgba(0, 0, 0, 0.9)' }}>
                         {leadingTeam?.name || 'NO TEAM'}
                       </span>
@@ -623,7 +922,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 
                 {/* Team Battle Strips - Esports Power Hierarchy */}
                 <div className="flex-1 overflow-y-auto hide-scrollbar space-y-2">
-                  {teams.length === 0 ? (
+                  {teamsWithRemainingBudget.length === 0 ? (
                     <div className="flex items-center justify-center py-8">
                       <div className="text-center">
                         <Users size={48} className="text-gray-600 mx-auto mb-3" />
@@ -631,7 +930,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                       </div>
                     </div>
                   ) : (
-                    teams
+                    teamsWithRemainingBudget
                       .sort((a, b) => {
                         // Leading team to top
                         if (a.id === auctionState?.leadingTeamId) return -1;
@@ -639,7 +938,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                         return 0;
                       })
                       .map((team, index) => {
-                      const remainingBudget = team.remainingBudget || team.budget || 0;
+                      const remainingBudget = team.remainingBudget || 0;
                       const isLeadingTeam = auctionState?.leadingTeamId === team.id;
                       const isTop3 = index < 3;
                       const canAfford = remainingBudget >= (auctionState?.currentBid || auctionState?.currentBidAmount || currentPlayer?.basePrice || 0);
@@ -704,7 +1003,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                                 ].map(({ amount, label, gradient }) => (
                                   <button
                                     key={label}
-                                    onClick={() => onPlaceBid?.(team.id, amount)}
+                                    onClick={() => handleBidWithPurseCheck(team.id, amount)}
                                     disabled={!onPlaceBid || remainingBudget < (currentBid + amount)}
                                     className={`px-2.5 py-1.5 bg-gradient-to-b ${gradient}
                                                border border-red-400/80 text-red-50 text-[10px] font-black uppercase rounded-md
@@ -837,7 +1136,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                                 ].map(({ amount, label }) => (
                                   <button
                                     key={label}
-                                    onClick={() => onPlaceBid?.(team.id, amount)}
+                                    onClick={() => handleBidWithPurseCheck(team.id, amount)}
                                     disabled={!onPlaceBid || remainingBudget < (currentBid + amount)}
                                     className="px-2.5 py-1.5 bg-gradient-to-b from-purple-700 to-purple-900
                                                border border-purple-500/50 text-white text-[10px] font-black uppercase
@@ -946,7 +1245,8 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 {allPlayers.filter(p => p.status === 'UNSOLD').map((player, idx) => (
                   <div 
                     key={`unsold-${player.id}-${idx}`}
-                    className="relative flex-shrink-0 flex flex-col"
+                    onClick={() => handlePlayerCardClick(player)}
+                    className="relative flex-shrink-0 flex flex-col cursor-pointer hover:scale-105 transition-transform"
                     style={{
                       width: `${calculateCardWidth()}px`,
                       background: 'linear-gradient(135deg, rgba(80, 0, 0, 0.9) 0%, rgba(40, 10, 10, 0.9) 100%)',
@@ -1000,7 +1300,8 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 {allPlayers.filter(p => p.status === 'AVAILABLE').map((player, idx) => (
                   <div 
                     key={`available-${player.id}-${idx}`}
-                    className="relative flex-shrink-0 flex flex-col"
+                    onClick={() => handlePlayerCardClick(player)}
+                    className="relative flex-shrink-0 flex flex-col cursor-pointer hover:scale-105 transition-transform"
                     style={{
                       width: `${calculateCardWidth()}px`,
                       background: 'linear-gradient(135deg, rgba(0, 40, 80, 0.9) 0%, rgba(10, 30, 60, 0.9) 100%)',
@@ -1071,6 +1372,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
               </button>
             </div>
           </div>
+          </>
         ) : (
           // No Player Selected State
           <div className="flex-1 flex items-center justify-center">
@@ -1164,6 +1466,192 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
           }
         }
       `}</style>
+
+      {/* Player Switch Confirmation Modal */}
+      {switchPlayerModal.show && switchPlayerModal.player && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => setSwitchPlayerModal({ show: false, player: null })}
+          />
+          
+          {/* Modal - Compact & Rounded */}
+          <div 
+            className="relative z-10 w-[380px] rounded-2xl overflow-hidden animate-in zoom-in duration-200"
+            style={{
+              background: 'linear-gradient(135deg, rgba(20, 20, 30, 0.95) 0%, rgba(30, 15, 15, 0.95) 100%)',
+              border: '1.5px solid rgba(239, 68, 68, 0.4)',
+              boxShadow: '0 0 40px rgba(239, 68, 68, 0.3)'
+            }}
+          >
+            {/* Modal Body - Compact */}
+            <div className="px-5 py-6">
+              {/* Icon + Title */}
+              <div className="flex items-center gap-3 mb-4">
+                <div 
+                  className="w-9 h-9 rounded-full flex items-center justify-center"
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.2)',
+                    boxShadow: '0 0 15px rgba(239, 68, 68, 0.3)'
+                  }}
+                >
+                  <AlertTriangle className="text-red-400" size={18} />
+                </div>
+                <h3 className="text-lg font-black text-red-400 uppercase tracking-wide">
+                  Switch Player?
+                </h3>
+              </div>
+
+              {/* Player Info - Compact */}
+              <div 
+                className="flex items-center gap-3 p-3 rounded-xl mb-3"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(220, 38, 38, 0.08) 100%)',
+                  border: '1px solid rgba(239, 68, 68, 0.2)'
+                }}
+              >
+                {switchPlayerModal.player.photoUrl && (
+                  <img
+                    src={switchPlayerModal.player.photoUrl}
+                    alt={switchPlayerModal.player.name}
+                    className="w-12 h-12 rounded-full object-cover border border-red-400/50"
+                  />
+                )}
+                <div className="flex flex-col">
+                  <span className="text-lg font-black text-white">
+                    {switchPlayerModal.player.name}
+                  </span>
+                  <span className="text-xs text-gray-400">
+                    {switchPlayerModal.player.playerCategory || 'Player'}
+                  </span>
+                </div>
+              </div>
+              
+              <p className="text-xs text-gray-400 text-center mb-4">
+                Current player returns to AVAILABLE
+              </p>
+
+              {/* Action Buttons - Compact */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setSwitchPlayerModal({ show: false, player: null })}
+                  className="flex-1 px-4 py-2.5 rounded-xl font-semibold text-sm text-gray-300
+                             bg-gray-800/50 border border-gray-600/50 hover:bg-gray-700/50
+                             transition-all duration-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmPlayerSwitch}
+                  className="flex-1 px-4 py-2.5 rounded-xl font-bold text-sm text-white uppercase
+                             hover:scale-105 active:scale-95
+                             transition-all duration-200"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.85) 0%, rgba(220, 38, 38, 0.85) 100%)',
+                    border: '1px solid rgba(239, 68, 68, 0.5)',
+                    boxShadow: '0 0 20px rgba(239, 68, 68, 0.3)'
+                  }}
+                >
+                  Switch
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PURSE WARNING MODAL */}
+      {purseWarningModal.show && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div 
+            className="relative w-[480px] overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, rgba(25, 10, 10, 0.98) 0%, rgba(40, 15, 15, 0.98) 100%)',
+              border: '2px solid rgba(239, 68, 68, 0.6)',
+              borderRadius: '16px',
+              boxShadow: '0 0 60px rgba(239, 68, 68, 0.3), 0 0 100px rgba(239, 68, 68, 0.1)'
+            }}
+          >
+            {/* Warning Header */}
+            <div 
+              className="px-6 py-4 flex items-center gap-3"
+              style={{ 
+                background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.2) 0%, transparent 100%)',
+                borderBottom: '1px solid rgba(239, 68, 68, 0.3)'
+              }}
+            >
+              <div className="p-2 rounded-full" style={{ background: 'rgba(239, 68, 68, 0.2)' }}>
+                <AlertOctagon size={24} className="text-red-400 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-red-400">⚠️ PURSE WARNING</h3>
+                <p className="text-xs text-gray-400">{purseWarningModal.teamName}</p>
+              </div>
+            </div>
+
+            {/* Warning Content */}
+            <div className="p-6">
+              <div 
+                className="p-4 rounded-xl mb-4"
+                style={{ 
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)'
+                }}
+              >
+                <p className="text-sm text-gray-200 leading-relaxed">
+                  {purseWarningModal.warningMessage}
+                </p>
+              </div>
+
+              {/* Bid Comparison */}
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="text-center p-3 rounded-lg" style={{ background: 'rgba(239, 68, 68, 0.15)' }}>
+                  <span className="text-xs text-gray-400 block mb-1">New Bid Amount</span>
+                  <span className="text-lg font-bold text-red-400">
+                    {formatCurrencyShort(purseWarningModal.newTotalBid)}
+                  </span>
+                </div>
+                <div className="text-center p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.15)' }}>
+                  <span className="text-xs text-gray-400 block mb-1">Safe Max Bid</span>
+                  <span className="text-lg font-bold text-green-400">
+                    {formatCurrencyShort(purseWarningModal.safeMaxBid)}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-500 text-center mb-4">
+                This warning doesn't block the bid - proceed if intentional
+              </p>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3">
+                <button
+                  onClick={cancelBidWarning}
+                  className="flex-1 px-4 py-3 rounded-xl font-semibold text-sm text-gray-300
+                             bg-gray-800/50 border border-gray-600/50 hover:bg-gray-700/50
+                             transition-all duration-200"
+                >
+                  Cancel Bid
+                </button>
+                <button
+                  onClick={confirmBidDespiteWarning}
+                  className="flex-1 px-4 py-3 rounded-xl font-bold text-sm text-white uppercase
+                             hover:scale-105 active:scale-95
+                             transition-all duration-200"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.85) 0%, rgba(220, 38, 38, 0.85) 100%)',
+                    border: '1px solid rgba(239, 68, 68, 0.5)',
+                    boxShadow: '0 0 20px rgba(239, 68, 68, 0.3)'
+                  }}
+                >
+                  ⚡ Proceed Anyway
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

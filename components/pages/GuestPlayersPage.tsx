@@ -1,11 +1,10 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { Users, TrendingUp, TrendingDown, User, Download, ArrowLeft, Search, Filter, X as FilterX, Shield, Trophy, Target, IndianRupee, Plus } from 'lucide-react';
+import { Users, TrendingUp, TrendingDown, User, ArrowLeft, Search, Filter, X as FilterX, Shield, Trophy, Target, IndianRupee } from 'lucide-react';
 import type { MatchData, Player as AppPlayer, Team as AppTeam } from '../../types';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
 type Player = AppPlayer & {
-  // Some API responses use alternate field names; keep these optional for compatibility.
   soldTimestamp?: unknown;
   updatedAt?: unknown;
   createdAt?: unknown;
@@ -13,13 +12,12 @@ type Player = AppPlayer & {
 
 type Team = AppTeam;
 
-interface PlayersPageProps {
+interface GuestPlayersPageProps {
   onClose: () => void;
   currentMatch: MatchData | null;
-  onAddPlayer?: () => void;
 }
 
-export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch, onAddPlayer }) => {
+export const GuestPlayersPage: React.FC<GuestPlayersPageProps> = ({ onClose, currentMatch }) => {
   const [players, setPlayers] = useState<Player[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +57,6 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
     }
   };
 
-  // Helper functions (defined BEFORE they're used in filters)
   const getTeamName = (teamId?: string) => {
     if (!teamId) return 'N/A';
     const team = teams.find(t => t.id === teamId);
@@ -73,7 +70,6 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
   };
 
   const getSoldAmount = (player: Player) => {
-    // Backend may return soldAmount, currentBid, soldPrice, or finalPrice
     return (
       (player.soldAmount as number | undefined) ??
       (player.currentBid as number | undefined) ??
@@ -84,13 +80,7 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
   };
 
   const getSoldTeamId = (player: Player) => {
-    // Backend may return soldTo or teamId
-    const result = (player.soldTo as string | undefined) ?? (player.teamId as string | undefined);
-    // If no soldTo/teamId but marked as SOLD and has currentBid, this is incomplete data
-    if (!result && player.status === 'SOLD' && player.currentBid) {
-      console.warn(`⚠️ Player ${player.name} is SOLD but missing soldTo/teamId. Has currentBid: ${player.currentBid}`);
-    }
-    return result;
+    return (player.soldTo as string | undefined) ?? (player.teamId as string | undefined);
   };
 
   const getSoldTeamDisplayName = (player: Player) => {
@@ -99,66 +89,12 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
     return getTeamName(getSoldTeamId(player));
   };
 
-  const getSoldAt = (player: Player) => {
-    return (player.soldAt as unknown) ?? (player.soldTimestamp as unknown) ?? (player.updatedAt as unknown) ?? (player.createdAt as unknown);
-  };
-
   const formatCurrency = (amount: number) => `₹${((amount || 0) / 100000).toFixed(1)}L`;
-
-  const formatDate = (value?: unknown) => {
-    if (!value) return 'N/A';
-
-    // Firestore Timestamp (web SDK) support
-    if (typeof value === 'object' && value !== null) {
-      const asAny = value as any;
-      if (typeof asAny.toDate === 'function') {
-        const date = asAny.toDate();
-        return date.toLocaleDateString('en-IN', {
-          day: '2-digit',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
-      }
-      const seconds = asAny.seconds ?? asAny._seconds;
-      if (typeof seconds === 'number') {
-        const date = new Date(seconds * 1000);
-        return date.toLocaleDateString('en-IN', {
-          day: '2-digit',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
-      }
-    }
-
-    if (typeof value === 'number') {
-      // ms vs seconds heuristic
-      const ms = value > 1_000_000_000_000 ? value : value * 1000;
-      const date = new Date(ms);
-      return date.toLocaleDateString('en-IN', {
-        day: '2-digit',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    }
-
-    const date = new Date(String(value));
-    if (Number.isNaN(date.getTime())) return 'N/A';
-    return date.toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
 
   const soldPlayers = useMemo(() => players.filter(p => p.status === 'SOLD'), [players]);
   const unsoldPlayers = useMemo(() => players.filter(p => p.status === 'UNSOLD'), [players]);
   const availablePlayers = useMemo(() => players.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status), [players]);
 
-  // Apply search and team filters
   const filteredAllPlayers = players.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                          p.email?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -184,65 +120,6 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                          p.email?.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
   });
-
-  const exportToCSV = () => {
-    const dataToExport = activeTab === 'all' ? filteredAllPlayers : activeTab === 'sold' ? filteredSoldPlayers : activeTab === 'unsold' ? filteredUnsoldPlayers : filteredAvailablePlayers;
-    
-    if (dataToExport.length === 0) {
-      alert('No data to export');
-      return;
-    }
-
-    let csvContent = '';
-    
-    if (activeTab === 'sold') {
-      csvContent = 'Player Name,Email,Role,Base Price,Sold Price,Profit/Loss,Sold To Team,Sold At\n';
-      dataToExport.forEach(player => {
-        const soldAmount = getSoldAmount(player);
-        const difference = soldAmount - player.basePrice;
-        const basePrice = (player.basePrice / 100000).toFixed(1);
-        const soldPrice = (soldAmount / 100000).toFixed(1);
-        const profitLoss = (difference / 100000).toFixed(1);
-        const teamName = getSoldTeamDisplayName(player);
-        
-        csvContent += `"${player.name}","${player.email || ''}","${player.roleId || ''}","₹${basePrice}L","₹${soldPrice}L","₹${profitLoss}L","${teamName}","${formatDate(getSoldAt(player))}"`;
-        csvContent += '\n';
-      });
-    } else if (activeTab === 'unsold') {
-      csvContent = 'Player Name,Email,Role,Base Price,Status\n';
-      dataToExport.forEach(player => {
-        const basePrice = (player.basePrice / 100000).toFixed(1);
-        csvContent += `"${player.name}","${player.email || ''}","${player.roleId || ''}","₹${basePrice}L","UNSOLD"`;
-        csvContent += '\n';
-      });
-    } else if (activeTab === 'available') {
-      csvContent = 'Player Name,Email,Role,Base Price,Status\n';
-      dataToExport.forEach(player => {
-        const basePrice = (player.basePrice / 100000).toFixed(1);
-        csvContent += `"${player.name}","${player.email || ''}","${player.roleId || ''}","₹${basePrice}L","AVAILABLE"`;
-        csvContent += '\n';
-      });
-    } else if (activeTab === 'all') {
-      csvContent = 'Player Name,Email,Role,Base Price,Status,Sold To,Sold Price,Sold At\n';
-      dataToExport.forEach(player => {
-        const basePrice = (player.basePrice / 100000).toFixed(1);
-        const status = player.status || 'UNKNOWN';
-        const soldTo = status === 'SOLD' ? getSoldTeamDisplayName(player) : '';
-        const soldPrice = status === 'SOLD' ? ((getSoldAmount(player) / 100000).toFixed(1)) : '';
-        const soldAt = status === 'SOLD' ? formatDate(getSoldAt(player)) : '';
-        csvContent += `"${player.name}","${player.email || ''}","${player.roleId || ''}","₹${basePrice}L","${status}","${soldTo}","${soldPrice ? `₹${soldPrice}L` : ''}","${soldAt}"`;
-        csvContent += '\n';
-      });
-    }
-
-    const element = document.createElement('a');
-    element.setAttribute('href', 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent));
-    element.setAttribute('download', `${currentMatch?.name || 'players'}_${activeTab === 'all' ? 'all' : activeTab}_players.csv`);
-    element.style.display = 'none';
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  };
 
   if (loading) {
     return (
@@ -273,7 +150,7 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
         .custom-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
       `}</style>
 
-      {/* Header - Matches Teams page exactly */}
+      {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">
           <div 
@@ -317,20 +194,6 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
               }}
             />
           </div>
-          {onAddPlayer && (
-            <button
-              onClick={onAddPlayer}
-              className="px-5 py-2.5 rounded-full font-bold text-sm flex items-center gap-2 transition-all duration-300 hover:scale-105"
-              style={{
-                background: 'linear-gradient(135deg, #ec4899, #e11d48)',
-                color: '#fff',
-                boxShadow: '0 0 20px rgba(236, 72, 153, 0.3)'
-              }}
-            >
-              <Plus size={16} />
-              Add Player
-            </button>
-          )}
           <button
             onClick={onClose}
             className="px-5 py-2.5 rounded-full bg-white/5 border border-pink-500/20 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2 text-sm font-semibold"
@@ -497,9 +360,8 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
           </button>
         </div>
 
-        {/* Right Controls */}
+        {/* Right Controls - View-only: only team filter, no export */}
         <div className="flex items-center gap-3 ml-auto">
-          {/* Team Filter - Sold tab only */}
           {(activeTab === 'sold' || activeTab === 'all') && (
             <div className="relative">
               <select
@@ -520,7 +382,6 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
             </div>
           )}
 
-          {/* Clear Filters */}
           {(searchTerm || selectedTeam) && (
             <button
               onClick={() => { setSearchTerm(''); setSelectedTeam(''); }}
@@ -531,20 +392,6 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
               <FilterX size={16} />
             </button>
           )}
-
-          {/* Export */}
-          <button
-            onClick={exportToCSV}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white font-bold text-sm transition-all"
-            style={{
-              background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.25), rgba(22, 163, 74, 0.2))',
-              border: '1px solid rgba(34, 197, 94, 0.35)',
-              boxShadow: '0 0 10px rgba(34, 197, 94, 0.1)'
-            }}
-          >
-            <Download size={16} />
-            Export CSV
-          </button>
         </div>
       </div>
 
@@ -599,14 +446,10 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                       boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)'
                     }}
                   >
-                    {/* Top Accent Bar - Status Color */}
                     <div className="h-[3px] w-full" style={{ background: `linear-gradient(90deg, ${statusColor}, ${statusBorder})` }} />
-
-                    {/* Hover Glow */}
                     <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ boxShadow: `inset 0 0 20px ${statusColor}` }} />
 
                     <div className="p-4">
-                      {/* Player Avatar */}
                       <div className="relative w-16 h-16 mx-auto mb-3">
                         <div 
                           className="w-full h-full rounded-full flex items-center justify-center overflow-hidden group-hover:scale-105 transition-transform"
@@ -624,43 +467,30 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                         </div>
                       </div>
 
-                      {/* Player Name */}
                       <h4 className="text-base font-bold text-white text-center mb-1.5 truncate leading-snug group-hover:text-pink-200 transition-colors">
                         {player.name}
                       </h4>
 
-                      {/* Status Badge */}
                       <div className="flex justify-center mb-3">
                         <span 
                           className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide"
-                          style={{
-                            background: statusBg,
-                            border: `1px solid ${statusBorder}`,
-                            color: statusTextColor
-                          }}
+                          style={{ background: statusBg, border: `1px solid ${statusBorder}`, color: statusTextColor }}
                         >
                           {statusText}
                         </span>
                       </div>
 
-                      {/* Playing Role */}
                       <div className="flex justify-center mb-3">
                         <span 
                           className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide"
-                          style={{
-                            background: 'rgba(236, 72, 153, 0.08)',
-                            border: '1px solid rgba(236, 72, 153, 0.2)',
-                            color: '#f9a8d4'
-                          }}
+                          style={{ background: 'rgba(236, 72, 153, 0.08)', border: '1px solid rgba(236, 72, 153, 0.2)', color: '#f9a8d4' }}
                         >
                           {playingRole || 'Player'}
                         </span>
                       </div>
 
-                      {/* HUD Divider */}
                       <div className="h-[1px] w-full mb-3 bg-gradient-to-r from-transparent via-pink-500/15 to-transparent" />
 
-                      {/* Base Price */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
                           <Target size={12} className="text-pink-400/50" />
@@ -671,7 +501,6 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                         </span>
                       </div>
 
-                      {/* Show Sold Price if applicable */}
                       {player.status === 'SOLD' && (
                         <div className="flex items-center justify-between mt-2">
                           <div className="flex items-center gap-1.5">
@@ -725,14 +554,10 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                       boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)'
                     }}
                   >
-                    {/* Top Accent Bar */}
                     <div className="h-[3px] w-full" style={{ background: 'linear-gradient(90deg, rgba(236, 72, 153, 0.8), rgba(244, 114, 182, 0.5))' }} />
-
-                    {/* Hover Glow */}
                     <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ boxShadow: 'inset 0 0 20px rgba(236, 72, 153, 0.12)' }} />
 
                     <div className="p-4">
-                      {/* Player Avatar */}
                       <div className="relative w-16 h-16 mx-auto mb-3">
                         <div 
                           className="w-full h-full rounded-full flex items-center justify-center overflow-hidden group-hover:scale-105 transition-transform"
@@ -750,37 +575,26 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                         </div>
                       </div>
 
-                      {/* Player Name */}
                       <h4 className="text-base font-bold text-white text-center mb-1.5 truncate leading-snug group-hover:text-pink-200 transition-colors">
                         {player.name}
                       </h4>
 
-                      {/* Playing Role */}
                       <div className="flex justify-center mb-3">
                         <span 
                           className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide"
-                          style={{
-                            background: 'rgba(236, 72, 153, 0.1)',
-                            border: '1px solid rgba(236, 72, 153, 0.25)',
-                            color: '#f9a8d4'
-                          }}
+                          style={{ background: 'rgba(236, 72, 153, 0.1)', border: '1px solid rgba(236, 72, 153, 0.25)', color: '#f9a8d4' }}
                         >
                           {playingRole || 'Player'}
                         </span>
                       </div>
 
-                      {/* HUD Divider */}
                       <div className="h-[1px] w-full mb-3 bg-gradient-to-r from-transparent via-pink-500/20 to-transparent" />
 
-                      {/* Team Info - Logo + Name */}
                       {teamId && (
                         <div className="flex items-center gap-2 mb-3 px-1">
                           <div 
                             className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0"
-                            style={{
-                              background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.1), rgba(180, 50, 120, 0.06))',
-                              border: '1px solid rgba(236, 72, 153, 0.2)'
-                            }}
+                            style={{ background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.1), rgba(180, 50, 120, 0.06))', border: '1px solid rgba(236, 72, 153, 0.2)' }}
                           >
                             {teamLogo ? (
                               <img src={teamLogo} alt={teamName} className="w-full h-full object-cover" />
@@ -792,12 +606,9 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                         </div>
                       )}
 
-                      {/* HUD Divider */}
                       <div className="h-[1px] w-full mb-3 bg-gradient-to-r from-transparent via-pink-500/15 to-transparent" />
 
-                      {/* Price Info */}
                       <div className="space-y-2.5">
-                        {/* Sold Price */}
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <IndianRupee size={12} className="text-pink-400/50" />
@@ -807,7 +618,6 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                             {soldAmount > 0 ? formatCurrency(soldAmount) : '—'}
                           </span>
                         </div>
-                        {/* Base Price */}
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <Target size={12} className="text-pink-400/50" />
@@ -856,14 +666,10 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                       boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)'
                     }}
                   >
-                    {/* Top Accent Bar - muted */}
                     <div className="h-[3px] w-full" style={{ background: 'linear-gradient(90deg, rgba(236, 72, 153, 0.3), rgba(244, 114, 182, 0.15))' }} />
-
-                    {/* Hover Glow */}
                     <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ boxShadow: 'inset 0 0 20px rgba(236, 72, 153, 0.1)' }} />
 
                     <div className="p-4">
-                      {/* Player Avatar */}
                       <div className="relative w-16 h-16 mx-auto mb-3">
                         <div 
                           className="w-full h-full rounded-full flex items-center justify-center overflow-hidden group-hover:scale-105 transition-transform"
@@ -881,29 +687,21 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                         </div>
                       </div>
 
-                      {/* Player Name */}
                       <h4 className="text-base font-bold text-white text-center mb-1.5 truncate leading-snug group-hover:text-pink-200 transition-colors">
                         {player.name}
                       </h4>
 
-                      {/* Playing Role */}
                       <div className="flex justify-center mb-3">
                         <span 
                           className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide"
-                          style={{
-                            background: 'rgba(236, 72, 153, 0.08)',
-                            border: '1px solid rgba(236, 72, 153, 0.2)',
-                            color: '#f9a8d4'
-                          }}
+                          style={{ background: 'rgba(236, 72, 153, 0.08)', border: '1px solid rgba(236, 72, 153, 0.2)', color: '#f9a8d4' }}
                         >
                           {playingRole || 'Player'}
                         </span>
                       </div>
 
-                      {/* HUD Divider */}
                       <div className="h-[1px] w-full mb-3 bg-gradient-to-r from-transparent via-pink-500/15 to-transparent" />
 
-                      {/* Base Price */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
                           <Target size={12} className="text-pink-400/50" />
@@ -951,14 +749,10 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                       boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)'
                     }}
                   >
-                    {/* Top Accent Bar */}
                     <div className="h-[3px] w-full" style={{ background: 'linear-gradient(90deg, rgba(236, 72, 153, 0.6), rgba(244, 114, 182, 0.3))' }} />
-
-                    {/* Hover Glow */}
                     <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ boxShadow: 'inset 0 0 20px rgba(236, 72, 153, 0.1)' }} />
 
                     <div className="p-4">
-                      {/* Player Avatar */}
                       <div className="relative w-16 h-16 mx-auto mb-3">
                         <div 
                           className="w-full h-full rounded-full flex items-center justify-center overflow-hidden group-hover:scale-105 transition-transform"
@@ -976,43 +770,30 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                         </div>
                       </div>
 
-                      {/* Player Name */}
                       <h4 className="text-base font-bold text-white text-center mb-1.5 truncate leading-snug group-hover:text-pink-200 transition-colors">
                         {player.name}
                       </h4>
 
-                      {/* Playing Role */}
                       <div className="flex justify-center mb-3">
                         <span 
                           className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide"
-                          style={{
-                            background: 'rgba(236, 72, 153, 0.08)',
-                            border: '1px solid rgba(236, 72, 153, 0.2)',
-                            color: '#f9a8d4'
-                          }}
+                          style={{ background: 'rgba(236, 72, 153, 0.08)', border: '1px solid rgba(236, 72, 153, 0.2)', color: '#f9a8d4' }}
                         >
                           {playingRole || 'Player'}
                         </span>
                       </div>
 
-                      {/* Status Pill */}
                       <div className="flex justify-center mb-3">
                         <span 
                           className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide"
-                          style={{
-                            background: 'rgba(236, 72, 153, 0.12)',
-                            border: '1px solid rgba(236, 72, 153, 0.3)',
-                            color: '#f472b6'
-                          }}
+                          style={{ background: 'rgba(236, 72, 153, 0.12)', border: '1px solid rgba(236, 72, 153, 0.3)', color: '#f472b6' }}
                         >
                           Available
                         </span>
                       </div>
 
-                      {/* HUD Divider */}
                       <div className="h-[1px] w-full mb-3 bg-gradient-to-r from-transparent via-pink-500/15 to-transparent" />
 
-                      {/* Base Price */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
                           <Target size={12} className="text-pink-400/50" />

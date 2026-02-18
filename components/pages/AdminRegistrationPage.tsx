@@ -63,7 +63,7 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
 
   const [currentStep, setCurrentStep] = useState(1);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const totalSteps = 4;
+  const totalSteps = 3;
   const [uploadProgress, setUploadProgress] = useState<{ photo?: number; govId?: number; proof?: number }>({});
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -147,12 +147,10 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
   const isStepValid = (step: number): boolean => {
     switch (step) {
       case 1:
-        return !!(formData.fullName && formData.email && formData.phone && formData.password);
+        return !!(formData.fullName && formData.email && formData.phone && formData.password && formData.organizationName && formData.organizerType && formData.designation);
       case 2:
-        return !!(formData.organizationName && formData.organizerType && formData.designation);
-      case 3:
         return !!(formData.seasonName && formData.sportType && formData.auctionDateTime && formData.venueMode);
-      case 4:
+      case 3:
         return !!(formData.governmentId);
       default:
         return false;
@@ -161,8 +159,25 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isStepValid(4)) {
+    if (isStepValid(3)) {
       try {
+        // Log all form fields before submission
+        console.log('=' .repeat(80));
+        console.log('📋 ADMIN REGISTRATION FORM SUBMISSION');
+        console.log('=' .repeat(80));
+        console.log(`📦 Total fields in form: ${Object.keys(formData).length}`);
+        console.log(`📋 Form fields:`);
+        Object.entries(formData).forEach(([key, value]) => {
+          if (typeof value === 'object' && value instanceof File) {
+            console.log(`   ${key}: File (${value.name})`);
+          } else if (typeof value === 'object' && value !== null) {
+            console.log(`   ${key}: ${typeof value} = ${JSON.stringify(value)}`);
+          } else {
+            console.log(`   ${key}: ${typeof value} = ${value}`);
+          }
+        });
+        console.log('=' .repeat(80));
+        
         // Show loading state
         setShowSuccessModal(false);
         
@@ -187,26 +202,35 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50 py-8 px-4">
       {/* Header */}
-      <div className="max-w-4xl mx-auto mb-8">
-        <button
-          onClick={() => setStatus(AuctionStatus.HOME)}
-          className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-semibold mb-6 transition-colors"
-        >
-          <ArrowLeft size={20} />
-          Back to Home
-        </button>
-        
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-r from-blue-500 to-orange-500 flex items-center justify-center">
-            <Trophy size={32} className="text-white" />
+      <div className="mb-8">
+        {/* Back to Home + Title Row */}
+        <div className="flex items-center justify-between mb-8 px-8">
+          <button
+            onClick={() => setStatus(AuctionStatus.HOME)}
+            className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-semibold transition-colors underline flex-shrink-0"
+          >
+            <ArrowLeft size={20} />
+            Back to Home
+          </button>
+
+          {/* Centered Icon + Title + Subtitle */}
+          <div className="flex items-center gap-4 flex-1 justify-center">
+            <div className="w-12 h-12 rounded-full bg-gradient-to-r from-blue-500 to-orange-500 flex items-center justify-center flex-shrink-0">
+              <Trophy size={28} className="text-white" />
+            </div>
+            <div className="text-center">
+              <h1 className="text-2xl md:text-3xl font-black text-slate-900">Season Organizer Registration</h1>
+              <p className="text-slate-600 text-sm">Create and manage your own sports auction event</p>
+            </div>
           </div>
-          <h1 className="text-4xl font-black text-slate-900 mb-2">Season Organizer Registration</h1>
-          <p className="text-slate-600">Create and manage your own sports auction event</p>
+
+          {/* Spacer to balance layout */}
+          <div className="flex-shrink-0 w-32"></div>
         </div>
 
         {/* Progress Steps */}
-        <div className="flex items-center justify-between mb-8">
-          {[1, 2, 3, 4].map((step) => (
+        <div className="flex items-center justify-center gap-2 mb-8 px-8">
+          {[1, 2, 3].map((step) => (
             <React.Fragment key={step}>
               <div className="flex flex-col items-center">
                 <div
@@ -219,15 +243,14 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                   {step < currentStep ? <CheckCircle size={20} /> : step}
                 </div>
                 <span className="text-xs mt-2 font-semibold text-slate-600">
-                  {step === 1 && 'Personal'}
-                  {step === 2 && 'Organization'}
-                  {step === 3 && 'Season Details'}
-                  {step === 4 && 'Verification'}
+                  {step === 1 && 'Personal & Org'}
+                  {step === 2 && 'Season Details'}
+                  {step === 3 && 'Verification'}
                 </span>
               </div>
               {step < totalSteps && (
                 <div
-                  className={`flex-1 h-1 mx-2 transition-all ${
+                  className={`flex-1 h-1 mx-2 max-w-xs transition-all ${
                     step < currentStep ? 'bg-gradient-to-r from-blue-500 to-orange-500' : 'bg-slate-200'
                   }`}
                 />
@@ -238,71 +261,13 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
       </div>
 
       {/* Form */}
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto px-4">
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl p-8 border-2 border-slate-200">
-          {/* Step 1: Personal Details */}
+          {/* Step 1: Personal & Organization Details */}
           {currentStep === 1 && (
             <div className="space-y-6">
-              <h2 className="text-2xl font-black text-slate-900 mb-6">Personal Information</h2>
+              <h2 className="text-2xl font-black text-slate-900 mb-6">Personal & Organization Information</h2>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Full Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.fullName}
-                    onChange={(e) => handleInputChange('fullName', e.target.value)}
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                    placeholder="John Doe"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Email Address <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => handleInputChange('email', e.target.value)}
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                    placeholder="john@example.com"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Phone Number <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="tel"
-                    value={formData.phone}
-                    onChange={(e) => handleInputChange('phone', e.target.value)}
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                    placeholder="+91 9876543210"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Password <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => handleInputChange('password', e.target.value)}
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                    placeholder="••••••••"
-                    required
-                  />
-                </div>
-              </div>
-
               {/* Upload Errors */}
               {uploadErrors.length > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -315,103 +280,187 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                 </div>
               )}
 
-              {/* Profile Photo Upload */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-                <label className="block text-sm font-bold text-slate-700 mb-3">
-                  <Upload size={16} className="inline mr-2" />
-                  Profile Photo
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleProfilePhotoUpload}
-                  disabled={uploading}
-                  className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:border-blue-500 outline-none cursor-pointer disabled:opacity-50"
-                />
-                <p className="text-xs text-slate-600 mt-2">Supported: JPG, PNG, GIF, WebP (Max 50MB)</p>
-                
-                {uploadProgress.photo !== undefined && (
-                  <div className="mt-3">
-                    <progress value={uploadProgress.photo} max={100} className="w-full h-2 rounded" />
-                    <p className="text-xs text-slate-600 mt-1">{Math.round(uploadProgress.photo)}% uploaded</p>
-                  </div>
-                )}
-                
-                {formData.profilePhotoURL && (
-                  <div className="mt-3 flex items-center gap-2 text-green-700">
-                    <CheckCircle size={16} />
-                    <span className="text-sm">Profile photo uploaded</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Step 2: Organization Details */}
-          {currentStep === 2 && (
-            <div className="space-y-6">
-              <h2 className="text-2xl font-black text-slate-900 mb-6">Organization Details</h2>
-              
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Organization / Tournament Name <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              {/* Profile Photo on Left + Personal Info on Right */}
+              <div className="flex flex-col md:flex-row gap-6">
+                {/* Profile Photo - Top Left */}
+                <div className="flex-shrink-0">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 w-full md:w-48">
+                    <label className="block text-sm font-bold text-slate-700 mb-3">
+                      <Upload size={16} className="inline mr-2" />
+                      Profile Photo
+                    </label>
+                    
+                    {/* Photo Preview */}
+                    <div className="w-32 h-32 mx-auto mb-3 rounded-lg border-2 border-dashed border-blue-300 flex items-center justify-center overflow-hidden bg-white">
+                      {formData.profilePhotoURL ? (
+                        <img 
+                          src={formData.profilePhotoURL} 
+                          alt="Profile" 
+                          className="w-full h-full object-cover rounded-lg"
+                        />
+                      ) : (
+                        <div className="text-center text-slate-400">
+                          <Upload size={24} className="mx-auto mb-1" />
+                          <span className="text-xs">No photo</span>
+                        </div>
+                      )}
+                    </div>
+                    
                     <input
-                      type="text"
-                      value={formData.organizationName}
-                      onChange={(e) => handleInputChange('organizationName', e.target.value)}
-                      className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      placeholder="XYZ College Sports Committee"
-                      required
+                      type="file"
+                      accept="image/*"
+                      onChange={handleProfilePhotoUpload}
+                      disabled={uploading}
+                      className="w-full px-2 py-1 text-xs border border-blue-300 rounded-lg focus:border-blue-500 outline-none cursor-pointer disabled:opacity-50"
                     />
+                    <p className="text-xs text-slate-600 mt-2">Max 50MB</p>
+                    
+                    {uploadProgress.photo !== undefined && (
+                      <div className="mt-2">
+                        <progress value={uploadProgress.photo} max={100} className="w-full h-2 rounded" />
+                        <p className="text-xs text-slate-600 mt-1">{Math.round(uploadProgress.photo)}%</p>
+                      </div>
+                    )}
+                    
+                    {formData.profilePhotoURL && (
+                      <div className="mt-2 flex items-center gap-1 text-green-700">
+                        <CheckCircle size={14} />
+                        <span className="text-xs">Uploaded</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Personal Information - Right Side */}
+                <div className="flex-1 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">
+                        Full Name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.fullName}
+                        onChange={(e) => handleInputChange('fullName', e.target.value)}
+                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                        placeholder="John Doe"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">
+                        Email Address <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="email"
+                        value={formData.email}
+                        onChange={(e) => handleInputChange('email', e.target.value)}
+                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                        placeholder="john@example.com"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">
+                        Phone Number <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="tel"
+                        value={formData.phone}
+                        onChange={(e) => handleInputChange('phone', e.target.value)}
+                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                        placeholder="+91 9876543210"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">
+                        Password <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="password"
+                        value={formData.password}
+                        onChange={(e) => handleInputChange('password', e.target.value)}
+                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                        placeholder="••••••••"
+                        required
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Organization Details - Below */}
+              <div className="border-t-2 border-slate-100 pt-6 mt-6">
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <Building2 size={20} className="text-blue-600" />
+                  Organization Details
+                </h3>
+                
+                <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Organizer Type <span className="text-red-500">*</span>
+                      Organization / Tournament Name <span className="text-red-500">*</span>
                     </label>
-                    <select
-                      value={formData.organizerType}
-                      onChange={(e) => handleInputChange('organizerType', e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    >
-                      <option value="">Select Type</option>
-                      <option value="College">College</option>
-                      <option value="League">League</option>
-                      <option value="Club">Club</option>
-                      <option value="Private">Private</option>
-                    </select>
+                    <div className="relative">
+                      <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                      <input
+                        type="text"
+                        value={formData.organizationName}
+                        onChange={(e) => handleInputChange('organizationName', e.target.value)}
+                        className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                        placeholder="XYZ College Sports Committee"
+                        required
+                      />
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Your Designation <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={formData.designation}
-                      onChange={(e) => handleInputChange('designation', e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    >
-                      <option value="">Select Designation</option>
-                      <option value="Organizer">Organizer</option>
-                      <option value="Coordinator">Coordinator</option>
-                      <option value="Owner">Owner</option>
-                    </select>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">
+                        Organizer Type <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={formData.organizerType}
+                        onChange={(e) => handleInputChange('organizerType', e.target.value)}
+                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                        required
+                      >
+                        <option value="">Select Type</option>
+                        <option value="College">College</option>
+                        <option value="League">League</option>
+                        <option value="Club">Club</option>
+                        <option value="Private">Private</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">
+                        Your Designation <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={formData.designation}
+                        onChange={(e) => handleInputChange('designation', e.target.value)}
+                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                        required
+                      >
+                        <option value="">Select Designation</option>
+                        <option value="Organizer">Organizer</option>
+                        <option value="Coordinator">Coordinator</option>
+                        <option value="Owner">Owner</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Step 3: Season/Match Details */}
-          {currentStep === 3 && (
+          {/* Step 2: Season/Match Details */}
+          {currentStep === 2 && (
             <div className="space-y-6">
               <h2 className="text-2xl font-black text-slate-900 mb-6">Season / Match Details</h2>
               
@@ -518,7 +567,7 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                       <input
                         type="number"
                         value={formData.maxTeams}
-                        onChange={(e) => handleInputChange('maxTeams', parseInt(e.target.value))}
+                        onChange={(e) => handleInputChange('maxTeams', parseInt(e.target.value) || 0)}
                         className="w-full px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
                         min="2"
                         max="32"
@@ -531,7 +580,7 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                       <input
                         type="number"
                         value={formData.maxPlayersPerTeam}
-                        onChange={(e) => handleInputChange('maxPlayersPerTeam', parseInt(e.target.value))}
+                        onChange={(e) => handleInputChange('maxPlayersPerTeam', parseInt(e.target.value) || 0)}
                         className="w-full px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
                         min="5"
                         max="50"
@@ -546,7 +595,7 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                         <input
                           type="number"
                           value={formData.baseBudgetPerTeam}
-                          onChange={(e) => handleInputChange('baseBudgetPerTeam', parseInt(e.target.value))}
+                          onChange={(e) => handleInputChange('baseBudgetPerTeam', parseInt(e.target.value) || 0)}
                           className="w-full pl-10 pr-4 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
                           step="1000000"
                         />
@@ -558,8 +607,8 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
             </div>
           )}
 
-          {/* Step 4: Verification */}
-          {currentStep === 4 && (
+          {/* Step 3: Verification */}
+          {currentStep === 3 && (
             <div className="space-y-6">
               <h2 className="text-2xl font-black text-slate-900 mb-6">Verification Documents</h2>
               

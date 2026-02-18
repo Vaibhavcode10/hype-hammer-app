@@ -30,11 +30,15 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const [languages, setLanguages] = useState('');
   const [previousAuctions, setPreviousAuctions] = useState('');
   const [availability, setAvailability] = useState('Yes');
+  const [auctioneerPhoto, setAuctioneerPhoto] = useState<File | null>(null);
+  const [auctioneerPhotoPreview, setAuctioneerPhotoPreview] = useState<string | null>(null);
+  const [isDraggingAuctioneerPhoto, setIsDraggingAuctioneerPhoto] = useState(false);
 
   // Team Rep fields
   const [teamName, setTeamName] = useState('');
   const [teamShortCode, setTeamShortCode] = useState('');
   const [teamLogo, setTeamLogo] = useState<File | null>(null);
+  const [teamLogoPreview, setTeamLogoPreview] = useState<string | null>(null);
   const [homeCity, setHomeCity] = useState('');
   const [roleInTeam, setRoleInTeam] = useState('');
   const [authorizationLetter, setAuthorizationLetter] = useState<File | null>(null);
@@ -44,6 +48,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const [gender, setGender] = useState('');
   const [nationality, setNationality] = useState('');
   const [playerPhoto, setPlayerPhoto] = useState<File | null>(null);
+  const [playerPhotoPreview, setPlayerPhotoPreview] = useState<string | null>(null);
   const [playingRole, setPlayingRole] = useState('');
   const [battingStyle, setBattingStyle] = useState('');
   const [bowlingStyle, setBowlingStyle] = useState('');
@@ -53,10 +58,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const [playerCategory, setPlayerCategory] = useState('');
   const [playerAvailability, setPlayerAvailability] = useState('Yes');
   const [playerConsent, setPlayerConsent] = useState(false);
-
-  // Guest fields
-  const [favoriteSport, setFavoriteSport] = useState('');
-  const [favoriteTeam, setFavoriteTeam] = useState('');
 
   // Common verification
   const [governmentId, setGovernmentId] = useState('');
@@ -89,6 +90,98 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
       } else {
         alert('Please upload a PDF or image file (JPG, JPEG, PNG)');
       }
+    }
+  };
+
+  // ─── AUCTIONEER PHOTO HANDLERS ────────────────────────────────────────
+  const handleAuctioneerPhotoDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingAuctioneerPhoto(true);
+  };
+
+  const handleAuctioneerPhotoDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingAuctioneerPhoto(false);
+  };
+
+  const handleAuctioneerPhotoDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingAuctioneerPhoto(false);
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      // Check file type - image files only
+      if (file.type.startsWith('image/')) {
+        // Check file size (max 10MB)
+        if (file.size > 10 * 1024 * 1024) {
+          alert('Image must be less than 10MB');
+          return;
+        }
+        setAuctioneerPhoto(file);
+        // Create preview URL
+        const reader = new FileReader();
+        reader.onload = (loadEvent) => {
+          setAuctioneerPhotoPreview(loadEvent.target?.result as string);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        alert('Please upload an image file (JPG, JPEG, PNG)');
+      }
+    }
+  };
+
+  const handlePlayerPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Check file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Image must be less than 10MB');
+        return;
+      }
+      setPlayerPhoto(file);
+      // Create preview URL
+      const reader = new FileReader();
+      reader.onload = (loadEvent) => {
+        setPlayerPhotoPreview(loadEvent.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleTeamLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Check file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Image must be less than 10MB');
+        return;
+      }
+      setTeamLogo(file);
+      // Create preview URL
+      const reader = new FileReader();
+      reader.onload = (loadEvent) => {
+        setTeamLogoPreview(loadEvent.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleAuctioneerPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Check file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Image must be less than 10MB');
+        return;
+      }
+      setAuctioneerPhoto(file);
+      // Create preview URL
+      const reader = new FileReader();
+      reader.onload = (loadEvent) => {
+        setAuctioneerPhotoPreview(loadEvent.target?.result as string);
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -142,7 +235,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
           experienceLevel,
           languages: languages.split(',').map(l => l.trim()),
           previousAuctions,
-          availability
+          availability,
+          auctioneerPhoto
         };
         break;
       
@@ -176,12 +270,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
         };
         break;
       
-      case UserRole.GUEST:
-        roleSpecificData = {
-          favoriteSport,
-          favoriteTeam
-        };
-        break;
     }
 
     const success = await onRegister({ ...baseData, ...roleSpecificData });
@@ -195,7 +283,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
       case UserRole.AUCTIONEER: return 'Auctioneer';
       case UserRole.TEAM_REP: return 'Team Representative';
       case UserRole.PLAYER: return 'Player';
-      case UserRole.GUEST: return 'Guest';
       default: return 'User';
     }
   };
@@ -212,161 +299,214 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const Icon = getRoleIcon();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50 py-8 px-4">
-      {/* Header */}
-      <div className="max-w-4xl mx-auto mb-8">
-        <button
-          onClick={() => setStatus(AuctionStatus.ROLE_SELECTION)}
-          className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-semibold mb-6 transition-colors"
-        >
-          <ArrowLeft size={20} />
-          Back to Role Selection
-        </button>
+    <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50 py-4 px-4">
+      {/* Header - Single Row Layout */}
+      <div className="w-full mb-6">
+        {/* Horizontal row with back button on left, centered heading */}
+        <div className="flex items-center justify-between px-8">
+          {/* Left: Back Button */}
+          <button
+            onClick={() => setStatus(AuctionStatus.ROLE_SELECTION)}
+            className="text-blue-600 hover:text-blue-700 font-semibold transition-colors underline decoration-blue-600 hover:decoration-blue-700 flex items-center gap-2 whitespace-nowrap"
+          >
+            <ArrowLeft size={18} />
+            Back to Role Selection
+          </button>
 
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-r from-blue-500 to-orange-500 flex items-center justify-center">
-            <Icon size={32} className="text-white" />
+          {/* Center: Title and Match Info */}
+          <div className="flex-1 flex flex-col items-center">
+            <div className="w-12 h-12 mb-2 rounded-full bg-gradient-to-r from-blue-500 to-orange-500 flex items-center justify-center">
+              <Icon size={24} className="text-white" />
+            </div>
+            <h1 className="text-3xl font-black text-slate-900">{getRoleTitle()} Registration</h1>
+            <p className="text-sm text-slate-600 mt-1">
+              Register for <strong>{selectedMatch?.name}</strong>
+            </p>
           </div>
-          <h1 className="text-4xl font-black text-slate-900 mb-2">{getRoleTitle()} Registration</h1>
-          <p className="text-slate-600">
-            Register for <strong>{selectedMatch?.name}</strong>
-          </p>
+
+          {/* Right: Empty spacer for balance */}
+          <div className="w-[140px]" />
         </div>
       </div>
 
       {/* Form */}
-      <div className="max-w-4xl mx-auto">
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl p-8 border-2 border-slate-200 space-y-8">
+      <div className="max-w-7xl mx-auto">
+        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl p-8 border-2 border-slate-200 space-y-4">
           
-          {/* Common Fields */}
-          <div>
-            <h2 className="text-2xl font-black text-slate-900 mb-6">Personal Information</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">
-                  Full Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">
-                  Email <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">
-                  Phone Number <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">
-                  Password <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                  required
-                />
-              </div>
-            </div>
-          </div>
+          {/* Common personal info block removed - each role now has its own integrated layout */}
 
-          {/* Role-Specific Fields */}
+          {/* AUCTIONEER SECTION - Moved Here */}
           {selectedRole === UserRole.AUCTIONEER && (
             <div>
-              <h2 className="text-2xl font-black text-slate-900 mb-6">Professional Information</h2>
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Experience Level <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={experienceLevel}
-                      onChange={(e) => setExperienceLevel(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    >
-                      <option value="">Select Experience</option>
-                      <option value="Beginner">Beginner</option>
-                      <option value="Intermediate">Intermediate</option>
-                      <option value="Professional">Professional</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Languages Spoken <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={languages}
-                      onChange={(e) => setLanguages(e.target.value)}
-                      placeholder="English, Hindi, Tamil"
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    />
+              {/* Row 1: Photo (Left) + Personal Information (Right) */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                {/* Left: Photo Upload (1 col) */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Your Photo</label>
+                  <div 
+                    className={`border-2 border-dashed rounded-lg p-3 text-center transition-all cursor-pointer min-h-[160px] flex flex-col items-center justify-center ${
+                      isDraggingAuctioneerPhoto
+                        ? 'border-blue-500 bg-blue-50' 
+                        : auctioneerPhoto 
+                          ? 'border-green-500 bg-green-50'
+                          : 'border-slate-300 hover:border-blue-400'
+                    }`}
+                    onDragOver={handleAuctioneerPhotoDragOver}
+                    onDragLeave={handleAuctioneerPhotoDragLeave}
+                    onDrop={handleAuctioneerPhotoDrop}
+                  >
+                    {auctioneerPhotoPreview ? (
+                      <div className="w-full flex flex-col items-center justify-center">
+                        <img 
+                          src={auctioneerPhotoPreview} 
+                          alt="Auctioneer Photo" 
+                          className="w-20 h-20 object-cover rounded mb-2"
+                        />
+                        <p className="text-xs font-bold text-green-700 mb-1">✓ Ready</p>
+                        <p className="text-[10px] text-slate-600 truncate max-w-[90px]" title={auctioneerPhoto?.name}>{auctioneerPhoto?.name}</p>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setAuctioneerPhoto(null);
+                            setAuctioneerPhotoPreview(null);
+                          }}
+                          className="text-[9px] text-red-600 hover:text-red-800 font-bold mt-1"
+                        >
+                          Change
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <Upload className="mx-auto text-slate-400 mb-2" size={20} />
+                        <input
+                          type="file"
+                          onChange={handleAuctioneerPhotoChange}
+                          className="hidden"
+                          id="auctioneerPhoto"
+                          accept="image/*"
+                        />
+                        <label htmlFor="auctioneerPhoto" className="cursor-pointer block">
+                          <p className="text-xs text-slate-600 font-medium mb-0.5">Upload</p>
+                          <p className="text-[9px] text-slate-500">JPG, PNG</p>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                {/* Right: Personal Information (3 cols) */}
+                <div className="md:col-span-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Full Name <span className="text-red-500">*</span></label>
+                      <input
+                        type="text"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Email <span className="text-red-500">*</span></label>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-red-500">*</span></label>
+                      <input
+                        type="tel"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                        required
+                      />
+                    </div>
+                    <div className="md:col-span-3">
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Password <span className="text-red-500">*</span></label>
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                        required
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: Professional Information */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Previous Auctions (Optional)
-                  </label>
-                  <textarea
-                    value={previousAuctions}
-                    onChange={(e) => setPreviousAuctions(e.target.value)}
-                    placeholder="List any previous auction experience..."
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                    rows={3}
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Experience Level <span className="text-red-500">*</span></label>
+                  <select
+                    value={experienceLevel}
+                    onChange={(e) => setExperienceLevel(e.target.value)}
+                    className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                    required
+                  >
+                    <option value="">Select Experience</option>
+                    <option value="Beginner">Beginner</option>
+                    <option value="Intermediate">Intermediate</option>
+                    <option value="Professional">Professional</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Languages Spoken <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    value={languages}
+                    onChange={(e) => setLanguages(e.target.value)}
+                    placeholder="English, Hindi, Tamil"
+                    className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                    required
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Availability Confirmation <span className="text-red-500">*</span>
+              </div>
+
+              {/* Row 3: Previous Auctions */}
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Previous Auctions (Optional)</label>
+                <textarea
+                  value={previousAuctions}
+                  onChange={(e) => setPreviousAuctions(e.target.value)}
+                  placeholder="List any previous auction experience..."
+                  className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                  rows={2}
+                />
+              </div>
+
+              {/* Row 4: Availability */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Availability Confirmation <span className="text-red-500">*</span></label>
+                <div className="flex gap-6">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      value="Yes"
+                      checked={availability === 'Yes'}
+                      onChange={(e) => setAvailability(e.target.value)}
+                      className="w-4 h-4"
+                    />
+                    <span className="text-sm">Yes, I'm available</span>
                   </label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        value="Yes"
-                        checked={availability === 'Yes'}
-                        onChange={(e) => setAvailability(e.target.value)}
-                        className="w-4 h-4"
-                      />
-                      <span>Yes, I'm available</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        value="No"
-                        checked={availability === 'No'}
-                        onChange={(e) => setAvailability(e.target.value)}
-                        className="w-4 h-4"
-                      />
-                      <span>No</span>
-                    </label>
-                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      value="No"
+                      checked={availability === 'No'}
+                      onChange={(e) => setAvailability(e.target.value)}
+                      className="w-4 h-4"
+                    />
+                    <span className="text-sm">No</span>
+                  </label>
                 </div>
               </div>
             </div>
@@ -374,109 +514,101 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
           {selectedRole === UserRole.TEAM_REP && (
             <div>
-              <h2 className="text-2xl font-black text-slate-900 mb-6">Team Details</h2>
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Team Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={teamName}
-                      onChange={(e) => setTeamName(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Team Short Code <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={teamShortCode}
-                      onChange={(e) => setTeamShortCode(e.target.value.toUpperCase())}
-                      maxLength={5}
-                      placeholder="e.g., MUM"
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Home City / Region <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={homeCity}
-                      onChange={(e) => setHomeCity(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Role in Team <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={roleInTeam}
-                      onChange={(e) => setRoleInTeam(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    >
-                      <option value="">Select Role</option>
-                      <option value="Owner">Owner</option>
-                      <option value="Manager">Manager</option>
-                      <option value="Captain">Captain</option>
-                    </select>
+              {/* Row 1: Team Logo (Left) + Personal Information (Right) */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                {/* Left: Team Logo Upload (1 col) */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Team Logo <span className="text-red-500">*</span></label>
+                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-3 text-center hover:border-blue-500 transition-colors cursor-pointer min-h-[160px] flex flex-col items-center justify-center">
+                    {teamLogoPreview ? (
+                      <div className="w-full flex flex-col items-center justify-center">
+                        <img 
+                          src={teamLogoPreview} 
+                          alt="Team Logo" 
+                          className="w-20 h-20 object-cover rounded mb-2"
+                        />
+                        <p className="text-xs font-bold text-green-700 mb-1">✓ Ready</p>
+                        <p className="text-[10px] text-slate-600 truncate max-w-[90px]" title={teamLogo?.name}>{teamLogo?.name}</p>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); setTeamLogo(null); setTeamLogoPreview(null); }}
+                          className="text-[9px] text-red-600 hover:text-red-800 font-bold mt-1"
+                        >Change</button>
+                      </div>
+                    ) : (
+                      <div>
+                        <Upload className="mx-auto text-slate-400 mb-2" size={20} />
+                        <input type="file" onChange={handleTeamLogoChange} className="hidden" id="teamLogo" accept="image/*" required />
+                        <label htmlFor="teamLogo" className="cursor-pointer block">
+                          <p className="text-xs text-slate-600 font-medium mb-0.5">Upload</p>
+                          <p className="text-[9px] text-slate-500">JPG, PNG</p>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Team Logo <span className="text-red-500">*</span>
-                    </label>
-                    <div className="border-2 border-dashed border-slate-300 rounded-lg p-4 text-center hover:border-blue-500 transition-colors cursor-pointer">
-                      <Upload className="mx-auto text-slate-400 mb-2" size={24} />
-                      <input
-                        type="file"
-                        onChange={(e) => setTeamLogo(e.target.files?.[0] || null)}
-                        className="hidden"
-                        id="teamLogo"
-                        accept="image/*"
-                        required
-                      />
-                      <label htmlFor="teamLogo" className="cursor-pointer">
-                        <span className="text-sm text-slate-600">
-                          {teamLogo ? teamLogo.name : 'Upload Team Logo'}
-                        </span>
-                      </label>
+
+                {/* Right: Personal Information (3 cols) */}
+                <div className="md:col-span-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Full Name <span className="text-red-500">*</span></label>
+                      <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Email <span className="text-red-500">*</span></label>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-red-500">*</span></label>
+                      <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                    </div>
+                    <div className="md:col-span-3">
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Password <span className="text-red-500">*</span></label>
+                      <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Authorization Letter <span className="text-red-500">*</span>
-                    </label>
-                    <div className="border-2 border-dashed border-slate-300 rounded-lg p-4 text-center hover:border-blue-500 transition-colors cursor-pointer">
-                      <Upload className="mx-auto text-slate-400 mb-2" size={24} />
-                      <input
-                        type="file"
-                        onChange={(e) => setAuthorizationLetter(e.target.files?.[0] || null)}
-                        className="hidden"
-                        id="authLetter"
-                        accept=".pdf"
-                        required
-                      />
-                      <label htmlFor="authLetter" className="cursor-pointer">
-                        <span className="text-sm text-slate-600">
-                          {authorizationLetter ? authorizationLetter.name : 'Upload PDF'}
-                        </span>
-                      </label>
-                    </div>
-                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: Team Details */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Team Name <span className="text-red-500">*</span></label>
+                  <input type="text" value={teamName} onChange={(e) => setTeamName(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Team Short Code <span className="text-red-500">*</span></label>
+                  <input type="text" value={teamShortCode} onChange={(e) => setTeamShortCode(e.target.value.toUpperCase())} maxLength={5} placeholder="e.g., MUM" className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                </div>
+              </div>
+
+              {/* Row 3: Location & Role */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Home City / Region <span className="text-red-500">*</span></label>
+                  <input type="text" value={homeCity} onChange={(e) => setHomeCity(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Role in Team <span className="text-red-500">*</span></label>
+                  <select value={roleInTeam} onChange={(e) => setRoleInTeam(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required>
+                    <option value="">Select Role</option>
+                    <option value="Owner">Owner</option>
+                    <option value="Manager">Manager</option>
+                    <option value="Captain">Captain</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Row 4: Authorization Letter */}
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Authorization Letter <span className="text-red-500">*</span></label>
+                <div className="border-2 border-dashed border-slate-300 rounded-lg p-3 text-center hover:border-blue-500 transition-colors cursor-pointer">
+                  <Upload className="mx-auto text-slate-400 mb-2" size={20} />
+                  <input type="file" onChange={(e) => setAuthorizationLetter(e.target.files?.[0] || null)} className="hidden" id="authLetter" accept=".pdf" required />
+                  <label htmlFor="authLetter" className="cursor-pointer">
+                    <span className="text-xs text-slate-600">{authorizationLetter ? authorizationLetter.name : 'Upload PDF'}</span>
+                  </label>
                 </div>
               </div>
             </div>
@@ -484,74 +616,86 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
           {selectedRole === UserRole.PLAYER && (
             <div>
-              <h2 className="text-2xl font-black text-slate-900 mb-6">Player Profile</h2>
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Date of Birth <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={dateOfBirth}
-                      onChange={(e) => setDateOfBirth(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    />
+              {/* Row 1: Player Photo (Left) + Personal Information (Right) */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                {/* Left: Player Photo Upload (1 col) */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Your Photo <span className="text-red-500">*</span></label>
+                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-3 text-center hover:border-blue-500 transition-colors cursor-pointer min-h-[160px] flex flex-col items-center justify-center">
+                    {playerPhotoPreview ? (
+                      <div className="w-full flex flex-col items-center justify-center">
+                        <img 
+                          src={playerPhotoPreview} 
+                          alt="Player Photo" 
+                          className="w-20 h-20 object-cover rounded mb-2"
+                        />
+                        <p className="text-xs font-bold text-green-700 mb-1">✓ Ready</p>
+                        <p className="text-[10px] text-slate-600 truncate max-w-[90px]" title={playerPhoto?.name}>{playerPhoto?.name}</p>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); setPlayerPhoto(null); setPlayerPhotoPreview(null); }}
+                          className="text-[9px] text-red-600 hover:text-red-800 font-bold mt-1"
+                        >Change</button>
+                      </div>
+                    ) : (
+                      <div>
+                        <Upload className="mx-auto text-slate-400 mb-2" size={20} />
+                        <input type="file" onChange={handlePlayerPhotoChange} className="hidden" id="playerPhoto" accept="image/*" required />
+                        <label htmlFor="playerPhoto" className="cursor-pointer block">
+                          <p className="text-xs text-slate-600 font-medium mb-0.5">Upload</p>
+                          <p className="text-[9px] text-slate-500">JPG, PNG</p>
+                        </label>
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Gender <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={gender}
-                      onChange={(e) => setGender(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    >
-                      <option value="">Select</option>
-                      <option value="Male">Male</option>
-                      <option value="Female">Female</option>
-                      <option value="Other">Other</option>
-                    </select>
+                </div>
+
+                {/* Right: Personal Information (3 cols) */}
+                <div className="md:col-span-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Full Name <span className="text-red-500">*</span></label>
+                      <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Email <span className="text-red-500">*</span></label>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-red-500">*</span></label>
+                      <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                    </div>
+                    <div className="md:col-span-3">
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Password <span className="text-red-500">*</span></label>
+                      <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Nationality <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={nationality}
-                      onChange={(e) => setNationality(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    />
-                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: Basic Player Info */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Date of Birth <span className="text-red-500">*</span></label>
+                  <input type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Player Photo <span className="text-red-500">*</span>
-                  </label>
-                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:border-blue-500 transition-colors cursor-pointer">
-                    <Upload className="mx-auto text-slate-400 mb-2" size={32} />
-                    <input
-                      type="file"
-                      onChange={(e) => setPlayerPhoto(e.target.files?.[0] || null)}
-                      className="hidden"
-                      id="playerPhoto"
-                      accept="image/*"
-                      required
-                    />
-                    <label htmlFor="playerPhoto" className="cursor-pointer">
-                      <span className="text-sm text-slate-600">
-                        {playerPhoto ? playerPhoto.name : 'Upload Your Photo'}
-                      </span>
-                    </label>
-                  </div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Gender <span className="text-red-500">*</span></label>
+                  <select value={gender} onChange={(e) => setGender(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required>
+                    <option value="">Select</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Nationality <span className="text-red-500">*</span></label>
+                  <input type="text" value={nationality} onChange={(e) => setNationality(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                </div>
+              </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                       Playing Role <span className="text-red-500">*</span>
                     </label>
                     <input
@@ -559,18 +703,18 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       value={playingRole}
                       onChange={(e) => setPlayingRole(e.target.value)}
                       placeholder="e.g., Batsman, Bowler, All-rounder"
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
                       required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                       Experience Level <span className="text-red-500">*</span>
                     </label>
                     <select
                       value={playerExperience}
                       onChange={(e) => setPlayerExperience(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
                       required
                     >
                       <option value="">Select</option>
@@ -581,9 +725,9 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                   </div>
                 </div>
                 {(selectedSport?.sportType === SportType.CRICKET || selectedSport?.sportType === 'Cricket') && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                     <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                         Batting Style
                       </label>
                       <input
@@ -591,11 +735,11 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         value={battingStyle}
                         onChange={(e) => setBattingStyle(e.target.value)}
                         placeholder="e.g., Right-hand, Left-hand"
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
+                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                         Bowling Style
                       </label>
                       <input
@@ -603,38 +747,38 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         value={bowlingStyle}
                         onChange={(e) => setBowlingStyle(e.target.value)}
                         placeholder="e.g., Fast, Spin"
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
                       />
                     </div>
                   </div>
                 )}
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
+                <div className="mb-3">
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                     Previous Teams (Optional)
                   </label>
                   <textarea
                     value={previousTeams}
                     onChange={(e) => setPreviousTeams(e.target.value)}
                     placeholder="List your previous teams..."
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
                     rows={2}
                   />
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                       Base Price (₹) <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="number"
                       value={basePrice}
                       onChange={(e) => setBasePrice(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
                       required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                       Player Category
                     </label>
                     <input
@@ -642,17 +786,17 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       value={playerCategory}
                       onChange={(e) => setPlayerCategory(e.target.value)}
                       placeholder="e.g., Elite, Premier"
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                       Availability <span className="text-red-500">*</span>
                     </label>
                     <select
                       value={playerAvailability}
                       onChange={(e) => setPlayerAvailability(e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
                       required
                     >
                       <option value="Yes">Available</option>
@@ -660,8 +804,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                     </select>
                   </div>
                 </div>
-                <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-4">
-                  <label className="flex items-start gap-3 cursor-pointer">
+                <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-3 mb-3">
+                  <label className="flex items-start gap-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={playerConsent}
@@ -669,62 +813,20 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       className="mt-1"
                       required
                     />
-                    <span className="text-sm text-slate-700">
+                    <span className="text-xs text-slate-700">
                       <strong>Player Consent:</strong> I consent to participate in this auction and agree to the terms and conditions.
                     </span>
                   </label>
                 </div>
               </div>
-            </div>
           )}
 
-          {selectedRole === UserRole.GUEST && (
-            <div>
-              <h2 className="text-2xl font-black text-slate-900 mb-6">Preferences (Optional)</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Verification */}
+          <div>
+              <h2 className="text-2xl font-black text-slate-900 mb-4">Verification</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Favorite Sport
-                  </label>
-                  <select
-                    value={favoriteSport}
-                    onChange={(e) => setFavoriteSport(e.target.value)}
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="">Select Sport</option>
-                    {Object.values(SportType).map((sport) => (
-                      <option key={sport} value={sport}>{sport}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Favorite Team
-                  </label>
-                  <input
-                    type="text"
-                    value={favoriteTeam}
-                    onChange={(e) => setFavoriteTeam(e.target.value)}
-                    placeholder="Your favorite team"
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-              <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mt-4">
-                <p className="text-sm text-blue-800">
-                  <strong>Note:</strong> As a guest, you can watch all auctions live but cannot place bids or participate in the auction process.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Verification (for non-guest roles) */}
-          {selectedRole !== UserRole.GUEST && (
-            <div>
-              <h2 className="text-2xl font-black text-slate-900 mb-6">Verification</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                     Government ID Number <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -732,16 +834,16 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                     value={governmentId}
                     onChange={(e) => setGovernmentId(e.target.value)}
                     placeholder="Aadhaar / PAN / Driving License"
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
                     Upload ID Proof <span className="text-red-500">*</span>
                   </label>
                   <div 
-                    className={`border-2 border-dashed rounded-lg p-6 text-center transition-all cursor-pointer ${
+                    className={`border-2 border-dashed rounded-lg p-3 text-center transition-all cursor-pointer ${
                       isDragging 
                         ? 'border-blue-500 bg-blue-50' 
                         : governmentIdFile 
@@ -752,7 +854,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                     onDragLeave={handleDragLeave}
                     onDrop={handleDrop}
                   >
-                    <Upload className={`mx-auto mb-2 ${governmentIdFile ? 'text-green-500' : 'text-slate-400'}`} size={32} />
+                    <Upload className={`mx-auto mb-2 ${governmentIdFile ? 'text-green-500' : 'text-slate-400'}`} size={20} />
                     <input
                       type="file"
                       onChange={(e) => setGovernmentIdFile(e.target.files?.[0] || null)}
@@ -763,7 +865,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                     <label htmlFor="govId" className="cursor-pointer block">
                       {governmentIdFile ? (
                         <div className="space-y-2">
-                          <p className="text-sm font-bold text-green-700">✓ File uploaded</p>
+                          <p className="text-xs font-bold text-green-700">✓ File uploaded</p>
                           <p className="text-xs text-slate-600 truncate">{governmentIdFile.name}</p>
                           <p className="text-xs text-slate-500">({(governmentIdFile.size / 1024 / 1024).toFixed(2)} MB)</p>
                           <button
@@ -779,7 +881,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         </div>
                       ) : (
                         <div>
-                          <p className="text-sm text-slate-600 font-medium mb-1">
+                          <p className="text-xs text-slate-600 font-medium mb-1">
                             Click to upload or drag and drop
                           </p>
                           <p className="text-xs text-slate-500">
@@ -792,13 +894,12 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                 </div>
               </div>
             </div>
-          )}
 
           {/* Submit Button */}
-          <div className="pt-6 border-t-2 border-slate-200">
+          <div className="pt-4 border-t-2 border-slate-200">
             <button
               type="submit"
-              className="w-full py-4 gold-gradient text-white rounded-lg font-bold uppercase tracking-wider hover:brightness-110 transition-all shadow-lg text-lg"
+              className="w-full py-3 gold-gradient text-white rounded-lg font-bold uppercase tracking-wider hover:brightness-110 transition-all shadow-lg text-sm"
             >
               Submit Registration
             </button>
@@ -832,9 +933,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       break;
                     case UserRole.PLAYER:
                       setStatus(AuctionStatus.PLAYER_DASHBOARD);
-                      break;
-                    case UserRole.GUEST:
-                      setStatus(AuctionStatus.GUEST_DASHBOARD);
                       break;
                     default:
                       setStatus(AuctionStatus.MARKETPLACE);

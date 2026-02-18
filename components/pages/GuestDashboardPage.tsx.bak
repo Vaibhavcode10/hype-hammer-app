@@ -1,0 +1,911 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  Eye, Trophy, Users, DollarSign, Bell, User, LogOut, Clock, 
+  Zap, Shield, Timer, Radio,
+  CheckCircle, XCircle, Loader, Mic, 
+  Calendar, MapPin, Mail, X, ArrowLeft,
+  Home, Search, Activity, TrendingUp, Star, Crown, Flame, Crosshair
+} from 'lucide-react';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { firestore } from '../../services/firebaseConfig';
+import { AuctionStatus, MatchData, UserRole, Team, Player } from '../../types';
+import { LiveAuctionPage } from './LiveAuctionPage';
+import { useAudioListener } from '../../services/useAudioListener';
+import socketService from '../../services/socketService';
+import firebaseRealtimeService from '../../services/firebaseRealtimeService';
+
+interface GuestDashboardPageProps {
+  setStatus: (status: AuctionStatus) => void;
+  currentMatch: MatchData;
+  currentUser: { name: string; email: string; role: UserRole };
+}
+
+export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
+  const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom'>('dashboard');
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentBiddingPlayer, setCurrentBiddingPlayer] = useState<Player | null>(null);
+  const [currentBid, setCurrentBid] = useState<number>(0);
+  const [leadingTeam, setLeadingTeam] = useState<string>('');
+  const [countdown, setCountdown] = useState<number>(0);
+  const [auctionStatus, setAuctionStatus] = useState<'READY' | 'LIVE' | 'PAUSED' | 'ENDED'>('READY');
+  const [activityFeed, setActivityFeed] = useState<Array<{ id: string; message: string; timestamp: Date; type: 'bid' | 'sold' | 'unsold' }>>([]);
+  const [auctioneerMicOn, setAuctioneerMicOn] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState<Array<{ id: string; message: string; time: string; read: boolean }>>([]);
+
+  // Audio listener for auctioneer mic
+  const audioListener = useAudioListener({
+    socket: socketService.getSocket(),
+    seasonId: currentMatch?.id || '',
+    userId: currentUser.email
+  });
+
+  // Connect to socket and listen for auction events
+  useEffect(() => {
+    if (!currentMatch?.id || !currentUser?.email) {
+      return;
+    }
+
+    // Connect to server
+    socketService.connect('http://localhost:5000');
+
+    // Join season room
+    socketService.joinSeason(currentMatch.id, currentUser.email, UserRole.GUEST);
+
+    // Store unsubscribe functions for cleanup
+    const unsubscribers: (() => void)[] = [];
+
+    console.log('✅ Guest setting up socket listeners for season:', currentMatch.id);
+
+    // Listen for timer updates from backend
+    unsubscribers.push(socketService.onTimerUpdate((data: { remainingSeconds: number }) => {
+      setCountdown(data.remainingSeconds);
+    }));
+
+    // Listen for auction state updates
+    unsubscribers.push(socketService.onAuctionStateUpdate((data: any) => {
+      console.log('📡 AUCTION_STATE_UPDATE received:', data);
+      if (data.status) {
+        console.log('   → Setting auction status to:', data.status);
+        setAuctionStatus(data.status);
+      }
+      if (data.remainingSeconds !== undefined) {
+        setCountdown(data.remainingSeconds);
+      }
+      // Current player + bid are driven by the Firestore players listener.
+      // Keeping this handler minimal avoids stale state bugs and re-subscribe loops.
+    }));
+
+    // Listen for auctioneer mic events (stubs for compatibility)
+    unsubscribers.push(socketService.onAuctioneerMicOn(() => {
+      setAuctioneerMicOn(true);
+    }));
+
+    unsubscribers.push(socketService.onAuctioneerMicOff(() => {
+      setAuctioneerMicOn(false);
+    }));
+
+    // Auction state updates
+    unsubscribers.push(socketService.onAuctionStarted((data: any) => {
+      console.log('🚀 AUCTION_STARTED received:', data);
+      setAuctionStatus('LIVE');
+      addActivity('🚀 Auction has started!', 'bid');
+    }));
+
+    unsubscribers.push(socketService.onAuctionPaused((data: any) => {
+      console.log('⏸️ AUCTION_PAUSED received:', data);
+      setAuctionStatus('PAUSED');
+      addActivity('⏸️ Auction paused', 'bid');
+    }));
+
+    unsubscribers.push(socketService.onAuctionResumed((data: any) => {
+      console.log('▶️ AUCTION_RESUMED received:', data);
+      setAuctionStatus('LIVE');
+      addActivity('▶️ Auction resumed', 'bid');
+    }));
+
+    unsubscribers.push(socketService.onAuctionEnded((data: any) => {
+      console.log('🏁 AUCTION_ENDED received:', data);
+      setAuctionStatus('ENDED');
+      addActivity('🏁 Auction has ended', 'bid');
+    }));
+
+    // Listen for bidding events
+    unsubscribers.push(socketService.onPlayerBiddingStarted((data: any) => {
+      console.log('🔨 PLAYER_BIDDING_STARTED received:', data);
+      console.log('   → Player object:', data?.player);
+      console.log('   → Base price:', data?.basePrice);
+      // Backend sends { player: {...}, basePrice: number }
+      if (!data || !data.player) {
+        setCurrentBiddingPlayer(null);
+        setCurrentBid(0);
+        setLeadingTeam('');
+        return;
+      }
+      if (data.player) {
+        console.log('   → Setting current bidding player to:', data.player.name);
+        setCurrentBiddingPlayer(data.player);
+        setCurrentBid(data.player?.currentBid || data.basePrice || data.player.basePrice || 0);
+        setLeadingTeam('');
+        setAuctionStatus('LIVE'); // Ensure status is set to LIVE
+        
+        //Fetch actual bid history to get accurate current bid and leading team
+        fetchBidHistoryForCurrentPlayer(data.player.id);
+        
+        addActivity(`🔨 Bidding started for ${data.player.name}`, 'bid');
+        
+        // Update players list if player exists
+        setPlayers(prev => {
+          const exists = prev.some(p => p.id === data.player.id);
+          if (exists) {
+            return prev.map(p => p.id === data.player.id ? data.player : p);
+          } else {
+            return [...prev, data.player];
+          }
+        });
+      } else {
+        console.error('   ❌ No player object in PLAYER_BIDDING_STARTED event!');
+      }
+    }));
+
+    // Player updated (live changes from auctioneer)
+    unsubscribers.push(socketService.onPlayerUpdated((data: { playerId: string; player: Player }) => {
+      console.log('PLAYER_UPDATED received:', data);
+      
+      // Update in players list
+      setPlayers(prev => prev.map(p => p.id === data.playerId ? data.player : p));
+      
+      // If this player is currently being auctioned, update the bidding player
+      setCurrentBiddingPlayer(prev => {
+        if (prev && data.playerId === prev.id) {
+          return data.player;
+        }
+        return prev;
+      });
+    }));
+
+    unsubscribers.push(socketService.onNewBid((data: any) => {
+      console.log('💰 NEW_BID received:', data);
+      console.log('   → Updating current bid to:', data.amount);
+      setCurrentBid(data.amount);
+      setLeadingTeam(data.teamId);
+      // Use team name from data instead of finding from teams array
+      const bidMessage = `📈 ${data.teamName || 'Team'} bid ${formatCurrency(data.amount)}`;
+      addActivity(bidMessage, 'bid');
+    }));
+
+    unsubscribers.push(socketService.onPlayerSold(async (data: any) => {
+      // Use team name from data instead of finding from teams array
+      addActivity(`✅ ${data.playerName} sold to ${data.teamName || 'Team'} for ${formatCurrency(data.finalAmount)}`, 'sold');
+      
+      // Firebase listeners will automatically update players and teams
+      // No need to refetch - just clear current bidding player
+      setCurrentBiddingPlayer(null);
+      setCurrentBid(0);
+      setLeadingTeam('');
+    }));
+
+    unsubscribers.push(socketService.onPlayerUnsold((data: any) => {
+      console.log('🔴 Guest: Player unsold event received:', data);
+      addActivity(`❌ ${data.playerName} went unsold`, 'unsold');
+      
+      // Clear current bidding player - onPlayersUpdate listener will refresh the list
+      setCurrentBiddingPlayer(null);
+      setCurrentBid(0);
+      setLeadingTeam('');
+    }));
+
+    return () => {
+      // Clean up all socket listeners
+      unsubscribers.forEach(unsubscribe => unsubscribe());
+    };
+  }, [currentMatch?.id, currentUser.email]);
+
+  // Set up Firebase real-time listeners
+  useEffect(() => {
+    if (!currentMatch?.id) return;
+
+    console.log('🔥 Guest: Setting up real-time listeners');
+
+    // Listen to players collection
+    const playersUnsubscribe = socketService.onPlayersUpdate(currentMatch.id, (updatedPlayers) => {
+      console.log('🔥 Guest: Players updated, count:', updatedPlayers.length);
+      console.log('🔥 Guest: All player statuses:', updatedPlayers.map(p => `${p.name}: ${p.status}`).join(', '));
+      setPlayers(updatedPlayers);
+
+      // Find player with status 'PENDING' or 'LIVE' (currently being auctioned)
+      const livePlayer = updatedPlayers.find((p: any) => p.status === 'PENDING' || p.status === 'LIVE');
+      if (livePlayer) {
+        console.log('🎯 Guest: Found live player:', livePlayer.name, 'status:', livePlayer.status);
+        console.log('   → Current bid:', livePlayer.currentBid);
+        console.log('   → Base price:', livePlayer.basePrice);
+        console.log('   → Leading team:', livePlayer.leadingTeamId);
+        setCurrentBiddingPlayer(livePlayer);
+        setCurrentBid(livePlayer.currentBid || livePlayer.basePrice || 0);
+        if (livePlayer.leadingTeamId) {
+          setLeadingTeam(livePlayer.leadingTeamId);
+        }
+      } else {
+        console.log('⚠️ Guest: No LIVE/PENDING player found. Clearing current bidding player.');
+        // Only clear if auction is not LIVE, otherwise keep showing last player
+        if (auctionStatus !== 'LIVE') {
+          setCurrentBiddingPlayer(null);
+        }
+      }
+    });
+
+    // Listen to teams collection
+    const teamsUnsubscribe = socketService.onTeamsUpdate(currentMatch.id, (updatedTeams) => {
+      // Enrich teams with calculated squadSize from playerIds array
+      const teamsWithSquadSize = updatedTeams.map((team: any) => ({
+        ...team,
+        players: team.playerIds || team.players || [], // Normalize to players array
+        squadSize: (team.playerIds?.length || team.players?.length || 0)
+      }));
+      console.log('🔥 Guest: Teams updated with squadSize:', teamsWithSquadSize.map(t => `${t.name}: ${t.squadSize} players`));
+      setTeams(teamsWithSquadSize);
+    });
+
+    // Listen to bid events
+    const bidUnsubscribe = socketService.onNewBid((bidData) => {
+      console.log('🔥 Guest: New bid:', bidData);
+      setCurrentBid(bidData.amount);
+      addActivity(`${bidData.teamName} bid ₹${(bidData.amount / 100000).toFixed(1)}L`, 'bid');
+    });
+
+    return () => {
+      playersUnsubscribe();
+      teamsUnsubscribe();
+      bidUnsubscribe();
+    };
+  }, [currentMatch?.id]);
+
+  // Add activity to feed
+  const addActivity = (message: string, type: 'bid' | 'sold' | 'unsold') => {
+    const newActivity = {
+      id: Date.now().toString(),
+      message,
+      timestamp: new Date(),
+      type
+    };
+    setActivityFeed(prev => [...prev, newActivity]);
+    
+    // Also add as notification
+    setNotifications(prev => [...prev, {
+      id: Date.now().toString(),
+      message,
+      time: new Date().toLocaleTimeString(),
+      read: false
+    }]);
+  };
+
+  // Get auction date and time
+  const auctionDate = currentMatch?.startDate ? new Date(currentMatch.startDate) : new Date();
+  const formattedDate = auctionDate.toLocaleDateString('en-US', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+  const formattedTime = auctionDate.toLocaleTimeString('en-US', { 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  });
+
+  const unreadNotifications = notifications.filter(n => !n.read).length;
+
+  // Firebase listeners provide all real-time data - no need for initial REST API fetch
+  // Just set loading to false once component mounts
+  useEffect(() => {
+    console.log('🔥 Guest: Component mounted, waiting for Firebase listeners to populate data');
+    // Give Firebase listeners a moment to populate data
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 1000);
+    
+    return () => clearTimeout(timer);
+  }, [currentMatch?.id]);
+
+  // Debug: Monitor currentBiddingPlayer state
+  useEffect(() => {
+    console.log('🔍 Current Bidding Player State Changed:', currentBiddingPlayer);
+    console.log('   → Current Bid:', currentBid);
+    console.log('   → Leading Team:', leadingTeam);
+    console.log('   → Auction Status:', auctionStatus);
+  }, [currentBiddingPlayer, currentBid, leadingTeam, auctionStatus]);
+
+  // Helper functions
+  const formatCurrency = (amount: number): string => {
+    if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(1)}Cr`;
+    if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
+    return `₹${amount.toLocaleString()}`;
+  };
+
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Fetch bid history for current player to get actual current bid and leading team
+  const fetchBidHistoryForCurrentPlayer = async (playerId: string) => {
+    if (!currentMatch?.id || !playerId) return;
+    try {
+      const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+      console.log('📋 Fetching bid history for player:', playerId);
+      const response = await fetch(`${API_BASE}/bids?seasonId=${currentMatch.id}&playerId=${playerId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const bids = data.data || [];
+        // Sort bids by timestamp descending (most recent first)
+        const sortedBids = bids.sort((a: any, b: any) => {
+          const timeA = new Date(a.timestamp || 0).getTime();
+          const timeB = new Date(b.timestamp || 0).getTime();
+          return timeB - timeA;
+        });
+        console.log('✓ Fetched bid history:', sortedBids.length, 'bids');
+        
+        // Use the latest bid to set actual current bid and leading team
+        if (sortedBids.length > 0) {
+          const latestBid = sortedBids[0];
+          console.log('📍 Restoring current bid from history:', latestBid.amount, 'by', latestBid.teamName);
+          setCurrentBid(latestBid.amount);
+          setLeadingTeam(latestBid.teamName);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch bid history:', error);
+    }
+  };
+
+  const getPlayerStatusBadge = (player: Player) => {
+    if (currentBiddingPlayer?.id === player.id) {
+      return <span className="px-2 py-1 bg-red-500 text-white text-xs font-black rounded-full flex items-center gap-1"><Zap size={10} />LIVE</span>;
+    }
+    switch (player.status) {
+      case 'SOLD':
+        return <span className="px-2 py-1 bg-green-500 text-white text-xs font-black rounded-full flex items-center gap-1"><CheckCircle size={10} />SOLD</span>;
+      case 'UNSOLD':
+        return <span className="px-2 py-1 bg-orange-500 text-white text-xs font-black rounded-full flex items-center gap-1"><XCircle size={10} />UNSOLD</span>;
+      default:
+        return <span className="px-2 py-1 bg-blue-500 text-white text-xs font-black rounded-full">UPCOMING</span>;
+    }
+  };
+
+  const getTeamStatus = (team: Team) => {
+    if ((team.remainingBudget || 0) < 100000) {
+      return <span className="text-red-500 font-bold">🔴 Budget Low</span>;
+    }
+    return <span className="text-green-500 font-bold">🟢 Active</span>;
+  };
+
+  // Guard clause - don't render if currentMatch is not available
+  if (!currentMatch) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 25%, #1a0a12 50%, #0d0d1a 100%)' }}>
+        <div className="absolute inset-0 opacity-[0.03]" style={{ background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(236, 72, 153, 0.3) 2px, rgba(236, 72, 153, 0.3) 4px)' }}></div>
+        <div className="text-center relative z-10">
+          <div className="relative mx-auto mb-6 w-20 h-20">
+            <div className="animate-spin rounded-full h-20 w-20 border-4 border-pink-500/20 border-t-pink-500"></div>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Eye size={28} className="text-pink-400/60" />
+            </div>
+          </div>
+          <p className="text-pink-400 text-lg font-black uppercase tracking-wider">Entering Spectator Mode</p>
+          <div className="mt-3 w-48 h-1 mx-auto bg-pink-900/30 rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-pink-500 to-red-500 rounded-full" style={{ animation: 'hud-load 2s ease-in-out infinite' }}></div>
+          </div>
+          <p className="text-pink-400/40 text-xs mt-2 font-semibold">Loading spectator systems...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* === CSS Animations & Utility Classes === */}
+      <style>{`
+        @keyframes bg-shift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+        @keyframes neon-pulse { 0%, 100% { box-shadow: 0 0 5px rgba(236, 72, 153, 0.3), 0 0 20px rgba(236, 72, 153, 0.1); } 50% { box-shadow: 0 0 15px rgba(236, 72, 153, 0.5), 0 0 40px rgba(236, 72, 153, 0.2); } }
+        @keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-6px); } }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+        @keyframes ring-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes scan-line { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
+        @keyframes hud-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        @keyframes neon-border-pulse { 0%, 100% { border-color: rgba(236, 72, 153, 0.2); } 50% { border-color: rgba(236, 72, 153, 0.5); } }
+        @keyframes hud-load { 0% { width: 0%; } 50% { width: 100%; } 100% { width: 0%; } }
+        @keyframes live-heartbeat { 0%, 100% { transform: scale(1); opacity: 0.7; } 50% { transform: scale(1.15); opacity: 1; } }
+        .animated-bg { background-size: 400% 400%; animation: bg-shift 15s ease infinite; }
+        .neon-pulse { animation: neon-pulse 2s ease-in-out infinite; }
+        .hud-card { background: rgba(20, 5, 15, 0.6); backdrop-filter: blur(20px); border: 1px solid rgba(236, 72, 153, 0.12); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .hud-card:hover { border-color: rgba(236, 72, 153, 0.3); box-shadow: 0 0 30px rgba(236, 72, 153, 0.08), inset 0 0 30px rgba(236, 72, 153, 0.03); }
+        .spine-icon { transition: all 0.2s ease; }
+        .spine-icon:hover { transform: scale(1.15); filter: drop-shadow(0 0 8px rgba(236, 72, 153, 0.6)); }
+        .notification-pulse { animation: neon-border-pulse 2s ease-in-out infinite; }
+        .gradient-border { position: relative; }
+        .gradient-border::before { content: ''; position: absolute; inset: 0; padding: 1.5px; border-radius: inherit; background: linear-gradient(135deg, rgba(236, 72, 153, 0.5), rgba(239, 68, 68, 0.5), rgba(168, 85, 247, 0.3)); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
+        .status-pill { padding: 2px 10px; border-radius: 9999px; border: 1px solid; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
+        .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; animation: live-heartbeat 1.2s ease-in-out infinite; box-shadow: 0 0 8px rgba(239, 68, 68, 0.6); }
+        .player-card { transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+        .player-card:hover { transform: translateY(-3px) scale(1.01); box-shadow: 0 0 25px rgba(236, 72, 153, 0.15); border-color: rgba(236, 72, 153, 0.4) !important; }
+        .team-card { transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+        .team-card:hover { transform: translateY(-3px) scale(1.01); box-shadow: 0 0 25px rgba(168, 85, 247, 0.15); border-color: rgba(168, 85, 247, 0.4) !important; }
+        .neon-search:focus { box-shadow: 0 0 20px rgba(236, 72, 153, 0.2), inset 0 0 20px rgba(236, 72, 153, 0.05); }
+        .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: rgba(20, 5, 15, 0.3); }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(236, 72, 153, 0.3); border-radius: 4px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: rgba(236, 72, 153, 0.5); }
+      `}</style>
+
+      {/* === Loading State === */}
+      {loading && (
+        <div className="h-screen w-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 25%, #1a0a12 50%, #0d0d1a 100%)' }}>
+          <div className="absolute inset-0 opacity-[0.03]" style={{ background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(236, 72, 153, 0.3) 2px, rgba(236, 72, 153, 0.3) 4px)' }}></div>
+          <div className="text-center relative z-10">
+            <div className="relative mx-auto mb-6 w-20 h-20">
+              <div className="animate-spin rounded-full h-20 w-20 border-4 border-pink-500/20 border-t-pink-500"></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Eye size={28} className="text-pink-400/60" />
+              </div>
+            </div>
+            <p className="text-pink-400 text-lg font-black uppercase tracking-wider">Entering Spectator Mode</p>
+            <div className="mt-3 w-48 h-1 mx-auto bg-pink-900/30 rounded-full overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-pink-500 to-red-500 rounded-full" style={{ animation: 'hud-load 2s ease-in-out infinite' }}></div>
+            </div>
+            <p className="text-pink-400/40 text-xs mt-2 font-semibold">Syncing live data...</p>
+          </div>
+        </div>
+      )}
+
+      {!loading && (
+        <div className="h-screen flex flex-col overflow-hidden relative" style={{ background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 25%, #1a0a12 50%, #0d0d1a 100%)' }}>
+          {/* Animated BG overlay */}
+          <div className="absolute inset-0 animated-bg opacity-30 pointer-events-none" style={{ background: 'radial-gradient(ellipse at 20% 50%, rgba(236, 72, 153, 0.08) 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, rgba(239, 68, 68, 0.06) 0%, transparent 50%), radial-gradient(ellipse at 50% 80%, rgba(168, 85, 247, 0.05) 0%, transparent 50%)' }}></div>
+          {/* Scan line */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-[0.015]">
+            <div className="w-full h-32 bg-gradient-to-b from-transparent via-pink-400 to-transparent" style={{ animation: 'scan-line 8s linear infinite' }}></div>
+          </div>
+
+          {/* === FLOATING SPINE SIDEBAR === */}
+          <div className="fixed left-3 z-50 flex flex-col items-center gap-1" style={{ top: '72px', bottom: '72px' }}>
+            {/* Slanted accent lines */}
+            <div className="absolute -right-4 top-8 w-6 h-[2px] bg-gradient-to-r from-pink-500/50 to-transparent" style={{ transform: 'rotate(-35deg)' }}></div>
+            <div className="absolute -right-3 top-11 w-5 h-[2px] bg-gradient-to-r from-pink-500/30 to-transparent" style={{ transform: 'rotate(-35deg)' }}></div>
+            <div className="absolute -right-4 bottom-8 w-6 h-[2px] bg-gradient-to-r from-pink-500/50 to-transparent" style={{ transform: 'rotate(35deg)' }}></div>
+            <div className="absolute -right-3 bottom-11 w-5 h-[2px] bg-gradient-to-r from-pink-500/30 to-transparent" style={{ transform: 'rotate(35deg)' }}></div>
+
+            <nav className="flex flex-col items-center gap-1 py-4 px-1.5 rounded-[28px] h-full" style={{ background: 'rgba(15, 5, 10, 0.85)', backdropFilter: 'blur(20px)', border: '1px solid rgba(236, 72, 153, 0.15)' }}>
+              {[
+                { icon: Home, section: 'dashboard' as const, label: 'Home' },
+                { icon: Radio, section: 'liveRoom' as const, label: 'Live' },
+                { icon: Users, section: 'dashboard' as const, label: 'Players' },
+                { icon: Shield, section: 'dashboard' as const, label: 'Teams' },
+                { icon: Activity, section: 'dashboard' as const, label: 'Feed' },
+              ].map(({ icon: Icon, section, label }) => (
+                <button
+                  key={label}
+                  onClick={() => setActiveSection(section)}
+                  className={`spine-icon p-2.5 rounded-xl transition-all group relative ${
+                    (activeSection === section && label === 'Home') || (activeSection === 'liveRoom' && label === 'Live')
+                      ? 'bg-gradient-to-br from-pink-600/40 to-red-600/40 text-pink-300'
+                      : 'text-pink-500/40 hover:text-pink-400 hover:bg-pink-500/10'
+                  }`}
+                  title={label}
+                >
+                  <Icon size={18} />
+                </button>
+              ))}
+
+              {/* Vertical neon spine line */}
+              <div className="flex-1 flex items-center justify-center">
+                <div className="w-[2px] h-full max-h-20 bg-gradient-to-b from-transparent via-pink-500/30 to-transparent rounded-full"></div>
+              </div>
+
+              {/* Bottom: Eye icon */}
+              <div className="p-2.5 rounded-xl text-pink-500/30">
+                <Eye size={16} />
+              </div>
+            </nav>
+          </div>
+
+          {/* === TOP COMMAND BAR === */}
+          <div className="relative z-40 h-14 flex items-center px-6 pl-20" style={{ background: 'rgba(15, 5, 10, 0.7)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(236, 72, 153, 0.1)' }}>
+            {/* Left: Spectator Mode */}
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full bg-pink-500 neon-pulse"></div>
+              <h1 className="text-sm font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-400 to-red-400 uppercase tracking-widest">
+                Spectator Mode
+              </h1>
+              <span className="text-[10px] text-pink-400/40 font-bold uppercase tracking-wider hidden sm:inline">
+                {currentMatch?.seasonName || 'Live Auction'}
+              </span>
+            </div>
+
+            {/* Center: Status + Timer */}
+            <div className="flex-1 flex items-center justify-center gap-4">
+              {/* Live Status Badge */}
+              <div className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider ${
+                auctionStatus === 'LIVE'
+                  ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                  : auctionStatus === 'PAUSED'
+                  ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                  : auctionStatus === 'ENDED'
+                  ? 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                  : 'bg-pink-500/10 text-pink-400/60 border border-pink-500/15'
+              }`}>
+                {auctionStatus === 'LIVE' ? (
+                  <><div className="live-dot"></div>Live Auction</>
+                ) : auctionStatus === 'PAUSED' ? (
+                  <><Clock size={12} />Paused</>
+                ) : auctionStatus === 'ENDED' ? (
+                  <><Trophy size={12} />Ended</>
+                ) : (
+                  <><Timer size={12} />Waiting</>
+                )}
+              </div>
+
+              {/* Timer */}
+              {countdown > 0 && (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-pink-900/20 border border-pink-500/15">
+                  <Timer size={12} className="text-pink-400/60" />
+                  <span className="text-sm font-mono font-black text-pink-300">{formatTime(countdown)}</span>
+                </div>
+              )}
+
+              {/* Auctioneer Mic */}
+              {auctioneerMicOn && (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/20 border border-green-500/30 animate-pulse">
+                  <Mic size={12} className="text-green-400" />
+                  <span className="text-[10px] font-black text-green-400 uppercase tracking-wider">Auctioneer Live</span>
+                </div>
+              )}
+            </div>
+
+            {/* Right: Actions */}
+            <div className="flex items-center gap-3">
+              {/* Notifications */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowNotifications(!showNotifications)}
+                  className={`p-2 rounded-xl transition-all ${unreadNotifications > 0 ? 'notification-pulse' : ''} bg-pink-500/10 hover:bg-pink-500/20 text-pink-400/60 hover:text-pink-400 border border-pink-500/15`}
+                >
+                  <Bell size={16} />
+                  {unreadNotifications > 0 && (
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">{unreadNotifications}</span>
+                  )}
+                </button>
+
+                {/* Notifications Dropdown */}
+                {showNotifications && (
+                  <div className="absolute right-0 top-12 w-80 rounded-2xl overflow-hidden z-[999] hud-card" style={{ border: '1px solid rgba(236, 72, 153, 0.2)' }}>
+                    <div className="px-4 py-3 flex items-center justify-between" style={{ background: 'rgba(236, 72, 153, 0.08)', borderBottom: '1px solid rgba(236, 72, 153, 0.1)' }}>
+                      <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Notifications</h3>
+                      <button onClick={() => setShowNotifications(false)} className="text-pink-400/40 hover:text-pink-400">
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    {/* Auction Info */}
+                    <div className="p-3 space-y-2" style={{ borderBottom: '1px solid rgba(236, 72, 153, 0.08)' }}>
+                      <div className="flex items-center gap-2 text-xs">
+                        <Calendar size={12} className="text-pink-400/50" />
+                        <span className="text-pink-400/50 font-bold">Date:</span>
+                        <span className="text-pink-200 font-semibold">{formattedDate}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <Clock size={12} className="text-pink-400/50" />
+                        <span className="text-pink-400/50 font-bold">Start:</span>
+                        <span className="text-pink-200 font-semibold">{formattedTime}</span>
+                      </div>
+                    </div>
+
+                    <div className="max-h-60 overflow-y-auto scrollbar-thin">
+                      {notifications.length === 0 ? (
+                        <div className="px-4 py-8 text-center">
+                          <Bell size={24} className="mx-auto mb-2 text-pink-500/20" />
+                          <p className="text-pink-400/40 text-xs font-semibold">No notifications yet</p>
+                        </div>
+                      ) : (
+                        notifications.slice().reverse().map(notif => (
+                          <div key={notif.id} className={`px-4 py-3 transition-colors hover:bg-pink-500/5 ${!notif.read ? 'bg-pink-500/5' : ''}`} style={{ borderBottom: '1px solid rgba(236, 72, 153, 0.05)' }}>
+                            <p className="text-xs text-pink-200 font-semibold">{notif.message}</p>
+                            <p className="text-[10px] text-pink-400/40 mt-0.5">{notif.time}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Join Live Room */}
+              <button
+                onClick={() => setActiveSection('liveRoom')}
+                className="flex items-center gap-2 px-4 py-1.5 rounded-xl bg-gradient-to-r from-red-600 to-pink-600 text-white font-bold text-xs transition-all hover:shadow-lg hover:shadow-red-500/20 neon-pulse uppercase tracking-wider"
+              >
+                <Radio size={14} />
+                Live Room
+              </button>
+
+              {/* Back */}
+              <button
+                onClick={() => setStatus(AuctionStatus.MARKETPLACE)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-pink-500/10 hover:bg-pink-500/20 text-pink-400/60 hover:text-pink-400 font-bold text-xs border border-pink-500/15 transition-all"
+              >
+                <ArrowLeft size={14} />
+              </button>
+
+              {/* Guest Profile */}
+              <div className="relative group">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-pink-600/30 to-red-600/30 flex items-center justify-center border border-pink-500/20 group-hover:border-pink-500/40 transition-all">
+                  <User size={14} className="text-pink-400/60" />
+                </div>
+                <div className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'conic-gradient(from 0deg, rgba(236, 72, 153, 0.4), rgba(239, 68, 68, 0.4), rgba(168, 85, 247, 0.4), rgba(236, 72, 153, 0.4))', animation: 'ring-rotate 3s linear infinite', padding: '2px', WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)', WebkitMaskComposite: 'xor', borderRadius: '50%' }}></div>
+              </div>
+            </div>
+          </div>
+
+          {/* === MAIN CONTENT === */}
+          {activeSection === 'dashboard' ? (
+            <main className="flex-1 overflow-hidden pl-16 pr-4 py-3 relative z-10">
+              <div className="h-full grid grid-cols-12 gap-3">
+
+                {/* LEFT: ALL PLAYERS */}
+                <div className="col-span-3 hud-card rounded-2xl overflow-hidden flex flex-col">
+                  <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(236, 72, 153, 0.1)' }}>
+                    <div className="flex items-center gap-2">
+                      <div className="w-1 h-5 rounded-full bg-gradient-to-b from-pink-500 to-red-500"></div>
+                      <h2 className="text-sm font-black text-pink-200 uppercase tracking-wider">Players</h2>
+                      <span className="text-[10px] text-pink-400/40 font-bold">({players.length})</span>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-2 space-y-1.5 scrollbar-thin">
+                    {players.length === 0 ? (
+                      <div className="text-center py-16">
+                        <Users size={36} className="mx-auto mb-3 text-pink-500/20" />
+                        <p className="text-pink-400/40 text-xs font-bold">No players yet</p>
+                      </div>
+                    ) : (() => {
+                      const sorted = [...players].sort((a, b) => {
+                        if (a.status === 'UNSOLD' && b.status !== 'UNSOLD') return 1;
+                        if (a.status !== 'UNSOLD' && b.status === 'UNSOLD') return -1;
+                        return 0;
+                      });
+                      const unsoldCount = sorted.filter(p => p.status === 'UNSOLD').length;
+                      const regularCount = sorted.length - unsoldCount;
+                      return sorted.map((player, index) => (
+                        <React.Fragment key={player.id}>
+                          {index === regularCount && unsoldCount > 0 && (
+                            <div className="py-2 px-2 flex items-center gap-2 text-[10px] font-black text-orange-400/70 uppercase tracking-wider">
+                              <div className="flex-1 h-px bg-orange-500/20"></div>
+                              <span>Re-Auction</span>
+                              <div className="flex-1 h-px bg-orange-500/20"></div>
+                            </div>
+                          )}
+                          <div
+                            className={`player-card rounded-xl p-2.5 cursor-pointer ${
+                              currentBiddingPlayer?.id === player.id
+                                ? 'bg-red-500/15 border border-red-500/40'
+                                : player.status === 'UNSOLD'
+                                ? 'bg-orange-500/5 border border-orange-500/15 hover:bg-orange-500/10'
+                                : 'bg-pink-500/5 border border-pink-500/10 hover:bg-pink-500/10'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-pink-900/30 flex items-center justify-center border border-pink-500/15">
+                                {player.imageUrl ? (
+                                  <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover" />
+                                ) : (
+                                  <User size={16} className="text-pink-500/30" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-pink-100 font-bold text-xs truncate">{player.name}</p>
+                                <p className="text-pink-400/40 text-[10px] uppercase tracking-wider font-semibold">{player.roleId || 'Player'}</p>
+                              </div>
+                              <div className="flex-shrink-0">
+                                {currentBiddingPlayer?.id === player.id ? (
+                                  <span className="status-pill bg-red-500/20 text-red-400 border-red-500/40 flex items-center gap-1"><Zap size={8} />LIVE</span>
+                                ) : player.status === 'SOLD' ? (
+                                  <span className="status-pill bg-green-500/20 text-green-400 border-green-500/30">SOLD</span>
+                                ) : player.status === 'UNSOLD' ? (
+                                  <span className="status-pill bg-orange-500/20 text-orange-400 border-orange-500/30">UNSOLD</span>
+                                ) : (
+                                  <span className="status-pill bg-pink-500/10 text-pink-400/50 border-pink-500/15">NEXT</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="mt-1.5 flex items-center justify-between text-[10px]">
+                              <span className="text-pink-400/40 font-semibold">Base: {formatCurrency(player.basePrice || 0)}</span>
+                              {player.status === 'SOLD' && player.soldAmount && (
+                                <span className="text-green-400/70 font-bold">Sold: {formatCurrency(player.soldAmount)}</span>
+                              )}
+                            </div>
+                          </div>
+                        </React.Fragment>
+                      ));
+                    })()}
+                  </div>
+                </div>
+
+                {/* CENTER: LIVE AUCTION */}
+                <div className="col-span-6 hud-card rounded-2xl overflow-hidden flex flex-col">
+                  <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(236, 72, 153, 0.1)' }}>
+                    <div className="flex items-center gap-2">
+                      <div className="w-1 h-5 rounded-full bg-gradient-to-b from-red-500 to-orange-500"></div>
+                      <h2 className="text-sm font-black text-pink-200 uppercase tracking-wider">Live Auction</h2>
+                    </div>
+                    {auctionStatus === 'LIVE' && (
+                      <div className="flex items-center gap-2">
+                        <div className="live-dot"></div>
+                        <span className="text-[10px] font-black text-red-400 uppercase tracking-wider">Broadcasting</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex-1 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+                    {/* Subtle radial glow in center */}
+                    <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ background: 'radial-gradient(circle at 50% 40%, rgba(236, 72, 153, 0.15) 0%, transparent 60%)' }}></div>
+
+                    {currentBiddingPlayer ? (
+                      <div className="text-center w-full max-w-md relative z-10" style={{ animation: 'float 4s ease-in-out infinite' }}>
+                        {/* Player Photo */}
+                        <div className="w-48 h-48 mx-auto mb-4 rounded-2xl overflow-hidden border-2 border-pink-500/30 shadow-2xl shadow-pink-500/10 bg-pink-900/20 flex items-center justify-center">
+                          {currentBiddingPlayer.imageUrl ? (
+                            <img src={currentBiddingPlayer.imageUrl} alt={currentBiddingPlayer.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <User size={60} className="text-pink-500/30" />
+                          )}
+                        </div>
+
+                        {/* Player Name */}
+                        <h3 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-300 to-red-300 uppercase tracking-wider mb-1">{currentBiddingPlayer.name}</h3>
+                        <p className="text-pink-400/50 text-xs uppercase tracking-widest font-bold mb-4">{currentBiddingPlayer.roleId || 'Player'}</p>
+
+                        {/* Current Bid Card */}
+                        <div className="hud-card gradient-border rounded-2xl p-5 mb-3 mx-auto max-w-xs">
+                          <p className="text-[10px] text-pink-400/50 uppercase tracking-widest font-bold mb-1">Current Bid</p>
+                          <p className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-300 via-red-300 to-orange-300 mb-2">
+                            {formatCurrency(currentBid || currentBiddingPlayer.basePrice || 0)}
+                          </p>
+                          {leadingTeam && (
+                            <div className="flex items-center justify-center gap-2">
+                              <Crown size={12} className="text-purple-400" />
+                              <p className="text-purple-300 text-sm font-bold">{teams.find(t => t.id === leadingTeam)?.name || leadingTeam}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        <p className="text-pink-400/40 text-xs font-semibold">Base Price: {formatCurrency(currentBiddingPlayer.basePrice || 0)}</p>
+                      </div>
+                    ) : (
+                      <div className="text-center relative z-10">
+                        <div className="w-24 h-24 mx-auto mb-4 rounded-2xl bg-pink-500/10 border border-pink-500/15 flex items-center justify-center">
+                          {auctionStatus === 'LIVE' ? (
+                            <Radio size={40} className="text-orange-400" style={{ animation: 'live-heartbeat 1.5s ease-in-out infinite' }} />
+                          ) : auctionStatus === 'PAUSED' ? (
+                            <Clock size={40} className="text-yellow-400/60" />
+                          ) : auctionStatus === 'ENDED' ? (
+                            <Trophy size={40} className="text-green-400/60" />
+                          ) : (
+                            <Crosshair size={40} className="text-pink-500/20" />
+                          )}
+                        </div>
+                        <p className="text-lg font-black text-pink-300/70 mb-1">
+                          {auctionStatus === 'LIVE' ? 'Auction is Live!' :
+                           auctionStatus === 'PAUSED' ? 'Auction Paused' :
+                           auctionStatus === 'ENDED' ? 'Auction Ended' :
+                           'Waiting for Auction'}
+                        </p>
+                        <p className="text-xs text-pink-400/40 font-semibold max-w-xs mx-auto">
+                          {auctionStatus === 'LIVE' ? 'Next player coming up...' :
+                           auctionStatus === 'PAUSED' ? 'The auctioneer has paused the session' :
+                           auctionStatus === 'ENDED' ? 'All players have been auctioned' :
+                           'Hang tight — the auction will start soon'}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Activity Feed (bottom of center panel) */}
+                    {activityFeed.length > 0 && (
+                      <div className="absolute bottom-0 left-0 right-0 p-3">
+                        <div className="hud-card rounded-xl p-3 max-h-32 overflow-y-auto scrollbar-thin">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Activity size={10} className="text-pink-400/40" />
+                            <span className="text-[10px] font-black text-pink-400/40 uppercase tracking-wider">Live Feed</span>
+                          </div>
+                          <div className="space-y-1">
+                            {activityFeed.slice(-5).reverse().map(item => (
+                              <div key={item.id} className="flex items-center gap-2 text-[10px]">
+                                <div className={`w-1 h-1 rounded-full flex-shrink-0 ${
+                                  item.type === 'bid' ? 'bg-pink-400' : item.type === 'sold' ? 'bg-green-400' : 'bg-orange-400'
+                                }`}></div>
+                                <span className="text-pink-300/60 font-semibold truncate">{item.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* RIGHT: TEAMS */}
+                <div className="col-span-3 hud-card rounded-2xl overflow-hidden flex flex-col">
+                  <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(236, 72, 153, 0.1)' }}>
+                    <div className="flex items-center gap-2">
+                      <div className="w-1 h-5 rounded-full bg-gradient-to-b from-purple-500 to-pink-500"></div>
+                      <h2 className="text-sm font-black text-pink-200 uppercase tracking-wider">Teams</h2>
+                      <span className="text-[10px] text-pink-400/40 font-bold">({teams.length})</span>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-2 space-y-2 scrollbar-thin">
+                    {teams.length === 0 ? (
+                      <div className="text-center py-16">
+                        <Shield size={36} className="mx-auto mb-3 text-purple-500/20" />
+                        <p className="text-pink-400/40 text-xs font-bold">No teams yet</p>
+                      </div>
+                    ) : (
+                      teams.map((team) => (
+                        <div
+                          key={team.id}
+                          className="team-card rounded-xl p-3 bg-purple-500/5 border border-purple-500/10"
+                        >
+                          <div className="flex items-center gap-3 mb-2.5">
+                            <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-purple-600/40 to-pink-600/40 flex items-center justify-center flex-shrink-0 overflow-hidden border border-purple-500/20">
+                              {team.logo ? (
+                                <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <Shield size={20} className="text-purple-400/60" />
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-pink-100 font-black text-sm truncate">{team.name}</p>
+                              <p className="text-[10px] font-bold">
+                                {(team.remainingBudget || 0) < 100000 ? (
+                                  <span className="text-red-400">Budget Low</span>
+                                ) : (
+                                  <span className="text-green-400/70">Active</span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <div className="rounded-lg p-2 bg-pink-500/5 border border-pink-500/8">
+                              <p className="text-[9px] text-pink-400/40 uppercase tracking-wider font-bold">Budget</p>
+                              <p className="text-xs font-black text-pink-300">{formatCurrency(team.remainingBudget || 0)}</p>
+                            </div>
+                            <div className="rounded-lg p-2 bg-purple-500/5 border border-purple-500/8">
+                              <p className="text-[9px] text-pink-400/40 uppercase tracking-wider font-bold">Squad</p>
+                              <p className="text-xs font-black text-purple-300">{team.players?.length || 0}/{team.maxPlayers || 11}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+              </div>
+            </main>
+          ) : (
+            /* Live Room Full Screen */
+            <div className="fixed inset-0 z-40 bg-black">
+              <LiveAuctionPage
+                seasonId={currentMatch?.id || ''}
+                userId={currentUser.email}
+                userRole={UserRole.GUEST}
+                onClose={() => setActiveSection('dashboard')}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+};

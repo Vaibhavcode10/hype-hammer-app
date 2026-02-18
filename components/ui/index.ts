@@ -11,4 +11,7 @@ export { PlayerQueueCarousel } from './PlayerQueueCarousel';
 export { AuctioneerLiveRoom } from './AuctioneerLiveRoom';
 export { SpectatorLiveRoom } from './SpectatorLiveRoom';
 export { AuctionCardStack } from './AuctionCardStack';
+export { TeamHUDCard } from './TeamHUDCard';
+export { ConfigWarningBanner, ConfigWarningPill } from './ConfigWarningBanner';
+
 

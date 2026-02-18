@@ -406,10 +406,22 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                 return delete_auctioneer(resource_id)
         
         elif resource == 'auctioneer':
-            if resource_id == 'approve' and method == 'POST':
+            if method == 'GET' and not resource_id:
+                # GET /auctioneer?email=... - Fetch auctioneer by email (query param)
+                email = data.get('email') or data.get('email[]')
+                if email:
+                    return get_auctioneer_by_email(email)
+                else:
+                    return create_response(error_response("Email required", 400), 400)
+            elif method == 'GET' and resource_id:
+                # GET /auctioneer/{resource_id} - Fetch auctioneer by ID or email
+                return get_auctioneer(resource_id, data)
+            elif resource_id == 'approve' and method == 'POST':
                 return approve_auctioneer(data)
             elif resource_id == 'reject' and method == 'POST':
                 return reject_auctioneer(data)
+            elif resource_id == 'update-photo' and method == 'POST':
+                return update_auctioneer_photo(data)
         
         # ===== PLAYER ROUTES =====
         elif resource == 'players':
@@ -443,11 +455,22 @@ def auction(req: https_fn.Request) -> https_fn.Response:
             if method == 'GET' and not resource_id:
                 return get_matches(data)
             elif method == 'GET' and resource_id:
-                return get_match(resource_id)
+                # Check if this is a config request: /matches/{id}/config
+                if action == 'config':
+                    return get_match_config(resource_id)
+                # Check if this is a validation request: /matches/{id}/validate
+                elif action == 'validate':
+                    return validate_match_config(resource_id)
+                else:
+                    return get_match(resource_id)
             elif method == 'POST':
                 return create_match(data)
             elif method == 'PUT' and resource_id:
-                return update_match(resource_id, data)
+                # Check if this is a config update: /matches/{id}/config
+                if action == 'config':
+                    return update_match_config(resource_id, data)
+                else:
+                    return update_match(resource_id, data)
             elif method == 'DELETE' and resource_id:
                 return delete_match(resource_id)
         
@@ -491,6 +514,8 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                     return mark_player_unsold(data)
                 elif auction_subaction == 'next' and method == 'POST':
                     return get_next_player(data)
+                elif auction_subaction == 'switch' and method == 'POST':
+                    return switch_player(data)
             # General auction actions
             elif auction_action == 'start' and method == 'POST':
                 return start_auction(data)
@@ -904,6 +929,46 @@ def delete_auctioneer(auctioneer_id):
     except Exception as e:
         return create_response(error_response(str(e)), 400)
 
+def get_auctioneer_by_email(email):
+    """Fetch auctioneer by email from query params"""
+    try:
+        db = get_db()
+        docs = list(db.collection('auctioneers').where('email', '==', email).limit(1).stream())
+        if docs:
+            auctioneer_data = docs[0].to_dict()
+            print(f"✅ Found auctioneer by email {email}: {auctioneer_data.get('name')}")
+            return create_response(success_response(auctioneer_data, 'Auctioneer found'), 200)
+        
+        print(f"❌ No auctioneer found with email: {email}")
+        return create_response(error_response("Auctioneer not found", 404), 404)
+    except Exception as e:
+        print(f"❌ Error fetching auctioneer by email: {str(e)}")
+        return create_response(error_response(f"Error: {str(e)}", 500), 500)
+
+def get_auctioneer(identifier, data):
+    """Fetch auctioneer by ID or email"""
+    try:
+        db = get_db()
+        
+        # Try to fetch by ID first
+        auctioneer_doc = db.collection('auctioneers').document(identifier).get()
+        if auctioneer_doc.exists:
+            return create_response(success_response(auctioneer_doc.to_dict(), 'Auctioneer found'), 200)
+        
+        # If not found by ID, try to fetch by email
+        email = identifier if '@' in identifier else None
+        if email:
+            docs = list(db.collection('auctioneers').where('email', '==', email).limit(1).stream())
+            if docs:
+                auctioneer_data = docs[0].to_dict()
+                return create_response(success_response(auctioneer_data, 'Auctioneer found'), 200)
+        
+        # Not found
+        return create_response(error_response("Auctioneer not found", 404), 404)
+    except Exception as e:
+        print(f"❌ Error fetching auctioneer: {str(e)}")
+        return create_response(error_response(f"Error: {str(e)}", 500), 500)
+
 def approve_auctioneer(data):
     """Approve pending auctioneer"""
     try:
@@ -948,6 +1013,38 @@ def reject_auctioneer(data):
         return create_response(success_response(updated_doc, "Auctioneer rejected successfully"))
     except Exception as e:
         return create_response(error_response(str(e)), 400)
+
+def update_auctioneer_photo(data):
+    """Update auctioneer profile photo with Firebase Storage URL"""
+    try:
+        auctioneer_id = data.get('id')
+        photo_url = data.get('photoUrl')
+        
+        if not auctioneer_id or not photo_url:
+            return create_response(error_response("Auctioneer ID and photoUrl required", 400), 400)
+        
+        doc_ref = get_db().collection('auctioneers').document(auctioneer_id)
+        if not doc_ref.get().exists:
+            return create_response(error_response(f"Auctioneer {auctioneer_id} not found", 404), 404)
+        
+        current_doc = serialize_firestore_doc(doc_ref.get())
+        
+        print(f"📸 Updating auctioneer photo for {auctioneer_id}")
+        print(f"   Old photoUrl: {current_doc.get('auctioneerPhoto', 'None')}")
+        print(f"   New photoUrl: {photo_url}")
+        
+        doc_ref.update({
+            'auctioneerPhoto': photo_url,
+            'updatedAt': datetime.now().isoformat()
+        })
+        
+        updated_doc = serialize_firestore_doc(doc_ref.get())
+        
+        print(f"✅ Successfully updated auctioneer photo for {auctioneer_id}")
+        return create_response(success_response(updated_doc, "Auctioneer photo updated successfully"))
+    except Exception as e:
+        print(f"❌ Error updating auctioneer photo: {str(e)}")
+        return create_response(error_response(f"Failed to update auctioneer photo: {str(e)}", 500), 500)
 
 def get_teams(data):
     # Accept both 'matchId' and 'seasonId' for backward compatibility
@@ -1079,24 +1176,443 @@ def get_match(match_id):
         return create_response(error_response(str(e), 500), 500)
 
 def create_match(data):
-    match_id = data.get('id') or generate_id('match')
-    data['id'] = match_id
-    data['createdAt'] = datetime.now().isoformat()
-    get_db().collection('matches').document(match_id).set(data)
-    return create_response(success_response(data), 201)
+    """Create a new match with comprehensive field tracking and validation"""
+    try:
+        print("=" * 80)
+        print("📝 CREATE MATCH HANDLER STARTED")
+        print("=" * 80)
+        
+        # Expected fields from form
+        ORGANIZER_FIELDS = ['organizerEmail', 'organizerPassword', 'organizerName', 'organizationType', 
+                           'organizationName', 'organizerPhone', 'designation', 'profilePhotoURL', 'adminEmail']
+        SEASON_FIELDS = ['seasonName', 'sportType', 'auctionDateTime', 'venueMode', 'venueLocation']
+        CONFIG_FIELDS = ['maxTeams', 'maxPlayersPerTeam', 'baseBudgetPerTeam']
+        DOCUMENT_FIELDS = ['governmentId', 'governmentIdURL', 'organizerProofURL']
+        SYSTEM_FIELDS = ['id', 'name', 'config', 'players', 'teams', 'history', 'status', 
+                        'matchDate', 'place', 'createdAt', 'type', 'level']
+        
+        all_expected = ORGANIZER_FIELDS + SEASON_FIELDS + CONFIG_FIELDS + DOCUMENT_FIELDS + SYSTEM_FIELDS
+        
+        print(f"📦 Received {len(data)} fields in request")
+        print(f"📋 Field Categories:")
+        print(f"   - Organizer ({len(ORGANIZER_FIELDS)}): {', '.join(ORGANIZER_FIELDS)}")
+        print(f"   - Season ({len(SEASON_FIELDS)}): {', '.join(SEASON_FIELDS)}")
+        print(f"   - Config ({len(CONFIG_FIELDS)}): {', '.join(CONFIG_FIELDS)}")
+        print(f"   - Documents ({len(DOCUMENT_FIELDS)}): {', '.join(DOCUMENT_FIELDS)}")
+        
+        # Receipt check
+        received_keys = list(data.keys())
+        print(f"\n✅ Received keys: {received_keys}")
+        
+        # Field presence check
+        print(f"\n🔍 Field Presence Check:")
+        for category, fields in [
+            ("Organizer", ORGANIZER_FIELDS),
+            ("Season", SEASON_FIELDS),
+            ("Config", CONFIG_FIELDS),
+            ("Documents", DOCUMENT_FIELDS)
+        ]:
+            received = [f for f in fields if f in data]
+            missing = [f for f in fields if f not in data]
+            print(f"   {category}:")
+            if received:
+                print(f"      ✅ Present: {received}")
+            if missing:
+                print(f"      ⚠️  Missing: {missing}")
+        
+        # Safe logging of payload
+        try:
+            print(f"\n📦 Full payload: {json.dumps(data, indent=2, default=str)}")
+        except Exception as log_err:
+            print(f"📦 Payload (serialized): {str(data)[:1000]}...")
+        
+        # Generate or use provided match ID
+        match_id = data.get('id') or generate_id('match')
+        print(f"\n🆔 Match ID: {match_id}")
+        
+        # Prepare document - include ALL provided fields
+        match_doc = {
+            'id': match_id,
+            'createdAt': datetime.now().isoformat(),
+            'updatedAt': datetime.now().isoformat(),
+        }
+        
+        # Copy all provided fields
+        for key, value in data.items():
+            if key != 'id':  # Already set above
+                match_doc[key] = value
+        
+        # Ensure critical fields have defaults
+        match_doc.setdefault('status', 'SETUP')
+        match_doc.setdefault('players', [])
+        match_doc.setdefault('teams', [])
+        match_doc.setdefault('history', [])
+        
+        # Create standardized config object
+        if 'config' not in match_doc or not isinstance(match_doc.get('config'), dict):
+            match_doc['config'] = {}
+        
+        config = match_doc['config']
+        
+        # Ensure all config fields are present with values from either config or top-level fields
+        base_budget = config.get('baseTeamBudget') or data.get('baseBudgetPerTeam') or config.get('totalBudget', 10000000)
+        bid_increment = config.get('bidIncrement') or config.get('minBidIncrement', 100000)
+        max_teams = config.get('maxTeams') or data.get('maxTeams', 8)
+        max_players = config.get('maxSquad') or data.get('maxPlayersPerTeam', 25)
+        min_players = config.get('minSquad', 11)
+        
+        # Update config with standardized fields
+        config.update({
+            'baseTeamBudget': base_budget,
+            'totalBudget': base_budget,  # Legacy compatibility
+            'bidIncrement': bid_increment,
+            'minBidIncrement': bid_increment,  # Legacy compatibility
+            'maxTeams': max_teams,
+            'minSquad': min_players,
+            'maxSquad': max_players,
+            'squadSize': {
+                'min': min_players,
+                'max': max_players
+            }
+        })
+        
+        match_doc['config'] = config
+        
+        # Also set top-level fields for easy access
+        match_doc['baseBudgetPerTeam'] = base_budget
+        match_doc['maxTeams'] = max_teams
+        match_doc['maxPlayersPerTeam'] = max_players
+        
+        print(f"\n✍️  Document Summary:")
+        print(f"   Total fields in document: {len(match_doc)}")
+        print(f"   Field list: {list(match_doc.keys())}")
+        
+        # Track each field being written
+        print(f"\n📝 Field Details:")
+        for field in match_doc:
+            value = match_doc[field]
+            value_type = type(value).__name__
+            if isinstance(value, (str, int, float, bool)):
+                print(f"   {field}: {value_type} = {repr(value)[:100]}")
+            elif isinstance(value, dict):
+                print(f"   {field}: {value_type} with {len(value)} keys")
+            elif isinstance(value, list):
+                print(f"   {field}: {value_type} with {len(value)} items")
+            else:
+                print(f"   {field}: {value_type}")
+        
+        print(f"\n💾 Writing to Firestore: matches/{match_id}")
+        # Write to Firestore
+        get_db().collection('matches').document(match_id).set(match_doc)
+        
+        print(f"\n✅ Match created successfully!")
+        print(f"   ID: {match_id}")
+        print(f"   Name: {match_doc.get('name', 'N/A')}")
+        print(f"   Sport: {match_doc.get('sportType', 'N/A')}")
+        print(f"   Organizer: {match_doc.get('organizerEmail', 'N/A')}")
+        print(f"   Total Fields Stored: {len(match_doc)}")
+        print("=" * 80)
+        
+        return create_response(success_response(match_doc, "Match created successfully"), 201)
+        
+    except Exception as e:
+        print(f"\n❌ ERROR creating match: {str(e)}")
+        print(f"   Traceback: {traceback.format_exc()}")
+        print("=" * 80)
+        return create_response(error_response(f"Failed to create match: {str(e)}", 500), 500)
 
 def update_match(match_id, data):
-    doc_ref = get_db().collection('matches').document(match_id)
-    if not doc_ref.get().exists:
-        return create_response(error_response("Not found", 404), 404)
-    data['updatedAt'] = datetime.now().isoformat()
-    doc_ref.update(data)
-    emit_realtime_event('auctionState', serialize_firestore_doc(doc_ref.get()), match_id)
-    return create_response(success_response(serialize_firestore_doc(doc_ref.get())))
+    """Update an existing match with field tracking"""
+    try:
+        print("=" * 80)
+        print(f"📝 UPDATE MATCH HANDLER STARTED")
+        print(f"   Match ID: {match_id}")
+        print("=" * 80)
+        
+        # Check what fields are being updated
+        print(f"\n📦 Received {len(data)} fields to update: {list(data.keys())}")
+        
+        # Safe logging
+        try:
+            print(f"📦 Update payload: {json.dumps(data, indent=2, default=str)}")
+        except Exception as log_err:
+            print(f"📦 Payload (serialized): {str(data)[:500]}...")
+        
+        doc_ref = get_db().collection('matches').document(match_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            print(f"❌ Match not found: {match_id}")
+            return create_response(error_response("Match not found", 404), 404)
+        
+        current_match = doc.to_dict()
+        print(f"\n✅ Match exists with {len(current_match)} current fields")
+        
+        # Add timestamp
+        data['updatedAt'] = datetime.now().isoformat()
+        
+        # Update document (only updates provided fields, doesn't overwrite)
+        print(f"\n✍️  Updating {len(data)} fields...")
+        doc_ref.update(data)
+        
+        # Get updated document
+        updated_doc = doc_ref.get()
+        match_data = serialize_firestore_doc(updated_doc)
+        
+        print(f"✅ Document updated successfully!")
+        print(f"   Total fields after update: {len(match_data)}")
+        print(f"   Fields: {list(match_data.keys())}")
+        
+        # Emit realtime event
+        print(f"📤 Emitting realtime event for match: {match_id}")
+        emit_realtime_event('auctionState', match_data, match_id)
+        
+        print("=" * 80)
+        return create_response(success_response(match_data, "Match updated successfully"))
+        
+    except Exception as e:
+        print(f"\n❌ ERROR updating match: {str(e)}")
+        print(f"   Traceback: {traceback.format_exc()}")
+        print("=" * 80)
+        return create_response(error_response(f"Failed to update match: {str(e)}", 500), 500)
 
 def delete_match(match_id):
     get_db().collection('matches').document(match_id).delete()
     return create_response(success_response(None, "Deleted"))
+
+# ====================
+# MATCH CONFIG HANDLERS
+# ====================
+
+def get_match_config(match_id):
+    """Get match configuration"""
+    try:
+        print(f"📖 GET MATCH CONFIG: {match_id}")
+        doc = get_db().collection('matches').document(match_id).get()
+        
+        if not doc.exists:
+            return create_response(error_response("Match not found", 404), 404)
+        
+        match_data = serialize_firestore_doc(doc)
+        
+        # Extract config - check multiple possible locations
+        config = match_data.get('config', {})
+        
+        # Build standardized config response
+        standardized_config = {
+            'baseTeamBudget': config.get('baseTeamBudget') or match_data.get('baseBudgetPerTeam') or config.get('totalBudget', 10000000),
+            'bidIncrement': config.get('bidIncrement') or config.get('minBidIncrement', 100000),
+            'maxTeams': config.get('maxTeams') or match_data.get('maxTeams', 8),
+            'minSquad': config.get('minSquad') or (config.get('squadSize', {}).get('min') if isinstance(config.get('squadSize'), dict) else 11),
+            'maxSquad': config.get('maxSquad') or (config.get('squadSize', {}).get('max') if isinstance(config.get('squadSize'), dict) else match_data.get('maxPlayersPerTeam', 25)),
+        }
+        
+        print(f"✅ Config retrieved: {standardized_config}")
+        return create_response(success_response(standardized_config))
+        
+    except Exception as e:
+        print(f"❌ ERROR getting match config: {str(e)}")
+        return create_response(error_response(f"Failed to get config: {str(e)}", 500), 500)
+
+def update_match_config(match_id, data):
+    """Update match configuration with validation"""
+    try:
+        print("=" * 80)
+        print(f"📝 UPDATE MATCH CONFIG: {match_id}")
+        print(f"   Config data: {data}")
+        
+        doc_ref = get_db().collection('matches').document(match_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            print(f"❌ Match not found: {match_id}")
+            return create_response(error_response("Match not found", 404), 404)
+        
+        match_data = doc.to_dict()
+        
+        # Validate config values
+        base_team_budget = data.get('baseTeamBudget')
+        bid_increment = data.get('bidIncrement')
+        max_teams = data.get('maxTeams')
+        min_squad = data.get('minSquad')
+        max_squad = data.get('maxSquad')
+        
+        # Validation rules
+        errors = []
+        if base_team_budget is not None and base_team_budget < 100000:
+            errors.append("Base team budget must be at least ₹100,000")
+        if bid_increment is not None and bid_increment < 10000:
+            errors.append("Bid increment must be at least ₹10,000")
+        if max_teams is not None and max_teams < 2:
+            errors.append("Max teams must be at least 2")
+        if min_squad is not None and min_squad < 1:
+            errors.append("Min squad size must be at least 1")
+        if max_squad is not None and max_squad < 1:
+            errors.append("Max squad size must be at least 1")
+        if min_squad is not None and max_squad is not None and min_squad > max_squad:
+            errors.append("Min squad size cannot be greater than max squad size")
+        
+        if errors:
+            print(f"❌ Validation errors: {errors}")
+            return create_response(error_response("; ".join(errors), 400), 400)
+        
+        # Get or create config object
+        current_config = match_data.get('config', {})
+        
+        # Update config fields
+        updated_config = {**current_config}
+        
+        if base_team_budget is not None:
+            updated_config['baseTeamBudget'] = base_team_budget
+            updated_config['totalBudget'] = base_team_budget  # Keep legacy field in sync
+        if bid_increment is not None:
+            updated_config['bidIncrement'] = bid_increment
+            updated_config['minBidIncrement'] = bid_increment  # Keep legacy field in sync
+        if max_teams is not None:
+            updated_config['maxTeams'] = max_teams
+        if min_squad is not None or max_squad is not None:
+            squad_size = updated_config.get('squadSize', {})
+            if isinstance(squad_size, dict):
+                if min_squad is not None:
+                    squad_size['min'] = min_squad
+                    updated_config['minSquad'] = min_squad
+                if max_squad is not None:
+                    squad_size['max'] = max_squad
+                    updated_config['maxSquad'] = max_squad
+                updated_config['squadSize'] = squad_size
+            else:
+                # Create new squadSize object
+                updated_config['squadSize'] = {
+                    'min': min_squad if min_squad is not None else 11,
+                    'max': max_squad if max_squad is not None else 25
+                }
+                if min_squad is not None:
+                    updated_config['minSquad'] = min_squad
+                if max_squad is not None:
+                    updated_config['maxSquad'] = max_squad
+        
+        # Update top-level fields for easy access
+        update_data = {
+            'config': updated_config,
+            'updatedAt': datetime.now().isoformat()
+        }
+        
+        # Also update legacy top-level fields
+        if base_team_budget is not None:
+            update_data['baseBudgetPerTeam'] = base_team_budget
+        if max_teams is not None:
+            update_data['maxTeams'] = max_teams
+        if max_squad is not None:
+            update_data['maxPlayersPerTeam'] = max_squad
+        
+        # Update the match document
+        doc_ref.update(update_data)
+        
+        # Get updated document
+        updated_doc = doc_ref.get()
+        updated_match = serialize_firestore_doc(updated_doc)
+        
+        print(f"✅ Config updated successfully")
+        print(f"   New config: {updated_config}")
+        
+        # Emit realtime event for config change
+        emit_realtime_event('configUpdated', {
+            'matchId': match_id,
+            'config': updated_config
+        }, match_id)
+        
+        print("=" * 80)
+        return create_response(success_response({
+            'match': updated_match,
+            'config': updated_config
+        }, "Configuration updated successfully"))
+        
+    except Exception as e:
+        print(f"❌ ERROR updating match config: {str(e)}")
+        print(f"   Traceback: {traceback.format_exc()}")
+        print("=" * 80)
+        return create_response(error_response(f"Failed to update config: {str(e)}", 500), 500)
+
+def validate_match_config(match_id):
+    """Validate current match state against configuration"""
+    try:
+        print(f"🔍 VALIDATE MATCH CONFIG: {match_id}")
+        
+        doc = get_db().collection('matches').document(match_id).get()
+        if not doc.exists:
+            return create_response(error_response("Match not found", 404), 404)
+        
+        match_data = serialize_firestore_doc(doc)
+        config = match_data.get('config', {})
+        
+        # Get config values
+        max_teams = config.get('maxTeams', match_data.get('maxTeams', 8))
+        min_squad = config.get('minSquad', config.get('squadSize', {}).get('min', 11))
+        max_squad = config.get('maxSquad', config.get('squadSize', {}).get('max', match_data.get('maxPlayersPerTeam', 25)))
+        
+        # Count registered teams
+        teams_query = get_db().collection('teams').where('seasonId', '==', match_id).stream()
+        teams_list = list(teams_query)
+        registered_teams = len(teams_list)
+        
+        # Validate squad sizes
+        squad_violations = []
+        for team in teams_list:
+            team_data = team.to_dict()
+            team_squad = team_data.get('players', [])
+            squad_size = len(team_squad)
+            
+            if squad_size < min_squad:
+                squad_violations.append({
+                    'teamId': team.id,
+                    'teamName': team_data.get('name', 'Unknown'),
+                    'squadSize': squad_size,
+                    'issue': f'Below minimum ({min_squad})'
+                })
+            elif squad_size > max_squad:
+                squad_violations.append({
+                    'teamId': team.id,
+                    'teamName': team_data.get('name', 'Unknown'),
+                    'squadSize': squad_size,
+                    'issue': f'Exceeds maximum ({max_squad})'
+                })
+        
+        # Build validation result
+        warnings = []
+        errors = []
+        
+        if registered_teams > max_teams:
+            errors.append(f"Teams exceeded: {registered_teams}/{max_teams} teams registered")
+        
+        if squad_violations:
+            for violation in squad_violations:
+                warnings.append(f"{violation['teamName']}: {violation['squadSize']} players - {violation['issue']}")
+        
+        validation_result = {
+            'valid': len(errors) == 0,
+            'registeredTeams': registered_teams,
+            'maxTeams': max_teams,
+            'teamsExceeded': registered_teams > max_teams,
+            'squadViolations': squad_violations,
+            'warnings': warnings,
+            'errors': errors,
+            'config': {
+                'maxTeams': max_teams,
+                'minSquad': min_squad,
+                'maxSquad': max_squad
+            }
+        }
+        
+        print(f"✅ Validation complete: {validation_result}")
+        return create_response(success_response(validation_result))
+        
+    except Exception as e:
+        print(f"❌ ERROR validating match config: {str(e)}")
+        return create_response(error_response(f"Failed to validate: {str(e)}", 500), 500)
+
+# ====================
+# BID HANDLERS
+# ====================
 
 def get_bids(data):
     season_id = data.get('seasonId')
@@ -1556,6 +2072,7 @@ def handle_register_auctioneer(data):
             'availability': data.get('availability', 'Yes'),
             'governmentId': data.get('governmentId', ''),
             'governmentIdFile': data.get('governmentIdFile', ''),
+            'auctioneerPhoto': data.get('auctioneerPhoto', ''),
             'auctioneerLicense': data.get('auctioneerLicense', ''),
             'experience': data.get('experience', 0),
             'createdAt': datetime.now().isoformat(),
@@ -1568,6 +2085,7 @@ def handle_register_auctioneer(data):
         print(f"\n📝 USER_DATA TO BE STORED:")
         print(f"   - governmentId: {user_data['governmentId']}")
         print(f"   - governmentIdFile: {user_data['governmentIdFile']}")
+        print(f"   - auctioneerPhoto: {user_data['auctioneerPhoto']}")
         print(f"   - name: {user_data['name']}")
         print(f"   - email: {user_data['email']}")
         
@@ -1638,6 +2156,28 @@ def handle_register_team(data):
             ), 409)
         
         print(f"✅ Email {email} is unique - no conflicts found in any match")
+        
+        # VALIDATE AGAINST MATCH CONFIG - Check maxTeams limit
+        try:
+            match_doc = get_db().collection('matches').document(season_id).get()
+            if match_doc.exists:
+                match_data = match_doc.to_dict()
+                config = match_data.get('config', {})
+                max_teams = config.get('maxTeams', match_data.get('maxTeams', 8))
+                
+                # Count existing teams for this match
+                existing_teams = list(get_db().collection('teams').where('matchId', '==', season_id).stream())
+                current_team_count = len(existing_teams)
+                
+                if current_team_count >= max_teams:
+                    return create_response(error_response(
+                        f"❌ TEAM LIMIT REACHED: This match already has {current_team_count} teams registered (maximum: {max_teams}). No more teams can be registered.",
+                        400
+                    ), 400)
+                
+                print(f"✅ Team limit OK: {current_team_count + 1}/{max_teams} teams")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not validate team limit: {e}")
         
         team_id = generate_id('team')
         team_data = {
@@ -2067,10 +2607,63 @@ def close_player_bidding(data):
         }
         # If sold, add sold-to team and amount
         if sold:
-            update_data['soldTo'] = player_data.get('leadingTeamId')
-            update_data['soldAmount'] = player_data.get('currentBid', 0)
+            sold_team_id = player_data.get('leadingTeamId')
+            sold_amount = player_data.get('currentBid', 0)
+            
+            # VALIDATE SQUAD SIZE LIMIT
+            if sold_team_id:
+                try:
+                    # Get match config
+                    match_doc = get_db().collection('matches').document(season_id).get()
+                    if match_doc.exists:
+                        match_data = match_doc.to_dict()
+                        config = match_data.get('config', {})
+                        max_squad = config.get('maxSquad', config.get('squadSize', {}).get('max', match_data.get('maxPlayersPerTeam', 25)))
+                        
+                        # Get team's current squad
+                        team_doc = get_db().collection('teams').document(sold_team_id).get()
+                        if team_doc.exists:
+                            team_data = serialize_firestore_doc(team_doc)
+                            current_squad = team_data.get('players', [])
+                            current_squad_size = len(current_squad)
+                            
+                            if current_squad_size >= max_squad:
+                                return create_response(error_response(
+                                    f"❌ SQUAD LIMIT REACHED: Team {team_data.get('name', sold_team_id)} already has {current_squad_size} players (maximum: {max_squad}). Cannot add more players.",
+                                    400
+                                ), 400)
+                            
+                            print(f"✅ Squad size OK: {current_squad_size + 1}/{max_squad} players")
+                except Exception as e:
+                    print(f"⚠️ Warning: Could not validate squad limit: {e}")
+            
+            update_data['soldTo'] = sold_team_id
+            update_data['buyingTeamId'] = sold_team_id  # Also set buyingTeamId for frontend compatibility
+            update_data['soldAmount'] = sold_amount
+            update_data['soldPrice'] = sold_amount  # Also set soldPrice for frontend compatibility
             update_data['soldAt'] = datetime.now().isoformat()
-            print(f"✓ Recording SOLD: soldTo={player_data.get('leadingTeamId')}, soldAmount={player_data.get('currentBid')}")
+            print(f"✓ Recording SOLD: soldTo={sold_team_id}, soldAmount={sold_amount}")
+            
+            # Update team's remaining budget
+            if sold_team_id and sold_amount > 0:
+                try:
+                    team_ref = get_db().collection('teams').document(sold_team_id)
+                    team_doc = team_ref.get()
+                    if team_doc.exists:
+                        team_data = serialize_firestore_doc(team_doc)
+                        current_remaining = team_data.get('remainingBudget', team_data.get('budget', 0))
+                        new_remaining = current_remaining - sold_amount
+                        
+                        team_ref.update({
+                            'remainingBudget': max(0, new_remaining),
+                            'updatedAt': datetime.now().isoformat()
+                        })
+                        print(f"✓ Updated team {sold_team_id} budget: ₹{current_remaining/100000:.1f}L → ₹{new_remaining/100000:.1f}L")
+                    else:
+                        print(f"⚠ Team {sold_team_id} not found for budget update")
+                except Exception as e:
+                    print(f"⚠ Warning updating team budget: {e}")
+                    # Don't fail the entire operation if budget update fails
         # If unsold, clear bid data and increment unsold count
         else:
             unsold_count = player_data.get('unsoldCount', 0) + 1
@@ -2146,25 +2739,105 @@ def close_player_bidding(data):
         except Exception as e:
             print(f"⚠ Warning emitting event docs: {e}")
         
+        # AUTO-SEQUENCE: Get next player (AVAILABLE prioritized, then UNSOLD)
+        next_player = None
+        next_player_id = None
+        try:
+            # Priority 1: Find first AVAILABLE player
+            available_players = list(
+                get_db()
+                .collection('players')
+                .where('matchId', '==', season_id)
+                .where('status', '==', 'AVAILABLE')
+                .limit(1)
+                .stream()
+            )
+            
+            if available_players:
+                next_player = serialize_firestore_doc(available_players[0])
+                next_player_id = available_players[0].id
+                priority = "AVAILABLE"
+                print(f"✓ Next player (AVAILABLE): {next_player.get('name')} ({next_player_id})")
+            else:
+                # Priority 2: Find first UNSOLD player (not yet auctioned again)
+                unsold_players = list(
+                    get_db()
+                    .collection('players')
+                    .where('matchId', '==', season_id)
+                    .where('status', '==', 'UNSOLD')
+                    .limit(1)
+                    .stream()
+                )
+                
+                if unsold_players:
+                    next_player = serialize_firestore_doc(unsold_players[0])
+                    next_player_id = unsold_players[0].id
+                    priority = "UNSOLD"
+                    print(f"✓ Next player (UNSOLD): {next_player.get('name')} ({next_player_id})")
+                else:
+                    print(f"ℹ No more players available for auction")
+            
+            # Update auction state with next player info
+            if next_player:
+                next_player_info = {
+                    'nextPlayerId': next_player_id,
+                    'nextPlayerName': next_player.get('name'),
+                    'nextPlayerStatus': priority,
+                    'nextPlayerBasePrice': next_player.get('basePrice', 0)
+                }
+                auction_updates['nextPlayerId'] = next_player_id
+                auction_updates['nextPlayerName'] = next_player.get('name')
+                print(f"✓ Set next player info: {next_player_id}")
+        except Exception as e:
+            print(f"⚠ Warning getting next player: {e}")
+        
         # Emit real-time event
         try:
-            emit_realtime_event('player_bidding_closed', {
+            event_data = {
                 'playerId': target_player_id,
                 'status': new_status,
                 'sold': sold,
                 'finalBid': player_data.get('currentBid', 0),
                 'teamId': player_data.get('teamId'),
                 'seasonId': season_id
-            }, season_id)
+            }
+            if next_player:
+                event_data['nextPlayerId'] = next_player_id
+                event_data['nextPlayerName'] = next_player.get('name')
+            emit_realtime_event('player_bidding_closed', event_data, season_id)
             print(f"✓ Emitted player_bidding_closed event")
         except Exception as e:
             print(f"⚠ Warning emitting realtime event: {e}")
+        
+        # AUTO-START NEXT PLAYER: If player was SOLD (not UNSOLD) and there's a next player, automatically start bidding
+        # Add a small delay to ensure frontend processes the sold event first
+        if sold and next_player and next_player_id:
+            print(f"🚀 AUTO-STARTING next player bidding: {next_player.get('name')} ({next_player_id})")
+            try:
+                import time
+                time.sleep(1)  # 1 second delay to allow frontend to process sold event
+                
+                # Call start_player_bidding for the next player
+                start_result = start_player_bidding({
+                    'seasonId': season_id,
+                    'playerId': next_player_id,
+                    'basePrice': next_player.get('basePrice', 0)
+                })
+                print(f"✅ Auto-started bidding for next player: {next_player.get('name')}")
+            except Exception as e:
+                print(f"⚠ Warning auto-starting next player: {e}")
+                # Don't fail the entire operation if auto-start fails
+        elif not sold:
+            print(f"ℹ Player marked UNSOLD - not auto-starting next player (manual trigger required)")
         
         print(f"✅ Successfully closed bidding for player {target_player_id} - {new_status}")
         return create_response(success_response({
             'playerId': target_player_id,
             'status': new_status,
-            'sold': sold
+            'sold': sold,
+            'nextPlayerId': next_player_id if next_player else None,
+            'nextPlayerName': next_player.get('name') if next_player else None,
+            'autoStarted': sold and next_player is not None
         }, f"Player bidding closed - {new_status}"))
     except Exception as e:
         error_msg = str(e)
@@ -2172,6 +2845,138 @@ def close_player_bidding(data):
         import traceback
         traceback.print_exc()
         return create_response(error_response(f"Failed to close player bidding: {error_msg}"), 400)
+
+
+def switch_player(data):
+    """Switch to a different player during live auction - current player returns to AVAILABLE"""
+    try:
+        season_id = data.get('seasonId')
+        new_player_id = data.get('playerId')
+        
+        if not season_id or not new_player_id:
+            return create_response(error_response("Missing required fields: seasonId and playerId"), 400)
+        
+        print(f"🔄 Processing player switch to {new_player_id} in season {season_id}")
+        
+        # Get current player ID
+        current_player_id = None
+        try:
+            current_player_doc = get_db().collection('liveAuctions').document(season_id).collection('currentPlayer').document('active').get()
+            if current_player_doc.exists:
+                cp = current_player_doc.to_dict() or {}
+                player_obj = cp.get('player') or {}
+                current_player_id = cp.get('playerId') or player_obj.get('id')
+                print(f"✓ Found current player from canonical doc: {current_player_id}")
+        except Exception as e:
+            print(f"⚠ Failed to fetch canonical player doc: {e}")
+
+        if not current_player_id:
+            # Fallback: find LIVE player
+            try:
+                players_query = (
+                    get_db().collection('players')
+                    .where('matchId', '==', season_id)
+                    .where('status', '==', 'LIVE')
+                    .limit(1)
+                )
+                live_players = list(players_query.stream())
+                if not live_players:
+                    error_msg = "No active player bidding found"
+                    print(f"❌ {error_msg}")
+                    return create_response(error_response(error_msg), 404)
+                current_player_id = live_players[0].id
+                print(f"✓ Found current player via query: {current_player_id}")
+            except Exception as e:
+                print(f"❌ Failed to find current player: {e}")
+                return create_response(error_response(f"Failed to find current player: {str(e)}"), 400)
+        
+        if current_player_id == new_player_id:
+            error_msg = "Cannot switch to the same player"
+            print(f"⚠ {error_msg}")
+            return create_response(error_response(error_msg), 400)
+        
+        # Get current player data
+        current_player_doc = get_db().collection('players').document(current_player_id).get()
+        if not current_player_doc.exists:
+            error_msg = f"Current player {current_player_id} not found"
+            print(f"❌ {error_msg}")
+            return create_response(error_response(error_msg), 404)
+        
+        current_player_data = serialize_firestore_doc(current_player_doc)
+        
+        # Get new player data
+        new_player_doc = get_db().collection('players').document(new_player_id).get()
+        if not new_player_doc.exists:
+            error_msg = f"New player {new_player_id} not found"
+            print(f"❌ {error_msg}")
+            return create_response(error_response(error_msg), 404)
+        
+        new_player_data = serialize_firestore_doc(new_player_doc)
+        
+        print(f"✓ Switching from {current_player_data.get('name')} to {new_player_data.get('name')}")
+        
+        # Mark current player as AVAILABLE (preserve bid history)
+        print(f"📥 Marking current player {current_player_id} as AVAILABLE")
+        get_db().collection('players').document(current_player_id).update({
+            'status': 'AVAILABLE',
+            'updatedAt': datetime.now().isoformat()
+            # Keeps currentBid, leadingTeamId, leadingTeamName intact
+        })
+        
+        # Mark new player as LIVE with their base price
+        print(f"🎯 Marking new player {new_player_id} as LIVE")
+        get_db().collection('players').document(new_player_id).update({
+            'status': 'LIVE',
+            'currentBid': new_player_data.get('basePrice', 0),
+            'leadingTeamId': None,
+            'leadingTeamName': None,
+            'updatedAt': datetime.now().isoformat()
+        })
+        
+        # Update the canonical current player doc
+        print(f"📝 Updating canonical current player doc")
+        get_db().collection('liveAuctions').document(season_id).collection('currentPlayer').document('active').set({
+            'playerId': new_player_id,
+            'player': {
+                'id': new_player_id,
+                'name': new_player_data.get('name', 'Unknown')
+            },
+            'updatedAt': datetime.now().isoformat()
+        })
+        
+        # Emit real-time event through Cloud Functions
+        try:
+            print(f"📡 Emitting player_switched event")
+            # Store event in latestEvent document (like other events)
+            event_data = {
+                'type': 'player_switched',
+                'previousPlayerId': current_player_id,
+                'previousPlayerName': current_player_data.get('name', 'Unknown'),
+                'newPlayerId': new_player_id,
+                'newPlayerName': new_player_data.get('name', 'Unknown'),
+                'basePrice': new_player_data.get('basePrice', 0),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            get_db().collection('liveAuctions').document(season_id).collection('events').document('latestEvent').set(event_data)
+            print(f"✅ Player switched event emitted to latestEvent")
+        except Exception as e:
+            print(f"⚠ Warning emitting player switched event: {e}")
+        
+        print(f"✅ Successfully switched to player {new_player_id}")
+        return create_response(success_response({
+            'previousPlayerId': current_player_id,
+            'previousPlayerName': current_player_data.get('name', 'Unknown'),
+            'newPlayerId': new_player_id,
+            'newPlayerName': new_player_data.get('name', 'Unknown'),
+            'basePrice': new_player_data.get('basePrice', 0)
+        }, "Player switched successfully"))
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Unexpected error in switch_player: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Failed to switch player: {error_msg}"), 400)
 
 
 def mark_player_unsold(data):

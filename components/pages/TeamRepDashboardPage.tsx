@@ -789,18 +789,29 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
       {/* Main Content */}
       <main className="flex-1 px-4 pt-3 pb-3 overflow-hidden">
         {loading ? (
-          <div className="flex items-center justify-center h-full">
+          <div className="flex items-center justify-center h-full rounded-2xl" style={{ background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 25%, #1a0a12 50%, #0d0d1a 100%)' }}>
             <div className="text-center">
-              <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-              <p className="text-lg font-bold text-slate-600">Loading team data...</p>
+              <style>{`
+                @keyframes neon-spin {
+                  from { transform: rotate(0deg); }
+                  to { transform: rotate(360deg); }
+                }
+                .neon-spinner {
+                  animation: neon-spin 2s linear infinite;
+                  box-shadow: 0 0 10px rgba(236, 72, 153, 0.5), 0 0 20px rgba(236, 72, 153, 0.3);
+                }
+              `}</style>
+              <div className="w-16 h-16 border-4 border-pink-500/30 border-t-pink-500 rounded-full neon-spinner mx-auto mb-4"></div>
+              <p className="text-lg font-bold text-pink-400">Loading team data...</p>
+              <p className="text-xs text-pink-400/60 mt-2">Fetching your team information...</p>
             </div>
           </div>
         ) : !teamData ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="bg-white/90 rounded-3xl p-12 border-2 border-purple-200 text-center shadow-2xl max-w-lg">
-              <AlertCircle size={56} className="mx-auto mb-6 text-slate-400" />
-              <p className="text-2xl font-black text-slate-800 mb-3">No Team Assigned</p>
-              <p className="text-slate-600">You haven't been assigned to a team yet</p>
+          <div className="flex items-center justify-center h-full rounded-2xl" style={{ background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 25%, #1a0a12 50%, #0d0d1a 100%)' }}>
+            <div className="glass-card rounded-3xl p-12 border-2 text-center max-w-lg" style={{ border: '2px solid rgba(236, 72, 153, 0.3)' }}>
+              <AlertCircle size={56} className="mx-auto mb-6 text-pink-400" />
+              <p className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-400 to-red-400 mb-3">No Team Assigned</p>
+              <p className="text-pink-300/70">You haven't been assigned to a team yet. Contact your administrator.</p>
             </div>
           </div>
         ) : (

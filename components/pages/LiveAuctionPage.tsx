@@ -6,6 +6,7 @@ import { CloseAuctionModal } from '../modals/CloseAuctionModal';
 import { SoldCelebration } from '../ui/SoldCelebration';
 import { useAuctioneerAudio } from '../../services/useAuctioneerAudio';
 import { useAudioListener } from '../../services/useAudioListener';
+import { useMatchConfigReadOnly } from '../../hooks/useMatchConfig';
 import socketService from '../../services/socketService';
 import { 
   LiveAuctionState, 
@@ -95,6 +96,9 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     userId
   });
 
+  // 💰 Match config for purse intelligence (real-time sync)
+  const { config: matchConfig } = useMatchConfigReadOnly(seasonId);
+
   /**
    * Connect to Firebase and join season room
    */
@@ -105,6 +109,23 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     // Load initial data
     loadAuctionData();
   }, [seasonId, userId, userRole]);
+
+  /**
+   * Handle F5 and CTRL+R refresh - reload live room data only, not entire page
+   */
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // F5 or CTRL+R or CTRL+SHIFT+R
+      if (e.key === 'F5' || (e.ctrlKey && (e.key === 'r' || e.key === 'R')) || (e.ctrlKey && e.shiftKey && (e.key === 'r' || e.key === 'R'))) {
+        e.preventDefault();
+        console.log('🔄 Soft refresh triggered - reloading Live Room data only');
+        loadAuctionData();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [seasonId]); // Re-attach if seasonId changes
 
   // Keep playersRef in sync with players state
   useEffect(() => {
@@ -188,7 +209,7 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
         console.log('⏳ Parent synced to player not yet in list:', auctionState.currentPlayerId);
       }
     }
-  }, [auctionState?.currentPlayerId]);
+  }, [auctionState?.currentPlayerId, players]); // ✅ FIX: Re-run when players array updates (not just length)
 
   // Load bid history whenever current player changes
   // This ensures bid history is restored when re-entering Live Room or when player changes
@@ -202,6 +223,70 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
       setAuctionState(prev => prev ? { ...prev, bidHistory: [] } : null);
     }
   }, [auctionState?.currentPlayerId, seasonId]);
+
+  // AUTO-RECOVERY: When auction is LIVE but stuck with no current player, auto-fetch next player
+  // This handles the case where UNSOLD happened but next player wasn't fetched (e.g., network issue)
+  useEffect(() => {
+    // Only for auctioneers - they control the flow
+    if (userRole !== UserRole.AUCTIONEER) return;
+    
+    // Only trigger when:
+    // 1. Auction status is LIVE
+    // 2. No current player
+    // 3. Bidding is not active
+    // 4. We have players loaded (initialization complete)
+    // 5. Haven't already attempted auto-advance
+    const isStuckState = 
+      auctionState?.status === LiveAuctionStatus.LIVE &&
+      !auctionState?.currentPlayerId &&
+      !auctionState?.biddingActive &&
+      players.length > 0 &&
+      !isAutoAdvancingRef.current;
+    
+    if (!isStuckState) return;
+    
+    // Check if there are any available players left
+    const availablePlayers = players.filter(p => p.status === 'AVAILABLE' || p.status === 'UNSOLD');
+    if (availablePlayers.length === 0) {
+      console.log('✅ No available players left - auction complete');
+      return;
+    }
+    
+    // Delay to ensure page is fully initialized and this isn't a transient state
+    const autoAdvanceTimeout = setTimeout(async () => {
+      // Double-check conditions haven't changed
+      if (auctionStateRef.current?.currentPlayerId || auctionStateRef.current?.biddingActive) {
+        console.log('⏭️ State changed during delay, skipping auto-advance');
+        return;
+      }
+      
+      console.log('🔄 AUTO-RECOVERY: Auction is LIVE but stuck with no player, fetching next player...');
+      isAutoAdvancingRef.current = true;
+      
+      try {
+        const nextResult = await apiService.post('/api/auction/player/next', {
+          seasonId
+        });
+        
+        if (nextResult.success) {
+          console.log('✅ AUTO-RECOVERY: Successfully fetched next player:', nextResult.data);
+        } else if (nextResult.data?.auctionComplete) {
+          console.log('✅ AUTO-RECOVERY: Auction complete - no more players');
+        } else {
+          console.warn('⚠️ AUTO-RECOVERY: Failed to fetch next player:', nextResult.error);
+        }
+      } catch (error) {
+        console.error('❌ AUTO-RECOVERY: Error fetching next player:', error);
+      } finally {
+        // Reset flag after a delay to allow retry if needed
+        setTimeout(() => {
+          isAutoAdvancingRef.current = false;
+        }, 5000);
+      }
+    }, 2000); // 2 second delay to ensure initialization is complete
+    
+    return () => clearTimeout(autoAdvanceTimeout);
+  }, [auctionState?.status, auctionState?.currentPlayerId, auctionState?.biddingActive, players.length, userRole, seasonId]);
 
   /**
    * Normalize team data to ensure consistent structure
@@ -516,7 +601,9 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
 
         // CRITICAL: If this new player is already in our players list (onPlayersUpdate may have already fired),
         // immediately force switch to them instead of waiting for another onPlayersUpdate
-        const playerInList = players.find(p => p.id === newPlayerId);
+        // Use playersRef.current (not players state) because this listener was created once
+        // and captures stale players. playersRef is kept in sync via useEffect.
+        const playerInList = playersRef.current.find(p => p.id === newPlayerId);
         if (playerInList && playerInList.status === 'LIVE') {
           console.log('🔓 FORCE SWITCH: New player already in list, forcing switch immediately:', playerInList.name);
           loadBidHistory(newPlayerId, seasonId);
@@ -564,6 +651,73 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
       });
       unsubscribers.push(biddingUnsubscribe);
 
+      // Listen to player switch events (when auctioneer manually switches players)
+      const playerSwitchUnsubscribe = socketService.onPlayerSwitched((switchData) => {
+        console.log('🔄 PLAYER SWITCHED EVENT RECEIVED:', switchData);
+        
+        if (!switchData?.newPlayerId) return;
+        
+        const newPlayerId = switchData.newPlayerId;
+        const newPlayerName = switchData.newPlayerName;
+        const basePrice = switchData.basePrice || 0;
+        
+        // Update refs for lock mechanism
+        const now = Date.now();
+        lastPlayerSwitchRef.current = { playerId: newPlayerId, timestamp: now };
+        auctionStateRef.current = {
+          ...auctionStateRef.current,
+          currentPlayerId: newPlayerId,
+          currentPlayerName: newPlayerName,
+          biddingActive: true
+        };
+        
+        // CRITICAL: Use playersRef.current (not players state) because this listener was created once
+        // and captures stale players. playersRef is kept in sync via useEffect.
+        const newPlayer = playersRef.current.find(p => p.id === newPlayerId);
+        
+        if (newPlayer) {
+          console.log('🔄 PLAYER SWITCHED: Full player data found, updating UI to:', newPlayerName);
+          setCurrentPlayer(newPlayer);
+        } else {
+          // Player not in list yet - create a partial object with essential data
+          // The real player will be added to the list when players listener fires
+          console.log('🔄 PLAYER SWITCHED: Using partial player data, full data will arrive shortly. Players in ref:', playersRef.current.length);
+          setCurrentPlayer({
+            id: newPlayerId,
+            name: newPlayerName,
+            basePrice: basePrice,
+            status: 'LIVE',
+            matchId: seasonId,
+            // Add minimal required fields
+            team: '',
+            role: '',
+            imageUrl: '',
+            photoUrl: '',
+            playerCategory: '',
+            nationality: '',
+            age: 0,
+            gender: ''
+          } as Player);
+        }
+        
+        // Immediately update auction state with new player details
+        setAuctionState(prev => ({
+          ...(prev || {}),
+          currentPlayerId: newPlayerId,
+          currentPlayerName: newPlayerName,
+          currentBid: basePrice,
+          leadingTeamId: null,
+          leadingTeamName: null,
+          biddingActive: true,
+          status: LiveAuctionStatus.LIVE,
+          bidHistory: []
+        }));
+        
+        // Load bid history for new player
+        loadBidHistory(newPlayerId, seasonId);
+      });
+      unsubscribers.push(playerSwitchUnsubscribe);
+
       // Listen to new bids
       const bidUnsubscribe = socketService.onNewBid((data) => {
         console.log('New bid:', data);
@@ -596,6 +750,20 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
       const soldUnsubscribe = socketService.onPlayerSold(async (data) => {
         console.log('🔨 Player sold event received:', data);
         
+        // ✅ FIX: Ignore stale events from before page load (prevents old celebrations on Live Room entry)
+        const eventTimestamp = data.timestamp?.toMillis ? data.timestamp.toMillis() : Date.now();
+        const timeSincePageLoad = Date.now() - pageLoadTimeRef.current;
+        const eventAge = Date.now() - eventTimestamp;
+        
+        if (eventAge > 5000 && timeSincePageLoad < 10000) {
+          console.log('⏭️ IGNORING stale player_sold event from before page load:', {
+            eventAge: `${eventAge}ms ago`,
+            timeSincePageLoad: `${timeSincePageLoad}ms`,
+            playerName: data.playerName
+          });
+          return;
+        }
+        
         // Find player and team for celebration
         const soldPlayer = playersRef.current.find(p => p.id === data.playerId);
         const buyingTeam = teamsRef.current.find(t => t.id === data.teamId);
@@ -610,8 +778,7 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
           });
         }
         
-        // Just update UI to reflect that current player is no longer active
-        // Auto-advance is handled by closePlayerBidding callback
+        // Update UI to reflect that current player is no longer active
         setAuctionState(prev => ({
           ...(prev || {}),
           biddingActive: false,
@@ -637,12 +804,29 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
               }
             : t
         ));
+        
+        // ❌ REMOVED: Auto-advance handled by AuctioneerDashboardPage to prevent duplicate calls
+        // (LiveAuctionPage receives same events, causing race conditions)
       });
       unsubscribers.push(soldUnsubscribe);
 
       // Listen to player unsold
       const unsoldUnsubscribe = socketService.onPlayerUnsold((data) => {
         console.log('↩️ Player unsold event received:', data);
+        
+        // ✅ FIX: Ignore stale events from before page load
+        const eventTimestamp = data.timestamp?.toMillis ? data.timestamp.toMillis() : Date.now();
+        const timeSincePageLoad = Date.now() - pageLoadTimeRef.current;
+        const eventAge = Date.now() - eventTimestamp;
+        
+        if (eventAge > 5000 && timeSincePageLoad < 10000) {
+          console.log('⏭️ IGNORING stale player_unsold event from before page load:', {
+            eventAge: `${eventAge}ms ago`,
+            timeSincePageLoad: `${timeSincePageLoad}ms`,
+            playerName: data.playerName
+          });
+          return;
+        }
         
         // Clear current player when unsold
         setAuctionState(prev => ({
@@ -659,6 +843,9 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
             ? { ...p, status: 'UNSOLD', unsoldCount: (p.unsoldCount || 0) + 1 }
             : p
         ));
+        
+        // ❌ REMOVED: Auto-advance handled by AuctioneerDashboardPage to prevent duplicate calls
+        // (LiveAuctionPage receives same events, causing race conditions)
       });
       unsubscribers.push(unsoldUnsubscribe);
 
@@ -955,6 +1142,19 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     }
   }, [seasonId]);
 
+  // Auctioneer: Switch to different player
+  const handleSwitchPlayer = useCallback(async (playerId: string) => {
+    try {
+      await apiService.post('/api/auction/player/switch', {
+        seasonId,
+        playerId
+      });
+    } catch (error) {
+      console.error('Failed to switch player:', error);
+      alert('Failed to switch player. Please try again.');
+    }
+  }, [seasonId]);
+
   // Place bid - works for both auctioneers and team reps
   // Signature: (teamId, incrementAmount) for auctioneer, or (amount) for team rep
   const handlePlaceBid = useCallback(async (teamIdOrAmount: string | number, incrementAmount?: number) => {
@@ -1014,12 +1214,42 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     }
   }, [auctioneerAudio]);
 
-  // Auctioneer: Mark player as unsold
+  // Auctioneer: Mark player as unsold and auto-advance to next player
   const handleMarkUnsold = useCallback(async () => {
     try {
-      await apiService.post('/api/auction/player/unsold', {
+      console.log('🔄 Marking player as UNSOLD and auto-advancing to next player...');
+      
+      // Step 1: Mark current player as UNSOLD
+      const unsoldResult = await apiService.post('/api/auction/player/unsold', {
         seasonId
       });
+      
+      if (!unsoldResult.success) {
+        console.error('Failed to mark player as unsold:', unsoldResult.error);
+        return;
+      }
+      
+      console.log('✅ Player marked as UNSOLD, fetching next player...');
+      
+      // Step 2: Auto-advance to next player (small delay for UI update)
+      setTimeout(async () => {
+        try {
+          const nextResult = await apiService.post('/api/auction/player/next', {
+            seasonId
+          });
+          
+          if (nextResult.success) {
+            console.log('✅ Auto-advanced to next player:', nextResult.data);
+          } else if (nextResult.data?.auctionComplete) {
+            console.log('✅ Auction complete - no more players available');
+          } else {
+            console.warn('⚠️ Failed to auto-advance:', nextResult.error);
+          }
+        } catch (nextError) {
+          console.error('Failed to auto-advance to next player:', nextError);
+        }
+      }, 500); // 500ms delay to allow UI to update
+      
     } catch (error) {
       console.error('Failed to mark player as unsold:', error);
     }
@@ -1040,17 +1270,26 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     console.log('🎉 Celebration complete, waiting for next player from auctioneer...');
     setSoldAnimationData(null);
     // Don't call next player API - let the auctioneer control the flow
-  }, []);
+  }, [userRole]);
+
+  // Determine confetti size based on user role
+  const getConfettiSize = (): 'none' | 'small' | 'normal' => {
+    const size = userRole === UserRole.AUCTIONEER ? 'none' : 'small';
+    console.log('🎊 LiveAuctionPage getConfettiSize - userRole:', userRole, '-> confettiSize:', size);
+    return size;
+  };
 
   return (
     <div className="w-full h-screen">
-      {/* Sold Celebration Animation */}
-      {soldAnimationData && (
+      {/* Sold Celebration Animation - Only for non-auctioneers */}
+      {soldAnimationData && userRole !== UserRole.AUCTIONEER && (
         <SoldCelebration 
           player={soldAnimationData.player} 
           team={soldAnimationData.team} 
           price={soldAnimationData.price} 
           onComplete={handleCelebrationComplete}
+          confettiSize={getConfettiSize()}
+          compact={true}
         />
       )}
       
@@ -1083,6 +1322,8 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
           onCloseBidding={permissions.canControl ? handleCloseBidding : undefined}
           onMarkUnsold={permissions.canControl ? handleMarkUnsold : undefined}
           onPlaceBid={permissions.canControl ? handlePlaceBid : undefined}
+          onSwitchPlayer={permissions.canControl ? handleSwitchPlayer : undefined}
+          matchConfig={matchConfig}
         />
       ) : (
         // Spectator Layout - Players, Team Reps, Guests

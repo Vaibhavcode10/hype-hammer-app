@@ -35,6 +35,11 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
 }) => {
   if (!isOpen) return null;
 
+  // Derive profilePhotoURL from current match
+  const currentSportData = allSports.find(s => s.sportType === currentSport || s.customSportName === currentSport);
+  const currentMatchData = currentSportData?.matches.find(m => m.id === currentMatchId);
+  const profilePhoto = currentMatchData?.profilePhotoURL || currentUser.avatar;
+
   const getSportDisplayName = (sport: SportData) => {
     return sport.customSportName || sport.sportType;
   };
@@ -138,8 +143,8 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
           >
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#c5a059] to-[#d4af6a] flex items-center justify-center overflow-hidden">
-                {currentUser.avatar ? (
-                  <img src={currentUser.avatar} alt={currentUser.name} className="w-full h-full object-cover" />
+                {profilePhoto ? (
+                  <img src={profilePhoto} alt={currentUser.name} className="w-full h-full object-cover" />
                 ) : (
                   <User size={24} className="text-white" />
                 )}

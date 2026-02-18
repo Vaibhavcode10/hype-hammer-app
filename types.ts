@@ -151,6 +151,7 @@ export interface AuctionConfig {
     max: number;
   };
   totalBudget: number;
+  minBidIncrement?: number; // Minimum bid increment
   roles: PlayerRole[];
   rules: {
     overseasLimit?: number;
@@ -170,6 +171,7 @@ export interface Player {
   soldAmount?: number; // Backend field for sold price
   soldTo?: string; // Backend field for team ID
   soldAt?: string; // Backend field for sold timestamp
+  leadingTeamId?: string; // Leading team ID during/after bidding
   finalPrice?: number; // Alternative price field
   currentBid?: number; // Current bid amount
   teamName?: string; // Team name if available
@@ -199,6 +201,7 @@ export interface Team {
   players: string[]; // Player IDs
   playerIds?: string[]; // Backend field for player IDs
   squadSize?: number; // Calculated field for display
+  maxSquadSize?: number; // Maximum squad size (capacity)
   // Real-world extensions
   owner?: string;
   homeCity?: string;
@@ -227,12 +230,41 @@ export interface MatchData {
   teams: Team[];
   history: Bid[];
   status: 'SETUP' | 'ONGOING' | 'COMPLETED';
+  
   // Organizer credentials (for authentication)
   organizerEmail?: string;
   organizerPassword?: string;
   organizerName?: string;
   organizationType?: string;
   organizationName?: string;
+  
+  // Additional organizer details from registration form
+  organizerPhone?: string;
+  designation?: 'Organizer' | 'Coordinator' | 'Owner' | '';
+  profilePhotoURL?: string;
+  adminEmail?: string;
+  
+  // Season configuration details
+  seasonName?: string;
+  sportType?: SportType | '';
+  auctionDateTime?: string;
+  venueMode?: 'Physical' | 'Online' | 'Hybrid' | '';
+  venueLocation?: string;
+  
+  // Auction configuration
+  maxTeams?: number;
+  maxPlayersPerTeam?: number;
+  baseBudgetPerTeam?: number;
+  
+  // Document URLs
+  governmentId?: string;
+  governmentIdURL?: string;
+  organizerProofURL?: string;
+  
+  // System tracking
+  updatedAt?: string;
+  statusUpdatedAt?: string;
+  statusUpdatedBy?: string;
 }
 
 export interface SportData {

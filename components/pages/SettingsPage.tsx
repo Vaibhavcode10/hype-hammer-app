@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Save, RotateCcw, Download, Upload, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, Save, RotateCcw, Download, Upload, Trash2, AlertCircle, CheckCircle2, Gavel, DollarSign, TrendingUp, Users, Trophy, Shield, Database, Activity } from 'lucide-react';
 import { AuctionStatus, AuctionConfig, Player, Team, SportType, AuctionType } from '../../types';
-import { CommandCard } from '../ui';
+import { subscribeToMatchConfig, updateMatchConfig, MatchConfig, validateMatchConfig, ValidationResult } from '../../services/matchConfigService';
 
 interface SettingsPageProps {
   config: AuctionConfig;
@@ -11,6 +11,7 @@ interface SettingsPageProps {
   teams: Team[];
   setTeams: (teams: Team[]) => void;
   setStatus: (status: AuctionStatus) => void;
+  matchId?: string; // Add matchId prop for Firebase sync
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ 
@@ -20,15 +21,91 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   setPlayers, 
   teams, 
   setTeams, 
-  setStatus 
+  setStatus,
+  matchId // Get matchId prop
 }) => {
   const [localConfig, setLocalConfig] = useState<AuctionConfig>(config);
   const [saveNotification, setSaveNotification] = useState<string | null>(null);
+  const [matchConfig, setMatchConfig] = useState<MatchConfig | null>(null);
+  const [validation, setValidation] = useState<ValidationResult | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSave = () => {
-    setConfig(localConfig);
-    setSaveNotification('Settings saved successfully!');
-    setTimeout(() => setSaveNotification(null), 3000);
+  // Subscribe to real-time config updates from Firebase
+  useEffect(() => {
+    if (!matchId) return;
+
+    console.log('🔄 Subscribing to match config for:', matchId);
+    
+    const unsubscribe = subscribeToMatchConfig(
+      matchId,
+      (config) => {
+        console.log('📥 Received config update:', config);
+        setMatchConfig(config);
+        
+        // Update localConfig with Firebase values
+        setLocalConfig(prev => ({
+          ...prev,
+          totalBudget: config.baseTeamBudget,
+          minBidIncrement: config.bidIncrement,
+          squadSize: {
+            min: config.minSquad,
+            max: config.maxSquad
+          }
+        }));
+      },
+      (error) => {
+        console.error('❌ Config subscription error:', error);
+      }
+    );
+
+    // Also fetch validation status
+    if (matchId) {
+      validateMatchConfig(matchId)
+        .then(setValidation)
+        .catch(err => console.error('Failed to validate:', err));
+    }
+
+    return () => {
+      console.log('🔌 Unsubscribing from match config');
+      unsubscribe();
+    };
+  }, [matchId]);
+
+  const handleSave = async () => {
+    if (matchId && matchConfig) {
+      setIsSaving(true);
+      try {
+        // Save to Firebase via API
+        const configUpdate: Partial<MatchConfig> = {
+          baseTeamBudget: localConfig.totalBudget,
+          bidIncrement: localConfig.minBidIncrement || 100000,
+          maxTeams: matchConfig.maxTeams, // Keep existing maxTeams
+          minSquad: localConfig.squadSize.min,
+          maxSquad: localConfig.squadSize.max,
+        };
+
+        await updateMatchConfig(matchId, configUpdate);
+        
+        setSaveNotification('✅ Settings saved to Firebase!');
+        
+        // Re-validate after save
+        const newValidation = await validateMatchConfig(matchId);
+        setValidation(newValidation);
+        
+        setTimeout(() => setSaveNotification(null), 3000);
+      } catch (error) {
+        console.error('Failed to save config:', error);
+        setSaveNotification('❌ Failed to save settings');
+        setTimeout(() => setSaveNotification(null), 3000);
+      } finally {
+        setIsSaving(false);
+      }
+    } else {
+      // Fallback to local state update (for backward compatibility)
+      setConfig(localConfig);
+      setSaveNotification('Settings saved successfully!');
+      setTimeout(() => setSaveNotification(null), 3000);
+    }
   };
 
   const handleReset = () => {
@@ -111,175 +188,285 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col p-4 lg:p-8 relative overflow-hidden">
-      {/* Background Effects */}
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-orange-50 pointer-events-none"></div>
+    <div className="min-h-screen flex flex-col relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0a0118 0%, #1a0a2e 50%, #16213e 100%)' }}>
+      {/* Cinematic Styles */}
+      <style>{`
+        .settings-hud-card {
+          background: linear-gradient(135deg, rgba(255, 20, 100, 0.06) 0%, rgba(139, 0, 50, 0.1) 100%);
+          backdrop-filter: blur(28px) saturate(1.4);
+          border: 1px solid rgba(255, 0, 102, 0.15);
+          box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 60px rgba(255, 0, 102, 0.04);
+          transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+          position: relative;
+        }
+        .settings-hud-card::after {
+          content: '';
+          position: absolute;
+          top: 0; left: 0; right: 0;
+          height: 1px;
+          background: linear-gradient(90deg, transparent 0%, rgba(255, 0, 102, 0.5) 20%, rgba(255, 100, 163, 0.4) 50%, rgba(255, 0, 102, 0.5) 80%, transparent 100%);
+          opacity: 0;
+          transition: opacity 0.35s;
+        }
+        .settings-hud-card:hover {
+          transform: translateY(-3px);
+          box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 40px rgba(255, 0, 102, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+          border-color: rgba(255, 0, 102, 0.4);
+        }
+        .settings-hud-card:hover::after { opacity: 1; }
+        @keyframes settings-neon-pulse {
+          0%, 100% { box-shadow: 0 0 10px rgba(255, 0, 102, 0.5), 0 0 30px rgba(255, 0, 102, 0.25); }
+          50% { box-shadow: 0 0 20px rgba(255, 0, 102, 0.7), 0 0 50px rgba(255, 0, 102, 0.4); }
+        }
+        .settings-neon-pulse { animation: settings-neon-pulse 2s ease-in-out infinite; }
+      `}</style>
+
+      {/* Scan lines overlay */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-[0.015]" style={{ background: 'repeating-linear-gradient(0deg, transparent, transparent 4px, rgba(255, 0, 102, 0.12) 4px, rgba(255, 0, 102, 0.12) 5px)' }}></div>
 
       {/* Notification */}
       {saveNotification && (
-        <div className="fixed top-8 right-8 z-[200] bg-gradient-to-r from-blue-500 to-orange-500 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-5">
-          <CheckCircle2 size={20} />
-          <span className="font-black text-sm uppercase tracking-wider">{saveNotification}</span>
+        <div className="fixed top-8 right-8 z-[200] px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-5" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.9), rgba(249, 115, 22, 0.8))', border: '1px solid rgba(255, 100, 163, 0.5)', boxShadow: '0 0 30px rgba(255, 0, 102, 0.4)' }}>
+          <CheckCircle2 size={20} className="text-white" />
+          <span className="font-black text-sm uppercase tracking-wider text-white">{saveNotification}</span>
         </div>
       )}
 
-      <div className="w-full max-w-7xl mx-auto relative z-10">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setStatus(AuctionStatus.READY)}
-              className="flex items-center gap-3 bg-white/80 border border-blue-500/20 backdrop-blur-xl px-6 py-3 rounded-full text-blue-600 hover:bg-blue-500 hover:text-white transition-all shadow-lg"
-            >
-              <ArrowLeft size={18} />
-              <span className="text-[10px] font-black uppercase tracking-[0.2em]">Back</span>
-            </button>
-            
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-2xl overflow-hidden border-2 border-blue-500">
-                <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
-              </div>
+      <div className="w-full max-w-7xl mx-auto relative z-10 p-4 lg:p-8">
+        {/* TOP COMMAND BAR — Same as Admin Dashboard */}
+        <div className="relative rounded-2xl overflow-hidden mb-8" style={{ background: 'linear-gradient(90deg, rgba(26, 10, 10, 0.96), rgba(45, 10, 10, 0.92), rgba(26, 10, 10, 0.96))', border: '1px solid rgba(255, 0, 102, 0.15)', boxShadow: '0 8px 48px rgba(0, 0, 0, 0.5), 0 0 60px rgba(255, 0, 102, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.04)' }}>
+          {/* Top edge glow */}
+          <div className="absolute top-0 left-[10%] right-[10%] h-[1px]" style={{ background: 'linear-gradient(90deg, transparent, rgba(255, 0, 102, 0.7), rgba(255, 100, 163, 0.5), rgba(255, 0, 102, 0.7), transparent)' }}></div>
+          <div className="px-8 py-4 flex items-center justify-between gap-6">
+            {/* Left: Back + Title */}
+            <div className="flex items-center gap-4 flex-shrink-0">
+              <button 
+                onClick={() => setStatus(AuctionStatus.READY)}
+                className="w-10 h-10 rounded-xl flex items-center justify-center transition-all text-pink-300/60 hover:text-pink-400 hover:bg-pink-500/10"
+                style={{ border: '1px solid rgba(255, 0, 102, 0.15)' }}
+              >
+                <ArrowLeft size={18} />
+              </button>
+              <div className="w-[4px] h-11 rounded-full" style={{ background: 'linear-gradient(180deg, rgba(255, 0, 102, 0.9), rgba(249, 115, 22, 0.7))' }}></div>
               <div>
-                <h2 className="text-2xl font-display font-black tracking-widest gold-text uppercase leading-none">Settings</h2>
-                <p className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.3em] mt-1">Configuration Panel</p>
+                <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-red-400 to-orange-400 uppercase tracking-[0.2em] leading-tight">
+                  Settings
+                </h2>
+                <p className="text-xs text-pink-400/40 font-bold uppercase tracking-[0.3em] mt-0.5">
+                  {localConfig.sport} <span className="text-red-400/30">|</span> Configuration Panel
+                </p>
               </div>
             </div>
-          </div>
 
-          <div className="flex flex-wrap gap-3">
-            <button 
-              onClick={handleReset}
-              className="px-5 py-3 bg-[#3d2f2b] border border-blue-500/20 rounded-full text-blue-600 hover:bg-blue-500/10 transition-all text-[10px] font-black uppercase tracking-wider flex items-center gap-2"
-            >
-              <RotateCcw size={14} />
-              Reset
-            </button>
-            <button 
-              onClick={handleSave}
-              className="px-5 py-3 gold-gradient rounded-full text-white hover:brightness-110 transition-all text-[10px] font-black uppercase tracking-wider flex items-center gap-2 shadow-lg"
-            >
-              <Save size={14} />
-              Save Changes
-            </button>
+            {/* Right: Actions */}
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <button 
+                onClick={handleReset}
+                className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm transition-all text-pink-300/60 hover:text-pink-400"
+                style={{ background: 'rgba(255, 0, 102, 0.06)', border: '1px solid rgba(255, 0, 102, 0.15)' }}
+              >
+                <RotateCcw size={16} />
+                <span className="text-xs font-black uppercase tracking-wider">Reset</span>
+              </button>
+              <button 
+                onClick={handleSave}
+                disabled={isSaving}
+                className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm text-white transition-all hover:brightness-110 settings-neon-pulse disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.7), rgba(249, 115, 22, 0.6))', border: '1px solid rgba(255, 0, 102, 0.4)' }}
+              >
+                <Save size={16} />
+                <span className="text-xs font-black uppercase tracking-wider">
+                  {isSaving ? 'Saving...' : 'Save Changes'}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Basic Configuration */}
-          <CommandCard title="Basic Configuration" className="h-fit">
-            <div className="space-y-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-blue-600 tracking-wider">Sport Type</label>
-                <select 
-                  className="w-full bg-white border border-2 border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500"
-                  value={localConfig.sport}
-                  onChange={(e) => setLocalConfig({...localConfig, sport: e.target.value as SportType})}
-                >
-                  {Object.values(SportType).map(sport => (
-                    <option key={sport} value={sport}>{sport}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-blue-600 tracking-wider">Auction Type</label>
-                <select 
-                  className="w-full bg-white border border-2 border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500"
-                  value={localConfig.type}
-                  onChange={(e) => setLocalConfig({...localConfig, type: e.target.value as AuctionType})}
-                >
-                  {Object.values(AuctionType).map(type => (
-                    <option key={type} value={type}>{type}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-blue-600 tracking-wider">Total Budget per Team</label>
-                <input 
-                  type="number"
-                  className="w-full bg-white border border-2 border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500 font-mono"
-                  value={localConfig.totalBudget}
-                  onChange={(e) => setLocalConfig({...localConfig, totalBudget: Number(e.target.value)})}
-                />
-                <p className="text-[9px] text-slate-600 italic">Amount: ${localConfig.totalBudget.toLocaleString()}</p>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-blue-600 tracking-wider">Minimum Bid Increment</label>
-                <input 
-                  type="number"
-                  className="w-full bg-white border border-2 border-slate-300 rounded-2xl px-5 py-4 text-slate-900 outline-none focus:ring-1 ring-blue-500 font-mono"
-                  value={localConfig.minBidIncrement}
-                  onChange={(e) => setLocalConfig({...localConfig, minBidIncrement: Number(e.target.value)})}
-                />
-                <p className="text-[9px] text-slate-600 italic">Amount: ${localConfig.minBidIncrement.toLocaleString()}</p>
+        {/* VALIDATION WARNINGS BANNER */}
+        {validation && (validation.teamsExceeded || validation.warnings.length > 0) && (
+          <div className="mb-8 rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(220, 38, 38, 0.1))', border: '1px solid rgba(239, 68, 68, 0.3)', boxShadow: '0 8px 48px rgba(239, 68, 68, 0.2)' }}>
+            <div className="px-8 py-6">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.4)' }}>
+                  <AlertCircle size={24} className="text-red-400" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-xl font-black text-red-400 uppercase tracking-wider mb-3">Configuration Warnings</h3>
+                  
+                  {validation.teamsExceeded && (
+                    <div className="mb-4 p-4 rounded-xl bg-red-900/20 border border-red-500/30">
+                      <p className="text-red-300 font-bold">
+                        ⚠️ Teams Limit Exceeded: {validation.registeredTeams}/{validation.maxTeams} teams registered
+                      </p>
+                      <p className="text-red-400/60 text-sm mt-1">
+                        No further team registrations will be allowed until teams are removed or the limit is increased.
+                      </p>
+                    </div>
+                  )}
+                  
+                  {validation.warnings.length > 0 && (
+                    <div className="space-y-2">
+                      {validation.warnings.map((warning, idx) => (
+                        <div key={idx} className="p-3 rounded-lg bg-amber-900/20 border border-amber-500/30">
+                          <p className="text-amber-300 text-sm font-semibold">{warning}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </CommandCard>
+          </div>
+        )}
 
-          {/* Player Roles */}
-          <CommandCard title="Player Roles" className="h-fit">
-            <div className="space-y-4">
-              <div className="flex justify-between items-center mb-4">
-                <p className="text-[10px] text-slate-600 uppercase tracking-wider">
-                  {localConfig.roles.length} role(s) configured
-                </p>
+        {/* SETTINGS GRID */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          
+          {/* AUCTION CONFIGURATION CARD */}
+          <div className="settings-hud-card rounded-2xl overflow-hidden">
+            <div className="p-10">
+              <div className="flex items-center gap-4 mb-10">
+                <div className="w-14 h-14 rounded-xl flex items-center justify-center bg-pink-500/20 border border-pink-500/30">
+                  <Gavel size={28} className="text-pink-400" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-pink-100 uppercase tracking-wider">Auction Configuration</h3>
+                  <p className="text-xs text-pink-400/40 uppercase tracking-widest mt-1">Core Settings</p>
+                </div>
+              </div>
+
+              <div className="space-y-7">
+                <div>
+                  <label className="text-sm font-black uppercase text-pink-400/60 tracking-wider block mb-3">Sport Type</label>
+                  <select 
+                    className="w-full bg-pink-900/20 border border-pink-500/30 rounded-xl px-6 py-5 text-lg text-pink-100 outline-none focus:border-pink-500 transition-all"
+                    value={localConfig.sport}
+                    onChange={(e) => setLocalConfig({...localConfig, sport: e.target.value as SportType})}
+                  >
+                    {Object.values(SportType).map(sport => (
+                      <option key={sport} value={sport}>{sport}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-black uppercase text-pink-400/60 tracking-wider block mb-3">Auction Type</label>
+                  <select 
+                    className="w-full bg-pink-900/20 border border-pink-500/30 rounded-xl px-6 py-5 text-lg text-pink-100 outline-none focus:border-pink-500 transition-all"
+                    value={localConfig.type}
+                    onChange={(e) => setLocalConfig({...localConfig, type: e.target.value as AuctionType})}
+                  >
+                    {Object.values(AuctionType).map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-black uppercase text-pink-400/60 tracking-wider block mb-3">Total Budget per Team</label>
+                  <input 
+                    type="number"
+                    className="w-full bg-pink-900/20 border border-pink-500/30 rounded-xl px-6 py-5 text-lg text-pink-100 outline-none focus:border-pink-500 transition-all font-mono"
+                    value={localConfig.totalBudget}
+                    onChange={(e) => setLocalConfig({...localConfig, totalBudget: Number(e.target.value) || 0})}
+                  />
+                  <p className="text-sm text-emerald-400/60 mt-2 font-mono">₹{localConfig.totalBudget.toLocaleString()}</p>
+                </div>
+
+                <div>
+                  <label className="text-sm font-black uppercase text-pink-400/60 tracking-wider block mb-3">Minimum Bid Increment</label>
+                  <input 
+                    type="number"
+                    className="w-full bg-pink-900/20 border border-pink-500/30 rounded-xl px-6 py-5 text-lg text-pink-100 outline-none focus:border-pink-500 transition-all font-mono"
+                    value={localConfig.minBidIncrement}
+                    onChange={(e) => setLocalConfig({...localConfig, minBidIncrement: Number(e.target.value) || 0})}
+                  />
+                  <p className="text-sm text-emerald-400/60 mt-2 font-mono">₹{localConfig.minBidIncrement.toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* PLAYER ROLES CARD */}
+          <div className="settings-hud-card rounded-2xl overflow-hidden">
+            <div className="p-10">
+              <div className="flex items-center justify-between mb-10">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-xl flex items-center justify-center bg-indigo-500/20 border border-indigo-500/30">
+                    <Shield size={28} className="text-indigo-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-pink-100 uppercase tracking-wider">Player Roles</h3>
+                    <p className="text-xs text-pink-400/40 uppercase tracking-widest mt-1">{localConfig.roles.length} Role(s) Configured</p>
+                  </div>
+                </div>
                 <button 
                   onClick={addRole}
-                  className="px-4 py-2 bg-gradient-to-r from-blue-500 to-orange-500/10 border border-blue-500/20 rounded-full text-blue-600 hover:bg-blue-500 hover:text-white transition-all text-[9px] font-black uppercase"
+                  className="flex items-center gap-2 px-5 py-3 rounded-lg text-sm font-black text-blue-400 uppercase transition-all hover:bg-blue-500/20"
+                  style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)' }}
                 >
                   + Add Role
                 </button>
               </div>
               
-              <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar">
+              <div className="space-y-4 max-h-[350px] overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
                 {localConfig.roles.map((role) => (
                   <div 
                     key={role.id}
-                    className="flex items-center justify-between bg-white border border-2 border-slate-300 rounded-2xl px-5 py-3 group hover:border-blue-500/20 transition-all"
+                    className="flex items-center justify-between bg-pink-900/20 border border-pink-500/20 rounded-xl px-6 py-5 group hover:border-pink-500/40 transition-all"
                   >
-                    <span className="text-slate-900 font-bold">{role.name}</span>
+                    <span className="text-pink-100 font-bold text-lg">{role.name}</span>
                     <button 
                       onClick={() => removeRole(role.id)}
-                      className="opacity-0 group-hover:opacity-100 p-2 text-red-500 hover:bg-[#a65d50]/10 rounded-lg transition-all"
+                      className="opacity-0 group-hover:opacity-100 p-2 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition-all"
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={18} />
                     </button>
                   </div>
                 ))}
               </div>
             </div>
-          </CommandCard>
+          </div>
 
-          {/* Data Statistics */}
-          <CommandCard title="Data Overview" className="h-fit">
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-white border border-2 border-slate-300 rounded-2xl p-5">
-                  <p className="text-[9px] font-black uppercase text-slate-600 mb-2">Total Players</p>
-                  <p className="text-3xl font-display font-black text-slate-900">{players.length}</p>
+          {/* DATA OVERVIEW CARD */}
+          <div className="settings-hud-card rounded-2xl overflow-hidden">
+            <div className="p-10">
+              <div className="flex items-center gap-4 mb-10">
+                <div className="w-14 h-14 rounded-xl flex items-center justify-center bg-cyan-500/20 border border-cyan-500/30">
+                  <Activity size={28} className="text-cyan-400" />
                 </div>
-                <div className="bg-white border border-2 border-slate-300 rounded-2xl p-5">
-                  <p className="text-[9px] font-black uppercase text-slate-600 mb-2">Total Teams</p>
-                  <p className="text-3xl font-display font-black text-slate-900">{teams.length}</p>
-                </div>
-                <div className="bg-white border border-2 border-slate-300 rounded-2xl p-5">
-                  <p className="text-[9px] font-black uppercase text-slate-600 mb-2">Sold Players</p>
-                  <p className="text-3xl font-display font-black text-blue-600">{players.filter(p => p.status === 'SOLD').length}</p>
-                </div>
-                <div className="bg-white border border-2 border-slate-300 rounded-2xl p-5">
-                  <p className="text-[9px] font-black uppercase text-slate-600 mb-2">Pending Players</p>
-                  <p className="text-3xl font-display font-black text-slate-900">{players.filter(p => p.status === 'PENDING').length}</p>
+                <div>
+                  <h3 className="text-xl font-black text-pink-100 uppercase tracking-wider">Data Overview</h3>
+                  <p className="text-xs text-pink-400/40 uppercase tracking-widest mt-1">Live Statistics</p>
                 </div>
               </div>
 
-              <div className="bg-gradient-to-r from-blue-500 to-orange-500/5 border border-blue-500/20 rounded-2xl p-5 mt-6">
+              <div className="grid grid-cols-2 gap-5 mb-8">
+                <div className="bg-pink-900/20 border border-pink-500/20 rounded-xl p-6">
+                  <p className="text-sm font-black uppercase text-pink-400/50 tracking-wider mb-2">Total Players</p>
+                  <p className="text-5xl font-black text-pink-100">{players.length}</p>
+                </div>
+                <div className="bg-pink-900/20 border border-pink-500/20 rounded-xl p-6">
+                  <p className="text-sm font-black uppercase text-pink-400/50 tracking-wider mb-2">Total Teams</p>
+                  <p className="text-5xl font-black text-pink-100">{teams.length}</p>
+                </div>
+                <div className="bg-emerald-900/20 border border-emerald-500/20 rounded-xl p-6">
+                  <p className="text-sm font-black uppercase text-emerald-400/50 tracking-wider mb-2">Sold Players</p>
+                  <p className="text-5xl font-black text-emerald-400">{players.filter(p => p.status === 'SOLD').length}</p>
+                </div>
+                <div className="bg-amber-900/20 border border-amber-500/20 rounded-xl p-6">
+                  <p className="text-sm font-black uppercase text-amber-400/50 tracking-wider mb-2">Pending Players</p>
+                  <p className="text-5xl font-black text-amber-400">{players.filter(p => p.status === 'PENDING').length}</p>
+                </div>
+              </div>
+
+              <div className="bg-pink-900/15 border border-pink-500/15 rounded-xl p-6">
                 <div className="flex items-start gap-3">
-                  <AlertCircle size={20} className="text-blue-600 flex-shrink-0 mt-0.5" />
+                  <AlertCircle size={20} className="text-pink-400/60 flex-shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-[10px] font-black uppercase text-blue-600 mb-1">Important</p>
-                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                    <p className="text-sm font-black uppercase text-pink-400/60 mb-2">Important</p>
+                    <p className="text-base text-pink-300/50 leading-relaxed">
                       Changing the total budget will not affect teams already created. 
                       You'll need to manually update existing team budgets if needed.
                     </p>
@@ -287,55 +474,72 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
               </div>
             </div>
-          </CommandCard>
+          </div>
 
-          {/* Data Management */}
-          <CommandCard title="Data Management" className="h-fit">
-            <div className="space-y-4">
-              <button 
-                onClick={handleExportData}
-                className="w-full py-4 bg-white border border-blue-500/20 rounded-2xl text-blue-600 hover:bg-blue-500/10 transition-all text-[11px] font-black uppercase tracking-wider flex items-center justify-center gap-3"
-              >
-                <Download size={16} />
-                Export All Data (JSON)
-              </button>
+          {/* DATA MANAGEMENT CARD */}
+          <div className="settings-hud-card rounded-2xl overflow-hidden">
+            <div className="p-10">
+              <div className="flex items-center gap-4 mb-10">
+                <div className="w-14 h-14 rounded-xl flex items-center justify-center bg-blue-500/20 border border-blue-500/30">
+                  <Database size={28} className="text-blue-400" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-pink-100 uppercase tracking-wider">Data Management</h3>
+                  <p className="text-xs text-pink-400/40 uppercase tracking-widest mt-1">Import / Export / Clear</p>
+                </div>
+              </div>
 
-              <button 
-                onClick={handleImportData}
-                className="w-full py-4 bg-white border border-blue-500/20 rounded-2xl text-blue-600 hover:bg-blue-500/10 transition-all text-[11px] font-black uppercase tracking-wider flex items-center justify-center gap-3"
-              >
-                <Upload size={16} />
-                Import Data from File
-              </button>
-
-              <div className="border-t border-2 border-slate-300 pt-4 mt-6">
-                <p className="text-[10px] font-black uppercase text-red-500 mb-3 flex items-center gap-2">
-                  <AlertCircle size={14} />
-                  Danger Zone
-                </p>
+              <div className="space-y-5">
                 <button 
-                  onClick={handleClearAllData}
-                  className="w-full py-4 bg-[#a65d50]/10 border border-[#a65d50]/20 rounded-2xl text-red-500 hover:bg-[#a65d50]/20 transition-all text-[11px] font-black uppercase tracking-wider flex items-center justify-center gap-3"
+                  onClick={handleExportData}
+                  className="w-full py-5 rounded-xl text-sm font-black uppercase tracking-wider flex items-center justify-center gap-3 transition-all hover:border-blue-500/40"
+                  style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', color: 'rgba(147, 197, 253, 0.8)' }}
                 >
-                  <Trash2 size={16} />
-                  Clear All Players & Teams
+                  <Download size={20} />
+                  Export All Data (JSON)
                 </button>
+
+                <button 
+                  onClick={handleImportData}
+                  className="w-full py-5 rounded-xl text-sm font-black uppercase tracking-wider flex items-center justify-center gap-3 transition-all hover:border-emerald-500/40"
+                  style={{ background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', color: 'rgba(110, 231, 183, 0.8)' }}
+                >
+                  <Upload size={20} />
+                  Import Data from File
+                </button>
+
+                <div className="border-t border-pink-500/10 pt-6 mt-6">
+                  <p className="text-sm font-black uppercase text-red-400/60 mb-4 flex items-center gap-2">
+                    <AlertCircle size={18} className="text-red-400/60" />
+                    Danger Zone
+                  </p>
+                  <button 
+                    onClick={handleClearAllData}
+                    className="w-full py-5 rounded-xl text-sm font-black uppercase tracking-wider flex items-center justify-center gap-3 transition-all hover:bg-red-500/15"
+                    style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)', color: 'rgba(252, 165, 165, 0.8)' }}
+                  >
+                    <Trash2 size={20} />
+                    Clear All Players & Teams
+                  </button>
+                </div>
               </div>
             </div>
-          </CommandCard>
+          </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
+        {/* BOTTOM ACTION BUTTONS */}
+        <div className="mt-10 flex flex-col sm:flex-row gap-5 justify-center">
           <button 
             onClick={() => setStatus(AuctionStatus.MARKETPLACE)}
-            className="px-8 py-4 bg-white border border-blue-500/20 rounded-full text-blue-600 hover:bg-blue-500/10 transition-all text-[11px] font-black uppercase tracking-wider"
+            className="px-12 py-5 rounded-xl text-sm font-black uppercase tracking-wider transition-all hover:border-pink-500/40"
+            style={{ background: 'rgba(255, 0, 102, 0.06)', border: '1px solid rgba(255, 0, 102, 0.15)', color: 'rgba(244, 114, 182, 0.7)' }}
           >
             Go to Marketplace
           </button>
           <button 
             onClick={() => setStatus(AuctionStatus.READY)}
-            className="px-8 py-4 gold-gradient rounded-full text-white hover:brightness-110 transition-all text-[11px] font-black uppercase tracking-wider shadow-lg"
+            className="px-12 py-5 rounded-xl text-sm font-black uppercase tracking-wider text-white transition-all hover:brightness-110 settings-neon-pulse"
+            style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.7), rgba(249, 115, 22, 0.6))', border: '1px solid rgba(255, 0, 102, 0.4)' }}
           >
             Return to Dashboard
           </button>

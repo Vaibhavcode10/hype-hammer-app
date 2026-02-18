@@ -1,20 +1,751 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart3, Users, Trophy, DollarSign, Activity, AlertCircle, 
-  Search, Bell, User, LogOut, Menu, Calendar, Shield, 
+  Search, Bell, User, LogOut, Menu, Calendar, Shield, Mail,
   Gavel, UserCheck, TrendingUp, FileText, Settings, Eye,
   Play, Pause, StopCircle, Edit, Trash2, Check, X, Download,
   Clock, Target, Award, Briefcase, ChevronRight, Filter,
-  PieChart, LineChart, ArrowUp, ArrowDown, Sparkles, Zap,
+  PieChart, LineChart, ArrowUp, ArrowDown, ArrowLeft, Sparkles, Zap,
   Home, Radio, Lock, Unlock, RotateCcw, Plus, Save, RefreshCw,
   AlertTriangle, CheckCircle, XCircle, Info, History,
-  Layers, Gauge, BarChart, TrendingDown
+  Layers, Gauge, BarChart, TrendingDown, Star, ChevronDown, ChevronUp,
+  Wallet, Square, IndianRupee, Upload, Loader2, FileText as FileIcon, Image
 } from 'lucide-react';
 import { AuctionStatus, MatchData, UserRole, Player, Team } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
+import { PlayersPage } from './PlayersPage';
+import { TeamSquadPage } from './TeamSquadPage';
+import { TeamHUDCard } from '../ui/TeamHUDCard';
 import { socketService } from '../../services/socketService';
+import { registerTeam, registerPlayer } from '../../services/apiService';
+import { uploadTeamLogo, uploadDocument, uploadPlayerPhoto, uploadProfilePicture } from '../../services/firebaseStorageService';
+import { firestore } from '../../services/firebaseConfig';
+import { doc, getDoc } from 'firebase/firestore';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+
+// ─── Bidding History Page ────────────────────────────────────────────────────
+interface BidRecord {
+  id: string;
+  teamName: string;
+  teamId: string;
+  amount: number;
+  timestamp: string;
+  playerName?: string;
+}
+
+const BiddingHistoryPage: React.FC<{
+  player: Player;
+  seasonId: string;
+  onBack: () => void;
+}> = ({ player, seasonId, onBack }) => {
+  const [bids, setBids] = React.useState<BidRecord[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    const fetchBids = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/bids?seasonId=${seasonId}&playerId=${player.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          const list: BidRecord[] = data.data || data || [];
+          list.sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
+          setBids(list);
+        }
+      } catch (e) {
+        console.error('Failed to fetch bid history:', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchBids();
+  }, [player.id, seasonId]);
+
+  const fmtCurrency = (v: number) => `₹${((v || 0) / 100000).toFixed(1)}L`;
+
+  const fmtTime = (ts: string) => {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  };
+
+  // Group bids by team
+  const bidsByTeam = React.useMemo(() => {
+    const map = new Map<string, BidRecord[]>();
+    bids.forEach(bid => {
+      const key = bid.teamName || bid.teamId || 'Unknown';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(bid);
+    });
+    return Array.from(map.entries());
+  }, [bids]);
+
+  const soldAmt = (player as any).soldAmount || (player as any).soldPrice || (player as any).currentBid || 0;
+  const role = (player as any).roleId || (player as any).role || '';
+  const highestBid = bids.length > 0 ? Math.max(...bids.map(b => b.amount)) : 0;
+
+  return (
+    <div className="flex-1 p-6 pr-8 pb-14">
+      {/* Page Header */}
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-4">
+          <div
+            className="w-12 h-12 rounded-xl flex items-center justify-center"
+            style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.25), rgba(200,50,120,0.2))', border: '1px solid rgba(255,0,102,0.5)', boxShadow: '0 0 20px rgba(255,0,102,0.25)' }}
+          >
+            <History size={22} className="text-pink-400" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black text-white tracking-tight">Bidding History</h1>
+            <p className="text-pink-300/60 text-sm font-medium mt-0.5">{player.name} — Full Timeline</p>
+          </div>
+        </div>
+        <button
+          onClick={onBack}
+          className="px-6 py-3 rounded-full text-pink-300 hover:text-white transition-all flex items-center gap-2.5 text-sm font-black"
+          style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.12), rgba(200,50,120,0.08))', border: '1px solid rgba(255,0,102,0.3)', boxShadow: '0 0 12px rgba(255,0,102,0.15)' }}
+        >
+          <ArrowLeft size={20} />
+          Back to Reports
+        </button>
+      </div>
+
+      {/* Player Info Card */}
+      <div
+        className="rounded-2xl p-6 mb-8 flex items-center gap-5"
+        style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.1), rgba(200,50,120,0.06))', border: '1px solid rgba(255,0,102,0.25)', boxShadow: '0 4px 24px rgba(255,0,102,0.08)' }}
+      >
+        <div className="w-16 h-16 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.15), rgba(200,50,120,0.1))', border: '2px solid rgba(255,0,102,0.3)' }}>
+          {(player as any).imageUrl ? (
+            <img src={(player as any).imageUrl} alt={player.name} className="w-full h-full rounded-xl object-cover" />
+          ) : (
+            <User size={28} className="text-pink-400/60" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-xl font-black text-white">{player.name}</h2>
+          <div className="flex items-center gap-3 mt-1.5">
+            {role && <span className="text-xs text-pink-300/60 uppercase font-bold tracking-wide">{role}</span>}
+            <span
+              className="px-3 py-1 rounded-full text-xs font-bold uppercase"
+              style={
+                player.status === 'SOLD'
+                  ? { background: 'rgba(255,20,100,0.15)', border: '1px solid rgba(255,0,102,0.3)', color: '#f472b6' }
+                  : player.status === 'UNSOLD'
+                  ? { background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5' }
+                  : { background: 'rgba(255,20,100,0.1)', border: '1px solid rgba(255,0,102,0.2)', color: '#f9a8d4' }
+              }
+            >
+              {player.status || 'Available'}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-8 flex-shrink-0">
+          <div className="text-right">
+            <p className="text-xs text-pink-300/50 uppercase font-bold tracking-wide">Base Price</p>
+            <p className="text-lg font-bold text-pink-300 mt-0.5">{fmtCurrency(player.basePrice)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-pink-300/50 uppercase font-bold tracking-wide">Sold For</p>
+            <p className="text-lg font-black text-white mt-0.5">{soldAmt > 0 ? fmtCurrency(soldAmt) : '—'}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-pink-300/50 uppercase font-bold tracking-wide">Total Bids</p>
+            <p className="text-lg font-black text-white mt-0.5">{bids.length}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      {loading ? (
+        <div className="flex items-center justify-center py-24">
+          <div className="animate-spin rounded-full h-12 w-12 border-2 border-pink-500/30 border-t-pink-500" />
+        </div>
+      ) : bids.length === 0 ? (
+        <div className="rounded-2xl p-20 text-center" style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.06), rgba(200,50,120,0.04))', border: '1px dashed rgba(255,0,102,0.2)' }}>
+          <History size={48} className="text-pink-400/20 mx-auto mb-4" />
+          <p className="text-pink-300/50 text-base font-medium">No bidding history found for this player</p>
+        </div>
+      ) : (
+        <>
+          {/* Chronological Timeline */}
+          <div className="mb-10">
+            <h3 className="text-base font-bold text-pink-300/70 uppercase tracking-wider mb-5 flex items-center gap-2">
+              <Clock size={16} className="text-pink-400" />
+              Full Timeline · {bids.length} Bid{bids.length !== 1 ? 's' : ''}
+            </h3>
+            <div className="space-y-3">
+              {bids.map((bid, idx) => {
+                const isHighest = bid.amount === highestBid;
+                const isLast = idx === bids.length - 1;
+                return (
+                  <div
+                    key={bid.id || idx}
+                    className="flex items-center gap-5 p-4 rounded-xl transition-all"
+                    style={{
+                      background: isLast
+                        ? 'linear-gradient(135deg, rgba(255,20,100,0.12), rgba(200,50,120,0.08))'
+                        : 'linear-gradient(135deg, rgba(255,20,100,0.06), rgba(200,50,120,0.03))',
+                      border: isLast ? '1px solid rgba(255,0,102,0.35)' : '1px solid rgba(255,0,102,0.12)',
+                      boxShadow: isLast ? '0 0 15px rgba(255,0,102,0.1)' : 'none',
+                    }}
+                  >
+                    {/* Sequence # */}
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-black flex-shrink-0"
+                      style={{
+                        background: isLast
+                          ? 'linear-gradient(135deg, rgba(255,0,102,0.3), rgba(200,50,120,0.2))'
+                          : 'rgba(255,20,100,0.12)',
+                        color: isLast ? '#f472b6' : '#f9a8d4',
+                        border: isLast ? '2px solid rgba(255,0,102,0.4)' : '1px solid rgba(255,0,102,0.2)',
+                        boxShadow: isLast ? '0 0 12px rgba(255,0,102,0.2)' : 'none',
+                      }}
+                    >
+                      {idx + 1}
+                    </div>
+                    {/* Team */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-bold text-white truncate">{bid.teamName || 'Unknown Team'}</p>
+                      <p className="text-xs text-pink-300/40 mt-0.5">{fmtTime(bid.timestamp)}</p>
+                    </div>
+                    {/* Amount */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <IndianRupee size={15} className={isHighest ? 'text-red-400/80' : 'text-pink-400/50'} />
+                      <span className={`text-lg font-black ${isLast ? 'text-pink-300' : isHighest ? 'text-red-300' : 'text-white/90'}`}>
+                        {fmtCurrency(bid.amount)}
+                      </span>
+                    </div>
+                    {/* Tags */}
+                    {isLast && (
+                      <span className="px-3 py-1 rounded-full text-[11px] font-black uppercase flex-shrink-0"
+                        style={{ background: 'linear-gradient(135deg, rgba(255,0,102,0.25), rgba(200,50,120,0.15))', border: '1px solid rgba(255,0,102,0.4)', color: '#f472b6' }}>
+                        Winner
+                      </span>
+                    )}
+                    {isHighest && !isLast && (
+                      <span className="px-3 py-1 rounded-full text-[11px] font-black uppercase flex-shrink-0"
+                        style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5' }}>
+                        Highest
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Team-wise Breakdown */}
+          {bidsByTeam.length > 1 && (
+            <div>
+              <h3 className="text-base font-bold text-pink-300/70 uppercase tracking-wider mb-5 flex items-center gap-2">
+                <Trophy size={16} className="text-pink-400" />
+                Team-wise Breakdown
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {bidsByTeam.map(([teamName, teamBids]) => {
+                  const maxBid = Math.max(...teamBids.map(b => b.amount));
+                  return (
+                    <div
+                      key={teamName}
+                      className="rounded-xl p-5"
+                      style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.07), rgba(200,50,120,0.04))', border: '1px solid rgba(255,0,102,0.15)' }}
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <p className="text-base font-bold text-white">{teamName}</p>
+                        <span className="text-xs text-pink-300/50 font-medium">{teamBids.length} bid{teamBids.length !== 1 ? 's' : ''}</span>
+                      </div>
+                      <div className="space-y-2.5">
+                        {teamBids.map((bid, idx) => (
+                          <div key={bid.id || idx} className="flex items-center justify-between py-1">
+                            <span className="text-sm text-pink-200/50">{fmtTime(bid.timestamp)}</span>
+                            <span className={`text-sm font-bold ${bid.amount === maxBid ? 'text-red-300' : 'text-white/70'}`}>
+                              {fmtCurrency(bid.amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 pt-3 flex items-center justify-between" style={{ borderTop: '1px solid rgba(255,0,102,0.12)' }}>
+                        <span className="text-xs text-pink-300/50 uppercase font-bold">Max Bid</span>
+                        <span className="text-base font-black text-red-300 flex items-center gap-1">
+                          <IndianRupee size={12} />
+                          {fmtCurrency(maxBid)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+// ─── Report Section ──────────────────────────────────────────────────────────
+interface ReportTeam extends Team {
+  acquiredPlayers: Player[];
+  totalSpent: number;
+}
+
+const ReportSection: React.FC<{
+  teams: ReportTeam[];
+  unassignedPlayers: Player[];
+  players: Player[];
+  currentMatch: MatchData | null;
+  soldPlayersCount: number;
+  unsoldPlayersCount: number;
+  pendingPlayersCount: number;
+  totalAmountSpent: number;
+  auctionStatus: 'READY' | 'LIVE' | 'PAUSED' | 'ENDED';
+  currentBiddingPlayer: Player | null;
+  onNavigateHistory: (player: Player) => void;
+}> = ({ teams, unassignedPlayers, players, currentMatch, soldPlayersCount, unsoldPlayersCount, pendingPlayersCount, totalAmountSpent, auctionStatus, currentBiddingPlayer, onNavigateHistory }) => {
+  const [reportSearch, setReportSearch] = React.useState('');
+  const [statusFilter, setStatusFilter] = React.useState<'all' | 'sold' | 'unsold' | 'available' | 'live'>('all');
+  const [teamFilter, setTeamFilter] = React.useState('');
+  const [expandedTeams, setExpandedTeams] = React.useState<Record<string, boolean>>({});
+
+  const fmtCurrency = (v: number) => `₹${((v || 0) / 100000).toFixed(1)}L`;
+  const fmtCr = (v: number) => `₹${((v || 0) / 10000000).toFixed(2)}Cr`;
+
+  const isLive = auctionStatus === 'LIVE' || auctionStatus === 'PAUSED';
+  const isEnded = auctionStatus === 'ENDED';
+
+  const toggleTeam = (id: string) => setExpandedTeams(prev => ({ ...prev, [id]: !prev[id] }));
+
+  // Current highest bid (player with max sold amount among all SOLD players)
+  const highestSoldPlayer = React.useMemo(() => {
+    let best: Player | null = null;
+    let bestAmt = 0;
+    players.forEach(p => {
+      const amt = (p as any).soldAmount || (p as any).soldPrice || (p as any).currentBid || 0;
+      if (amt > bestAmt) { bestAmt = amt; best = p; }
+    });
+    return best ? { player: best, amount: bestAmt, teamName: teams.find(t => t.acquiredPlayers.some(ap => ap.id === (best as Player).id))?.name || '' } : null;
+  }, [players, teams]);
+
+  const auctionedCount = players.filter(p => p.status === 'SOLD' || p.status === 'UNSOLD').length;
+  const liveCount = players.filter(p => (p.status as string) === 'LIVE' || p.status === 'PENDING').length;
+
+  // Filter teams
+  const filteredTeams = teams.filter(t => {
+    if (teamFilter && t.id !== teamFilter) return false;
+    if (reportSearch) {
+      const q = reportSearch.toLowerCase();
+      const nameMatch = t.name.toLowerCase().includes(q);
+      const playerMatch = t.acquiredPlayers.some(p => p.name.toLowerCase().includes(q));
+      if (!nameMatch && !playerMatch) return false;
+    }
+    return true;
+  });
+
+  // Filter players within a team
+  const filterPlayers = (list: Player[]) => {
+    return list.filter(p => {
+      if (statusFilter === 'sold' && p.status !== 'SOLD') return false;
+      if (statusFilter === 'unsold' && p.status !== 'UNSOLD') return false;
+      if (statusFilter === 'available' && p.status !== 'AVAILABLE' && p.status !== 'PENDING') return false;
+      if (statusFilter === 'live' && (p.status as string) !== 'LIVE') return false;
+      if (reportSearch) {
+        const q = reportSearch.toLowerCase();
+        if (!p.name.toLowerCase().includes(q) && !(p.email || '').toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  };
+
+  // CSV export
+  const exportCSV = () => {
+    let csv = 'Team,Player,Role,Base Price,Sold Price,Status\n';
+    teams.forEach(t => {
+      t.acquiredPlayers.forEach(p => {
+        const soldAmt = (p as any).soldAmount || (p as any).soldPrice || (p as any).currentBid || 0;
+        csv += `"${t.name}","${p.name}","${(p as any).roleId || ''}","₹${(p.basePrice / 100000).toFixed(1)}L","₹${(soldAmt / 100000).toFixed(1)}L","${p.status}"\n`;
+      });
+    });
+    unassignedPlayers.forEach(p => {
+      csv += `"—","${p.name}","${(p as any).roleId || ''}","₹${(p.basePrice / 100000).toFixed(1)}L","—","${p.status || 'AVAILABLE'}"\n`;
+    });
+    const el = document.createElement('a');
+    el.setAttribute('href', 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv));
+    el.setAttribute('download', `${currentMatch?.name || 'report'}_auction_report${isLive ? '_live' : ''}.csv`);
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    el.click();
+    document.body.removeChild(el);
+  };
+
+  // Status pill styling — neon pink palette
+  const statusStyle = (status: string) => {
+    switch (status) {
+      case 'SOLD': return { background: 'rgba(255,20,100,0.18)', border: '1px solid rgba(255,0,102,0.35)', color: '#f472b6' };
+      case 'UNSOLD': return { background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5' };
+      case 'LIVE': return { background: 'rgba(255,0,102,0.12)', border: '1px solid rgba(255,0,102,0.3)', color: '#fb7185' };
+      default: return { background: 'rgba(255,20,100,0.08)', border: '1px solid rgba(255,0,102,0.2)', color: '#f9a8d4' };
+    }
+  };
+
+  return (
+    <div className="flex-1 p-6 pr-8 pb-14">
+      {/* ─── A. Page Title ─── */}
+      <div className="flex items-center justify-between mb-7">
+        <div className="flex items-center gap-4">
+          <div
+            className="w-12 h-12 rounded-xl flex items-center justify-center"
+            style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.25), rgba(200,50,120,0.2))', border: '1px solid rgba(255,0,102,0.5)', boxShadow: '0 0 20px rgba(255,0,102,0.25)' }}
+          >
+            <BarChart3 size={22} className="text-pink-400" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black text-white tracking-tight">Auction Reports</h1>
+            <p className="text-pink-300/60 text-sm font-medium flex items-center gap-2 mt-0.5">
+              {isLive ? (
+                <><span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" /> Live Auction Report</>
+              ) : isEnded ? (
+                <><CheckCircle size={13} className="text-pink-400/60" /> Final Auction Report</>
+              ) : (
+                <>{currentMatch?.name || 'Auction'} — Pre-Auction Overview</>
+              )}
+            </p>
+          </div>
+        </div>
+        {isLive && (
+          <div className="flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: 'linear-gradient(135deg, rgba(239,68,68,0.15), rgba(255,0,102,0.1))', border: '1px solid rgba(239,68,68,0.3)' }}>
+            <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-red-300 text-xs font-bold uppercase tracking-wider">Live</span>
+          </div>
+        )}
+      </div>
+
+      {/* ─── Top Controls ─── */}
+      <div className="flex items-center gap-4 flex-wrap mb-7">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <Search size={17} className="absolute left-4 top-1/2 -translate-y-1/2 text-pink-400/50" />
+          <input
+            type="text"
+            placeholder="Search teams or players..."
+            value={reportSearch}
+            onChange={(e) => setReportSearch(e.target.value)}
+            className="w-full pl-11 pr-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/40 transition-all duration-300 focus:outline-none"
+            style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.08), rgba(200,50,120,0.05))', border: '1px solid rgba(255,0,102,0.2)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.1)' }}
+            onFocus={(e) => { e.target.style.border = '1px solid rgba(255,0,102,0.5)'; e.target.style.boxShadow = 'inset 0 1px 3px rgba(0,0,0,0.1), 0 0 15px rgba(255,0,102,0.1)'; }}
+            onBlur={(e) => { e.target.style.border = '1px solid rgba(255,0,102,0.2)'; e.target.style.boxShadow = 'inset 0 1px 3px rgba(0,0,0,0.1)'; }}
+          />
+        </div>
+        <div className="relative">
+          <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}
+            className="pl-4 pr-10 py-3 rounded-xl text-sm text-white appearance-none cursor-pointer focus:outline-none"
+            style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.08), rgba(200,50,120,0.05))', border: '1px solid rgba(255,0,102,0.2)' }}>
+            <option value="">All Teams</option>
+            {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          <Filter size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-pink-400/50 pointer-events-none" />
+        </div>
+        <div className="relative">
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}
+            className="pl-4 pr-10 py-3 rounded-xl text-sm text-white appearance-none cursor-pointer focus:outline-none"
+            style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.08), rgba(200,50,120,0.05))', border: '1px solid rgba(255,0,102,0.2)' }}>
+            <option value="all">All Status</option>
+            <option value="sold">Sold</option>
+            <option value="unsold">Unsold</option>
+            <option value="available">Available</option>
+            {isLive && <option value="live">Live (Bidding)</option>}
+          </select>
+          <Filter size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-pink-400/50 pointer-events-none" />
+        </div>
+        <button onClick={exportCSV}
+          className="flex items-center gap-2 px-5 py-3 rounded-xl text-white font-bold text-sm transition-all ml-auto"
+          style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.2), rgba(200,50,120,0.15))', border: '1px solid rgba(255,0,102,0.35)', boxShadow: '0 0 12px rgba(255,0,102,0.1)' }}>
+          <Download size={16} />
+          Export CSV
+        </button>
+      </div>
+
+      {/* ─── B. Live Summary Stats ─── */}
+      <div className="grid grid-cols-7 gap-3 mb-7">
+        {[
+          { label: 'Total Teams', value: teams.length, accent: false },
+          { label: 'Auctioned', value: auctionedCount, accent: false },
+          { label: 'Sold', value: soldPlayersCount, accent: true },
+          { label: 'Unsold', value: unsoldPlayersCount, accent: false },
+          { label: 'Available', value: pendingPlayersCount + liveCount, accent: false },
+          { label: 'Total Spent', value: fmtCr(totalAmountSpent), accent: true, raw: true },
+          { label: 'Avg Price', value: soldPlayersCount > 0 ? fmtCurrency(totalAmountSpent / soldPlayersCount) : '—', accent: false, raw: true },
+        ].map((s: any, i) => (
+          <div key={i} className="rounded-xl p-4"
+            style={{
+              background: s.accent
+                ? 'linear-gradient(135deg, rgba(255,20,100,0.15), rgba(200,50,120,0.1))'
+                : 'linear-gradient(135deg, rgba(255,20,100,0.07), rgba(200,50,120,0.04))',
+              border: s.accent ? '1px solid rgba(255,0,102,0.35)' : '1px solid rgba(255,0,102,0.15)',
+              borderLeft: `3px solid ${s.accent ? 'rgba(255,0,102,0.7)' : 'rgba(255,0,102,0.35)'}`,
+            }}>
+            <p className="text-[11px] text-pink-300/60 uppercase font-bold tracking-wide">{s.label}</p>
+            <p className={`text-xl font-black mt-1 ${s.accent ? 'text-pink-300' : 'text-white'}`}>
+              {s.value}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {/* ─── Current Highest Bid Banner ─── */}
+      {highestSoldPlayer && (
+        <div className="rounded-xl p-5 mb-7 flex items-center gap-5"
+          style={{ background: 'linear-gradient(135deg, rgba(239,68,68,0.1), rgba(255,0,102,0.08))', border: '1px solid rgba(239,68,68,0.25)', boxShadow: '0 0 15px rgba(255,0,102,0.06)' }}>
+          <div className="w-11 h-11 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ background: 'linear-gradient(135deg, rgba(239,68,68,0.2), rgba(255,0,102,0.15))', border: '1px solid rgba(239,68,68,0.35)' }}>
+            <Target size={18} className="text-red-400" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-red-300/60 uppercase font-bold tracking-wide">
+              {isLive ? 'Current Highest Bid' : 'Highest Sale'}
+            </p>
+            <p className="text-base text-white font-bold truncate mt-0.5">
+              {(highestSoldPlayer.player as Player).name}
+              {highestSoldPlayer.teamName && <span className="text-pink-300/50 font-normal"> → {highestSoldPlayer.teamName}</span>}
+            </p>
+          </div>
+          <p className="text-xl font-black text-red-300 flex items-center gap-1.5 flex-shrink-0">
+            <IndianRupee size={16} className="text-red-400/60" />
+            {fmtCurrency(highestSoldPlayer.amount)}
+          </p>
+        </div>
+      )}
+
+      {/* ─── Live Bidding Indicator (only when LIVE) ─── */}
+      {isLive && currentBiddingPlayer && (
+        <div className="rounded-xl p-5 mb-7 flex items-center gap-5"
+          style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.1), rgba(200,50,120,0.06))', border: '1px solid rgba(255,0,102,0.25)' }}>
+          <div className="w-11 h-11 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ background: 'linear-gradient(135deg, rgba(255,0,102,0.2), rgba(200,50,120,0.15))', border: '1px solid rgba(255,0,102,0.35)' }}>
+            <Activity size={18} className="text-pink-400 animate-pulse" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-pink-300/60 uppercase font-bold tracking-wide">Currently Bidding</p>
+            <p className="text-base text-white font-bold truncate mt-0.5">{currentBiddingPlayer.name}</p>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <p className="text-xs text-pink-300/50 uppercase font-bold">Base Price</p>
+            <p className="text-base font-bold text-pink-300 mt-0.5">{fmtCurrency(currentBiddingPlayer.basePrice)}</p>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <p className="text-xs text-pink-300/50 uppercase font-bold">Current Bid</p>
+            <p className="text-base font-black text-white mt-0.5">{fmtCurrency((currentBiddingPlayer as any).currentBid || currentBiddingPlayer.basePrice)}</p>
+          </div>
+        </div>
+      )}
+
+      {/* ─── C. Team Performance ─── */}
+      <h3 className="text-base font-bold text-pink-300/70 uppercase tracking-wider mb-4 flex items-center gap-2">
+        <Trophy size={16} className="text-pink-400" />
+        Team Performance
+      </h3>
+      <div className="space-y-4 mb-8">
+        {filteredTeams.map(team => {
+          const isExpanded = expandedTeams[team.id] !== false;
+          const teamFilteredPlayers = filterPlayers(team.acquiredPlayers);
+          if (statusFilter !== 'all' && teamFilteredPlayers.length === 0) return null;
+          const budget = (team as any).budget || (team as any).totalBudget || 0;
+          const utilization = budget > 0 ? Math.min((team.totalSpent / budget) * 100, 100) : 0;
+          const highestPurchase = team.acquiredPlayers.reduce((max, p) => {
+            const amt = (p as any).soldAmount || (p as any).soldPrice || (p as any).currentBid || 0;
+            return amt > max.amount ? { player: p, amount: amt } : max;
+          }, { player: null as Player | null, amount: 0 });
+
+          return (
+            <div key={team.id} className="rounded-xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.06), rgba(200,50,120,0.03))', border: '1px solid rgba(255,0,102,0.15)' }}>
+              <button onClick={() => toggleTeam(team.id)}
+                className="w-full flex items-center gap-4 p-5 hover:bg-pink-500/[0.04] transition-all text-left">
+                <div className="w-12 h-12 rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0"
+                  style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.12), rgba(200,50,120,0.08))', border: '1px solid rgba(255,0,102,0.2)' }}>
+                  {team.logo ? (
+                    <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <Trophy size={20} className="text-pink-400/50" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-base font-bold text-white">{team.name}</p>
+                  <p className="text-sm text-pink-300/50 mt-0.5">{team.homeCity || ''} · {teamFilteredPlayers.length} bought · Spent {fmtCr(team.totalSpent)}</p>
+                </div>
+                {/* Budget utilization bar */}
+                <div className="w-32 flex-shrink-0 mr-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] text-pink-300/50 uppercase font-bold">Budget</span>
+                    <span className="text-[11px] font-bold text-pink-300/60">{utilization.toFixed(0)}%</span>
+                  </div>
+                  <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,0,102,0.08)' }}>
+                    <div className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${utilization}%`,
+                        background: utilization > 80 ? 'linear-gradient(90deg, #ef4444, #f87171)' : utilization > 50 ? 'linear-gradient(90deg, #ec4899, #f472b6)' : 'linear-gradient(90deg, #f472b6, #f9a8d4)' }} />
+                  </div>
+                </div>
+                <div className="text-right mr-3 flex-shrink-0">
+                  <p className="text-base font-bold text-pink-300">{fmtCr(team.remainingBudget || 0)}</p>
+                  <p className="text-xs text-pink-300/40">remaining</p>
+                </div>
+                {isExpanded ? <ChevronUp size={18} className="text-pink-400/40" /> : <ChevronDown size={18} className="text-pink-400/40" />}
+              </button>
+
+              {/* Expanded: Highest purchase + players */}
+              {isExpanded && (
+                <div className="border-t" style={{ borderColor: 'rgba(255,0,102,0.1)' }}>
+                  {highestPurchase.player && highestPurchase.amount > 0 && (
+                    <div className="px-5 py-3 flex items-center gap-3" style={{ background: 'rgba(239,68,68,0.05)' }}>
+                      <Target size={14} className="text-red-400/60" />
+                      <span className="text-xs text-red-300/60 uppercase font-bold">Top Buy:</span>
+                      <span className="text-sm text-white/80 font-bold">{highestPurchase.player.name}</span>
+                      <span className="text-sm text-red-300 font-black ml-auto">{fmtCurrency(highestPurchase.amount)}</span>
+                    </div>
+                  )}
+                  {teamFilteredPlayers.length > 0 ? teamFilteredPlayers.map((player, pIdx) => {
+                    const soldAmt = (player as any).soldAmount || (player as any).soldPrice || (player as any).currentBid || 0;
+                    const role = (player as any).roleId || (player as any).role || '';
+                    return (
+                      <div key={player.id || pIdx}
+                        className="flex items-center gap-4 px-5 py-4 hover:bg-pink-500/[0.03] transition-all"
+                        style={{ borderBottom: '1px solid rgba(255,0,102,0.06)' }}>
+                        <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden"
+                          style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.1), rgba(200,50,120,0.06))', border: '1px solid rgba(255,0,102,0.15)' }}>
+                          {(player as any).imageUrl ? (
+                            <img src={(player as any).imageUrl} alt={player.name} className="w-full h-full rounded-full object-cover" />
+                          ) : (
+                            <User size={15} className="text-pink-400/40" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[15px] font-bold text-white truncate">{player.name}</p>
+                          {role && <p className="text-xs text-pink-300/40 uppercase mt-0.5">{role}</p>}
+                        </div>
+                        <div className="text-right flex-shrink-0 w-24">
+                          <p className="text-[11px] text-pink-300/40 uppercase font-bold">Base</p>
+                          <p className="text-sm font-bold text-pink-300/60 mt-0.5">{fmtCurrency(player.basePrice)}</p>
+                        </div>
+                        <div className="text-right flex-shrink-0 w-24">
+                          <p className="text-[11px] text-pink-300/40 uppercase font-bold">Sold</p>
+                          <p className="text-sm font-black text-white mt-0.5">{soldAmt > 0 ? fmtCurrency(soldAmt) : '—'}</p>
+                        </div>
+                        <span className="px-3 py-1.5 rounded-full text-xs font-bold uppercase flex-shrink-0"
+                          style={statusStyle(player.status || '')}>
+                          {(player.status as string) === 'LIVE' ? '● LIVE' : player.status || 'Available'}
+                        </span>
+                        <button onClick={() => onNavigateHistory(player)}
+                          className="flex-shrink-0 px-4 py-2 rounded-lg text-xs font-bold transition-all"
+                          style={{ color: '#f472b6', background: 'rgba(255,20,100,0.06)', border: '1px solid rgba(255,0,102,0.15)' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,20,100,0.15)'; e.currentTarget.style.borderColor = 'rgba(255,0,102,0.3)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,20,100,0.06)'; e.currentTarget.style.borderColor = 'rgba(255,0,102,0.15)'; }}>
+                          History
+                        </button>
+                      </div>
+                    );
+                  }) : (
+                    <div className="px-5 py-8 text-center">
+                      <p className="text-pink-300/30 text-sm">No players match current filters</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ─── D. All Players (flat list) ─── */}
+      <h3 className="text-base font-bold text-pink-300/70 uppercase tracking-wider mb-4 flex items-center gap-2">
+        <Users size={16} className="text-pink-400" />
+        Player Outcomes {isLive && <span className="text-xs text-pink-400/50 normal-case font-normal ml-2">· updating live</span>}
+      </h3>
+      <div className="rounded-xl overflow-hidden mb-6" style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.05), rgba(200,50,120,0.03))', border: '1px solid rgba(255,0,102,0.12)' }}>
+        {/* Column headers */}
+        <div className="flex items-center gap-4 px-5 py-3" style={{ background: 'rgba(255,20,100,0.06)', borderBottom: '1px solid rgba(255,0,102,0.1)' }}>
+          <div className="w-9 flex-shrink-0" />
+          <p className="flex-1 text-[11px] text-pink-300/60 uppercase font-bold tracking-wide">Player</p>
+          <p className="w-20 text-[11px] text-pink-300/60 uppercase font-bold text-right">Base</p>
+          <p className="w-20 text-[11px] text-pink-300/60 uppercase font-bold text-right">Sold</p>
+          <p className="w-28 text-[11px] text-pink-300/60 uppercase font-bold text-center">Status</p>
+          <p className="w-32 text-[11px] text-pink-300/60 uppercase font-bold text-center">Team</p>
+          <div className="w-20 flex-shrink-0" />
+        </div>
+        {players.filter(p => {
+          if (statusFilter === 'sold' && p.status !== 'SOLD') return false;
+          if (statusFilter === 'unsold' && p.status !== 'UNSOLD') return false;
+          if (statusFilter === 'available' && p.status !== 'AVAILABLE' && p.status !== 'PENDING') return false;
+          if (statusFilter === 'live' && (p.status as string) !== 'LIVE') return false;
+          if (teamFilter) {
+            const pTeam = (p as any).soldTo || (p as any).teamId || (p as any).buyingTeamId || '';
+            if (pTeam !== teamFilter) return false;
+          }
+          if (reportSearch) {
+            const q = reportSearch.toLowerCase();
+            if (!p.name.toLowerCase().includes(q)) return false;
+          }
+          return true;
+        }).map((player, pIdx) => {
+          const soldAmt = (player as any).soldAmount || (player as any).soldPrice || (player as any).currentBid || 0;
+          const role = (player as any).roleId || (player as any).role || '';
+          const pTeamId = (player as any).soldTo || (player as any).teamId || (player as any).buyingTeamId;
+          const pTeam = pTeamId ? teams.find(t => t.id === pTeamId) : null;
+          const isCurrentLive = currentBiddingPlayer?.id === player.id;
+          return (
+            <div key={player.id || pIdx}
+              className={`flex items-center gap-4 px-5 py-3.5 transition-all ${isCurrentLive ? '' : 'hover:bg-pink-500/[0.03]'}`}
+              style={{
+                borderBottom: '1px solid rgba(255,0,102,0.06)',
+                ...(isCurrentLive ? { background: 'rgba(255,20,100,0.1)', borderLeft: '3px solid rgba(255,0,102,0.5)' } : {})
+              }}>
+              <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden"
+                style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.1), rgba(200,50,120,0.06))', border: '1px solid rgba(255,0,102,0.15)' }}>
+                {(player as any).imageUrl ? (
+                  <img src={(player as any).imageUrl} alt={player.name} className="w-full h-full rounded-full object-cover" />
+                ) : (
+                  <User size={15} className="text-pink-400/40" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[15px] font-bold text-white truncate">{player.name}</p>
+                {role && <p className="text-xs text-pink-300/40 uppercase">{role}</p>}
+              </div>
+              <p className="w-20 text-sm font-bold text-pink-300/50 text-right">{fmtCurrency(player.basePrice)}</p>
+              <p className="w-20 text-sm font-black text-white text-right">{soldAmt > 0 ? fmtCurrency(soldAmt) : '—'}</p>
+              <div className="w-28 flex justify-center">
+                <span className="px-3 py-1.5 rounded-full text-xs font-bold uppercase"
+                  style={statusStyle(player.status || '')}>
+                  {(player.status as string) === 'LIVE' ? '● LIVE' : player.status || 'Available'}
+                </span>
+              </div>
+              <p className="w-32 text-sm text-pink-300/50 text-center truncate">{pTeam?.name || '—'}</p>
+              <button onClick={() => onNavigateHistory(player)}
+                className="flex-shrink-0 w-20 text-center px-3 py-2 rounded-lg text-xs font-bold transition-all"
+                style={{ color: '#f472b6', background: 'rgba(255,20,100,0.06)', border: '1px solid rgba(255,0,102,0.15)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,20,100,0.15)'; e.currentTarget.style.borderColor = 'rgba(255,0,102,0.3)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,20,100,0.06)'; e.currentTarget.style.borderColor = 'rgba(255,0,102,0.15)'; }}>
+                History
+              </button>
+            </div>
+          );
+        })}
+        {players.length === 0 && (
+          <div className="px-5 py-14 text-center">
+            <User size={32} className="text-pink-400/15 mx-auto mb-3" />
+            <p className="text-pink-300/40 text-base">No players registered yet</p>
+          </div>
+        )}
+      </div>
+
+      {/* No results */}
+      {filteredTeams.length === 0 && (teamFilter || reportSearch) && (
+        <div className="rounded-xl p-14 text-center" style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.06), rgba(200,50,120,0.03))', border: '1px dashed rgba(255,0,102,0.2)' }}>
+          <Search size={32} className="text-pink-400/20 mx-auto mb-3" />
+          <p className="text-pink-300/40 text-base">No teams or players match your search</p>
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface AdminDashboardPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -33,7 +764,7 @@ interface SystemLog {
 
 export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   // Main navigation state
-  const [activeSection, setActiveSection] = useState<'overview' | 'settings' | 'players' | 'teams' | 'auctioneers' | 'liveMonitor' | 'liveRoom' | 'analytics' | 'reports'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'settings' | 'players' | 'teams' | 'auctioneers' | 'liveMonitor' | 'liveRoom' | 'reports' | 'addTeam' | 'addPlayer' | 'teamDetail' | 'report' | 'history'>('overview');
   
   // Resolved match state - if currentMatch is undefined, we'll fetch the first available match
   const [resolvedMatch, setResolvedMatch] = useState<MatchData | null>(currentMatch);
@@ -58,9 +789,23 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     duration: 120,
     bidIncrement: 100000,
     maxTeams: 8,
+    minSquadSize: 11,
     maxSquadSize: 15,
     baseTeamBudget: 10000000,
   });
+  
+  // Account settings edit state
+  const [editingAccount, setEditingAccount] = useState(false);
+  const [accountSettings, setAccountSettings] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    organizationName: '',
+    organizationType: '',
+    designation: '',
+  });
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'account' | 'platform' | 'media'>('account');
   
   // Confirmation modals
   const [showConfirmation, setShowConfirmation] = useState(false);
@@ -104,100 +849,115 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   // Sidebar collapse state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // Auto-fetch admin's own match if currentMatch is undefined
+  // ─── Team/Player Registration State (copied from Auctioneer) ──────────────
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [teamSearchQuery, setTeamSearchQuery] = useState('');
+  const [historyPlayer, setHistoryPlayer] = useState<Player | null>(null);
+  const [addTeamLoading, setAddTeamLoading] = useState(false);
+  const [addTeamError, setAddTeamError] = useState('');
+  
+  // Add Team Form State
+  const [teamName, setTeamName] = useState('');
+  const [teamShortCode, setTeamShortCode] = useState('');
+  const [homeCity, setHomeCity] = useState('');
+  const [roleInTeam, setRoleInTeam] = useState('');
+  const [ownerName, setOwnerName] = useState('');
+  const [teamEmail, setTeamEmail] = useState('');
+  const [teamPhone, setTeamPhone] = useState('');
+  const [teamPassword, setTeamPassword] = useState('');
+  const [governmentId, setGovernmentId] = useState('');
+  
+  // File uploads
+  const [teamLogoFile, setTeamLogoFile] = useState<File | null>(null);
+  const [teamLogoPreviewUrl, setTeamLogoPreviewUrl] = useState<string | null>(null);
+  const [authLetterFile, setAuthLetterFile] = useState<File | null>(null);
+  const [govIdFile, setGovIdFile] = useState<File | null>(null);
+  const [isDraggingLogo, setIsDraggingLogo] = useState(false);
+  const [isDraggingAuth, setIsDraggingAuth] = useState(false);
+  const [isDraggingGovId, setIsDraggingGovId] = useState(false);
+
+  // Add Player Form State
+  const [playerName, setPlayerName] = useState('');
+  const [playerEmail, setPlayerEmail] = useState('');
+  const [playerPhone, setPlayerPhone] = useState('');
+  const [playerPassword, setPlayerPassword] = useState('');
+  const [playerAge, setPlayerAge] = useState('25');
+  const [playerGender, setPlayerGender] = useState('');
+  const [playerNationality, setPlayerNationality] = useState('');
+  const [playerRoleId, setPlayerRoleId] = useState('');
+  const [playerBasePrice, setPlayerBasePrice] = useState('500000');
+  const [playerIsOverseas, setPlayerIsOverseas] = useState(false);
+  const [playerBio, setPlayerBio] = useState('');
+  const [playerExperience, setPlayerExperience] = useState('');
+  const [playerBattingStyle, setPlayerBattingStyle] = useState('');
+  const [playerBowlingStyle, setPlayerBowlingStyle] = useState('');
+  const [playerPreviousTeams, setPlayerPreviousTeams] = useState('');
+  const [playerCategory, setPlayerCategory] = useState('');
+  const [playerGovId, setPlayerGovId] = useState('');
+  const [playerPhotoFile, setPlayerPhotoFile] = useState<File | null>(null);
+  const [playerPhotoPreviewUrl, setPlayerPhotoPreviewUrl] = useState<string | null>(null);
+  const [playerGovIdFile, setPlayerGovIdFile] = useState<File | null>(null);
+  const [isDraggingPlayerPhoto, setIsDraggingPlayerPhoto] = useState(false);
+  const [isDraggingPlayerGovId, setIsDraggingPlayerGovId] = useState(false);
+  const [addPlayerLoading, setAddPlayerLoading] = useState(false);
+  const [addPlayerError, setAddPlayerError] = useState('');
+
+  // LOCKED MATCH CONTEXT — Only use the match passed from App.tsx (derived from sessionStorage matchId)
+  // Never auto-fetch or switch to a different match by email scanning
   useEffect(() => {
     if (currentMatch) {
-      console.log('✅ Using provided currentMatch:', currentMatch.id, currentMatch.name);
+      console.log('🔒 LOCKED: Using provided currentMatch:', currentMatch.id, currentMatch.name);
       setResolvedMatch(currentMatch);
+      setLoading(false);
       return;
     }
 
-    // Fetch admin's own match based on their email
-    const fetchAdminMatch = async () => {
-      setLoading(true); // Start loading
-      
-      // Safety check - if currentUser.email is not set, can't fetch
-      if (!currentUser?.email) {
-        console.error('❌ CRITICAL: currentUser.email is undefined!', { currentUser });
-        setLoading(false);
-        setResolvedMatch(null);
-        return;
-      }
-      
-      try {
-        const adminEmail = currentUser.email.toLowerCase().trim(); // Normalize
-        console.log('🔍 Fetching match for admin - currentUser:', { 
-          email: adminEmail, 
-          name: currentUser.name, 
-          role: currentUser.role 
-        });
-        
-        const response = await fetch(`${API_BASE}/matches`);
-        if (response.ok) {
-          const data = await response.json();
-          console.log('📦 All matches from API:', data.data?.length, 'matches');
+    // currentMatch is null — try to fetch the SPECIFIC match from sessionStorage matchId
+    const savedMatchId = sessionStorage.getItem('hypehammer_current_match_id');
+    if (savedMatchId) {
+      console.log('🔒 currentMatch is null but sessionStorage has matchId:', savedMatchId, '— fetching it directly');
+      const fetchSpecificMatch = async () => {
+        setLoading(true);
+        try {
+          console.log('📡 Fetching match from API:', `${API_BASE}/matches/${savedMatchId}`);
+          const response = await fetch(`${API_BASE}/matches/${savedMatchId}`);
+          console.log('📡 API Response status:', response.status, response.statusText);
           
-          if (data.data && Array.isArray(data.data) && data.data.length > 0) {
-            // Log each match for debugging
-            data.data.forEach((m: any) => {
-              console.log(`  Match: ${m.id} - ${m.name}`);
-              console.log(`    email: "${m.email}", organizerEmail: "${m.organizerEmail}", adminEmail: "${m.adminEmail}"`);
-            });
-            
-            // Find match that belongs to this admin (matches their email)
-            const adminMatch = data.data.find((match: any) => {
-              const matchEmail = (match.email || '').toLowerCase().trim();
-              const matchOrganizerEmail = (match.organizerEmail || '').toLowerCase().trim();
-              const matchAdminEmail = (match.adminEmail || '').toLowerCase().trim();
-              
-              const emailMatch = matchEmail === adminEmail;
-              const organizerMatch = matchOrganizerEmail === adminEmail;
-              const adminEmailMatch = matchAdminEmail === adminEmail;
-              
-              const isMatch = emailMatch || organizerMatch || adminEmailMatch;
-              
-              console.log(`🔎 Checking match ${match.id}:`);
-              console.log(`   email ("${matchEmail}") === adminEmail ("${adminEmail}") → ${emailMatch}`);
-              console.log(`   organizerEmail ("${matchOrganizerEmail}") === adminEmail ("${adminEmail}") → ${organizerMatch}`);
-              console.log(`   adminEmail ("${matchAdminEmail}") === adminEmail ("${adminEmail}") → ${adminEmailMatch}`);
-              console.log(`   Overall match: ${isMatch}`);
-              
-              return isMatch;
-            });
-            
-            if (adminMatch) {
-              console.log('✅ Found admin match:', adminMatch.name, adminMatch.id);
-              setResolvedMatch(adminMatch);
-              setLoading(false); // Finish loading after finding match
+          if (response.ok) {
+            const data = await response.json();
+            console.log('📡 API Response data:', data);
+            const matchData = data.data || data;
+            if (matchData && matchData.id) {
+              console.log('🔒 ✅ Loaded locked match from API:', matchData.name, matchData.id);
+              setResolvedMatch(matchData);
             } else {
-              console.warn('⚠️ No match found for admin email:', adminEmail);
-              console.log('📋 Available matches:', data.data.map((m: any) => ({
-                id: m.id,
-                name: m.name,
-                email: m.email,
-                organizerEmail: m.organizerEmail,
-                adminEmail: m.adminEmail
-              })));
-              console.error('❌ CRITICAL: Admin email does not match any season. Check your email configuration in the database.');
+              console.error('⚠️ ❌ Match not found for saved ID:', savedMatchId, 'Response:', data);
               setResolvedMatch(null);
-              setLoading(false); // Finish loading even if no match found
             }
           } else {
-            console.log('⚠️ No matches returned from API');
-            setLoading(false);
+            const errorText = await response.text();
+            console.error('❌ Failed to fetch match:', savedMatchId, 'Status:', response.status, 'Error:', errorText);
+            setResolvedMatch(null);
           }
-        } else {
-          console.error('Failed to fetch matches:', response.status);
+        } catch (error) {
+          console.error('❌ Error fetching locked match:', error);
+          console.error('❌ Error details:', {
+            name: (error as Error).name,
+            message: (error as Error).message,
+            stack: (error as Error).stack
+          });
+          setResolvedMatch(null);
+        } finally {
           setLoading(false);
         }
-      } catch (error) {
-        console.error('Failed to fetch admin match:', error);
-        setLoading(false);
-      }
-    };
-
-    fetchAdminMatch();
-  }, [currentMatch, currentUser.email]);
+      };
+      fetchSpecificMatch();
+    } else {
+      console.warn('🔒 ⚠️ No match provided and no matchId in sessionStorage. Admin must select a match.');
+      setResolvedMatch(null);
+      setLoading(false);
+    }
+  }, [currentMatch]);
 
   // Use resolvedMatch for all operations
   const activeMatch = resolvedMatch;
@@ -305,12 +1065,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   // Season Settings handlers
   const handleSaveSettings = async () => {
     try {
-      if (!currentMatch?.id) {
+      const matchId = resolvedMatch?.id || currentMatch?.id;
+      if (!matchId) {
         alert('No match/season selected');
         return;
       }
 
-      const response = await fetch(`${API_BASE}/auctions/${currentMatch.id}`, {
+      const response = await fetch(`${API_BASE}/matches/${matchId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -318,12 +1079,21 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         body: JSON.stringify({
           name: seasonSettings.name,
           sport: seasonSettings.sport,
+          // Top-level fields (match registration format)
+          maxTeams: seasonSettings.maxTeams,
+          maxPlayersPerTeam: seasonSettings.maxSquadSize,
+          baseBudgetPerTeam: seasonSettings.baseTeamBudget,
+          // Nested config (for consistency with config readers)
           config: {
+            sport: seasonSettings.sport,
             duration: seasonSettings.duration,
             bidIncrement: seasonSettings.bidIncrement,
             maxTeams: seasonSettings.maxTeams,
-            maxSquadSize: seasonSettings.maxSquadSize,
-            baseTeamBudget: seasonSettings.baseTeamBudget,
+            totalBudget: seasonSettings.baseTeamBudget,
+            squadSize: {
+              min: seasonSettings.minSquadSize,
+              max: seasonSettings.maxSquadSize,
+            },
           }
         }),
       });
@@ -659,16 +1429,95 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     if (activeMatch) {
       setSeasonSettings({
         name: activeMatch.name || '',
-        sport: activeMatch.sport || 'Cricket',
+        sport: activeMatch.sport || activeMatch.sportType || activeMatch.config?.sport || 'Cricket',
         startDate: activeMatch.matchDate ? new Date(activeMatch.matchDate).toISOString().split('T')[0] : '',
         duration: activeMatch.config?.duration || 120,
         bidIncrement: activeMatch.config?.bidIncrement || 100000,
-        maxTeams: activeMatch.config?.maxTeams || 8,
-        maxSquadSize: activeMatch.config?.maxSquadSize || 15,
-        baseTeamBudget: activeMatch.config?.baseTeamBudget || 10000000,
+        maxTeams: activeMatch.maxTeams || activeMatch.config?.maxTeams || 8,
+        minSquadSize: activeMatch.config?.squadSize?.min || 11,
+        maxSquadSize: activeMatch.maxPlayersPerTeam || activeMatch.config?.squadSize?.max || activeMatch.config?.maxSquadSize || 15,
+        baseTeamBudget: activeMatch.baseBudgetPerTeam || activeMatch.config?.totalBudget || activeMatch.config?.baseTeamBudget || 10000000,
       });
     }
   }, [activeMatch]);
+
+  // Initialize account settings from active match
+  useEffect(() => {
+    if (activeMatch) {
+      setAccountSettings({
+        name: activeMatch.organizerName || currentUser.name || '',
+        email: activeMatch.organizerEmail || activeMatch.adminEmail || currentUser.email || '',
+        phone: activeMatch.organizerPhone || '',
+        organizationName: activeMatch.organizationName || '',
+        organizationType: activeMatch.organizationType || '',
+        designation: activeMatch.designation || '',
+      });
+    }
+  }, [activeMatch]);
+
+  // Profile photo upload handler
+  const handleProfilePhotoUpload = async (file: File) => {
+    const matchId = resolvedMatch?.id || currentMatch?.id;
+    if (!matchId) return;
+    setUploadingPhoto(true);
+    try {
+      const photoUrl = await uploadProfilePicture(file, matchId);
+      // Save URL to match document
+      const res = await fetch(`${API_BASE}/matches/${matchId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profilePhotoURL: photoUrl }),
+      });
+      if (res.ok) {
+        setResolvedMatch(prev => prev ? { ...prev, profilePhotoURL: photoUrl } : null);
+        addSystemLog('admin', 'Profile photo updated');
+      }
+    } catch (err) {
+      console.error('Profile photo upload error:', err);
+      addSystemLog('error', 'Failed to upload profile photo');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  // Save account settings handler
+  const handleSaveAccountSettings = async () => {
+    const matchId = resolvedMatch?.id || currentMatch?.id;
+    if (!matchId) { alert('No match/season selected'); return; }
+    try {
+      const res = await fetch(`${API_BASE}/matches/${matchId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organizerName: accountSettings.name,
+          organizerEmail: accountSettings.email,
+          organizerPhone: accountSettings.phone,
+          organizationName: accountSettings.organizationName,
+          organizationType: accountSettings.organizationType,
+          designation: accountSettings.designation,
+        }),
+      });
+      if (res.ok) {
+        setResolvedMatch(prev => prev ? {
+          ...prev,
+          organizerName: accountSettings.name,
+          organizerEmail: accountSettings.email,
+          organizerPhone: accountSettings.phone,
+          organizationName: accountSettings.organizationName,
+          organizationType: accountSettings.organizationType,
+          designation: accountSettings.designation as any,
+        } : null);
+        addSystemLog('admin', 'Account settings updated');
+        alert('Account settings saved!');
+        setEditingAccount(false);
+      } else {
+        throw new Error('Failed to save');
+      }
+    } catch (err) {
+      console.error('Save account settings error:', err);
+      alert('Failed to save account settings');
+    }
+  };
 
   // CONSOLIDATED Firebase real-time listeners (matches other working dashboards)
   useEffect(() => {
@@ -1058,14 +1907,324 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     return csvContent;
   };
 
+  // ─── Team/Player Registration Handlers (copied from Auctioneer) ────────────
+  const handleAddTeam = async () => {
+    if (!teamName.trim()) { setAddTeamError('Team Name is required'); return; }
+    if (!teamShortCode.trim()) { setAddTeamError('Team Short Code is required'); return; }
+    if (!homeCity.trim()) { setAddTeamError('Home City is required'); return; }
+    if (!roleInTeam) { setAddTeamError('Role in Team is required'); return; }
+    if (!ownerName.trim()) { setAddTeamError('Owner/Representative Name is required'); return; }
+    if (!teamEmail.trim()) { setAddTeamError('Email is required'); return; }
+    if (!teamPassword.trim()) { setAddTeamError('Password is required'); return; }
+    if (!teamLogoFile) { setAddTeamError('Team Logo is required'); return; }
+    if (!authLetterFile) { setAddTeamError('Authorization Letter is required'); return; }
+    if (!governmentId.trim()) { setAddTeamError('Government ID Number is required'); return; }
+    if (!govIdFile) { setAddTeamError('Government ID Proof document is required'); return; }
+    const matchRef = resolvedMatch || currentMatch;
+    if (!matchRef?.id) { setAddTeamError('No match selected.'); return; }
+
+    setAddTeamLoading(true);
+    setAddTeamError('');
+
+    try {
+      console.log('================== TEAM REGISTRATION START ==================');
+      const tempTeamId = `team_${Date.now()}`;
+      const logoUrl = await uploadTeamLogo(teamLogoFile, tempTeamId);
+      const authLetterUrl = await uploadDocument(authLetterFile, 'authorization-letters', tempTeamId);
+      const govIdUrl = await uploadDocument(govIdFile, 'government-ids', tempTeamId);
+
+      const registrationData = {
+        fullName: ownerName, email: teamEmail, password: teamPassword, phone: teamPhone,
+        seasonId: matchRef.id, teamName, teamShortCode, homeCity, roleInTeam,
+        teamLogo: logoUrl, authorizationLetter: authLetterUrl,
+        governmentId, governmentIdFile: govIdUrl, role: 'TEAM_REP'
+      };
+
+      const result = await registerTeam(registrationData);
+      if (result) {
+        const teamsRes = await fetch(`${API_BASE}/teams?matchId=${matchRef.id}`);
+        if (teamsRes.ok) {
+          const teamsData = await teamsRes.json();
+          if (teamsData.data && Array.isArray(teamsData.data)) setTeams(teamsData.data);
+          else if (Array.isArray(teamsData)) setTeams(teamsData);
+        }
+        resetAddTeamForm();
+        setActiveSection('teams');
+      }
+    } catch (err: any) {
+      console.error('❌ Team registration failed:', err);
+      setAddTeamError(err?.message || 'Failed to register team. Please try again.');
+    } finally {
+      setAddTeamLoading(false);
+    }
+  };
+
+  const resetAddTeamForm = () => {
+    setTeamName(''); setTeamShortCode(''); setHomeCity(''); setRoleInTeam('');
+    setOwnerName(''); setTeamEmail(''); setTeamPhone(''); setTeamPassword(''); setGovernmentId('');
+    if (teamLogoPreviewUrl) URL.revokeObjectURL(teamLogoPreviewUrl);
+    setTeamLogoFile(null); setTeamLogoPreviewUrl(null);
+    setAuthLetterFile(null); setGovIdFile(null); setAddTeamError('');
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 10 * 1024 * 1024) { setAddTeamError('Team logo file size must be less than 10MB'); return; }
+      if (teamLogoPreviewUrl) URL.revokeObjectURL(teamLogoPreviewUrl);
+      const previewUrl = URL.createObjectURL(file);
+      setTeamLogoFile(file); setTeamLogoPreviewUrl(previewUrl); setAddTeamError('');
+    }
+  };
+
+  const handleAuthLetterUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 10 * 1024 * 1024) { setAddTeamError('Authorization letter file size must be less than 10MB'); return; }
+      setAuthLetterFile(file); setAddTeamError('');
+    }
+  };
+
+  const handleGovIdUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 10 * 1024 * 1024) { setAddTeamError('Government ID file size must be less than 10MB'); return; }
+      setGovIdFile(file); setAddTeamError('');
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent, type: 'logo' | 'auth' | 'govId') => {
+    e.preventDefault();
+    if (type === 'logo') setIsDraggingLogo(true);
+    else if (type === 'auth') setIsDraggingAuth(true);
+    else setIsDraggingGovId(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent, type: 'logo' | 'auth' | 'govId') => {
+    e.preventDefault();
+    if (type === 'logo') setIsDraggingLogo(false);
+    else if (type === 'auth') setIsDraggingAuth(false);
+    else setIsDraggingGovId(false);
+  };
+
+  const handleDrop = (e: React.DragEvent, type: 'logo' | 'auth' | 'govId') => {
+    e.preventDefault();
+    if (type === 'logo') setIsDraggingLogo(false);
+    else if (type === 'auth') setIsDraggingAuth(false);
+    else setIsDraggingGovId(false);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file.size > 10 * 1024 * 1024) { setAddTeamError('File size must be less than 10MB'); return; }
+      if (type === 'logo') {
+        if (!file.type.startsWith('image/')) { setAddTeamError('Team logo must be an image file'); return; }
+        if (teamLogoPreviewUrl) URL.revokeObjectURL(teamLogoPreviewUrl);
+        const previewUrl = URL.createObjectURL(file);
+        setTeamLogoFile(file); setTeamLogoPreviewUrl(previewUrl);
+      } else if (type === 'auth') {
+        if (file.type !== 'application/pdf') { setAddTeamError('Authorization letter must be a PDF file'); return; }
+        setAuthLetterFile(file);
+      } else {
+        const validTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+        if (!validTypes.includes(file.type)) { setAddTeamError('Government ID must be PDF, JPG, JPEG, or PNG'); return; }
+        setGovIdFile(file);
+      }
+      setAddTeamError('');
+    }
+  };
+
+  // ─── ADD PLAYER FORM HANDLERS ──────────────────────────────────────────
+  const resetAddPlayerForm = () => {
+    setPlayerName(''); setPlayerEmail(''); setPlayerPhone(''); setPlayerPassword('');
+    setPlayerAge('25'); setPlayerGender(''); setPlayerNationality(''); setPlayerRoleId('');
+    setPlayerBasePrice('500000'); setPlayerIsOverseas(false); setPlayerBio('');
+    setPlayerExperience(''); setPlayerBattingStyle(''); setPlayerBowlingStyle('');
+    setPlayerPreviousTeams(''); setPlayerCategory(''); setPlayerGovId('');
+    if (playerPhotoPreviewUrl) URL.revokeObjectURL(playerPhotoPreviewUrl);
+    setPlayerPhotoFile(null); setPlayerPhotoPreviewUrl(null);
+    setPlayerGovIdFile(null); setAddPlayerError('');
+  };
+
+  const handlePlayerPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 10 * 1024 * 1024) { setAddPlayerError('Photo must be less than 10MB'); return; }
+      if (!file.type.startsWith('image/')) { setAddPlayerError('File must be an image'); return; }
+      if (playerPhotoPreviewUrl) URL.revokeObjectURL(playerPhotoPreviewUrl);
+      setPlayerPhotoFile(file); setPlayerPhotoPreviewUrl(URL.createObjectURL(file)); setAddPlayerError('');
+    }
+  };
+
+  const handlePlayerGovIdUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 10 * 1024 * 1024) { setAddPlayerError('File must be less than 10MB'); return; }
+      const validTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+      if (!validTypes.includes(file.type)) { setAddPlayerError('Must be PDF, JPG, or PNG'); return; }
+      setPlayerGovIdFile(file); setAddPlayerError('');
+    }
+  };
+
+  const handlePlayerDragOver = (e: React.DragEvent, type: 'photo' | 'govId') => {
+    e.preventDefault();
+    if (type === 'photo') setIsDraggingPlayerPhoto(true);
+    else setIsDraggingPlayerGovId(true);
+  };
+
+  const handlePlayerDragLeave = (e: React.DragEvent, type: 'photo' | 'govId') => {
+    e.preventDefault();
+    if (type === 'photo') setIsDraggingPlayerPhoto(false);
+    else setIsDraggingPlayerGovId(false);
+  };
+
+  const handlePlayerDrop = (e: React.DragEvent, type: 'photo' | 'govId') => {
+    e.preventDefault();
+    if (type === 'photo') setIsDraggingPlayerPhoto(false);
+    else setIsDraggingPlayerGovId(false);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file.size > 10 * 1024 * 1024) { setAddPlayerError('File must be less than 10MB'); return; }
+      if (type === 'photo') {
+        if (!file.type.startsWith('image/')) { setAddPlayerError('Must be an image file'); return; }
+        if (playerPhotoPreviewUrl) URL.revokeObjectURL(playerPhotoPreviewUrl);
+        setPlayerPhotoFile(file); setPlayerPhotoPreviewUrl(URL.createObjectURL(file));
+      } else {
+        const validTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+        if (!validTypes.includes(file.type)) { setAddPlayerError('Must be PDF, JPG, or PNG'); return; }
+        setPlayerGovIdFile(file);
+      }
+      setAddPlayerError('');
+    }
+  };
+
+  const handleAddPlayer = async () => {
+    if (!playerName.trim()) { setAddPlayerError('Player Name is required'); return; }
+    if (!playerEmail.trim()) { setAddPlayerError('Email is required'); return; }
+    if (!playerPassword.trim()) { setAddPlayerError('Password is required'); return; }
+    if (!playerGender) { setAddPlayerError('Gender is required'); return; }
+    if (!playerNationality.trim()) { setAddPlayerError('Nationality is required'); return; }
+    if (!playerRoleId) { setAddPlayerError('Playing Role is required'); return; }
+    if (!playerBasePrice || parseInt(playerBasePrice) < 50000) { setAddPlayerError('Base Price must be at least ₹50,000'); return; }
+    if (!playerPhotoFile) { setAddPlayerError('Player Photo is required'); return; }
+    if (!playerGovId.trim()) { setAddPlayerError('Government ID Number is required'); return; }
+    if (!playerGovIdFile) { setAddPlayerError('Government ID Proof is required'); return; }
+    const matchRef = resolvedMatch || currentMatch;
+    if (!matchRef?.id) { setAddPlayerError('No match selected.'); return; }
+
+    setAddPlayerLoading(true);
+    setAddPlayerError('');
+
+    try {
+      console.log('================== PLAYER REGISTRATION START ==================');
+      const tempPlayerId = `player_${Date.now()}`;
+      const photoUrl = await uploadPlayerPhoto(playerPhotoFile, tempPlayerId);
+      const govIdUrl = await uploadDocument(playerGovIdFile, 'government-ids', tempPlayerId);
+
+      const registrationData = {
+        fullName: playerName, email: playerEmail, phone: playerPhone, password: playerPassword,
+        role: 'PLAYER', seasonId: matchRef.id, governmentId: playerGovId, governmentIdFile: govIdUrl,
+        dateOfBirth: '', age: parseInt(playerAge) || 25, gender: playerGender, nationality: playerNationality,
+        playerPhoto: photoUrl, imageUrl: photoUrl, sport: matchRef.config?.sport || 'CRICKET',
+        playingRole: playerRoleId, roleId: playerRoleId, battingStyle: playerBattingStyle,
+        bowlingStyle: playerBowlingStyle, experienceLevel: playerExperience, previousTeams: playerPreviousTeams,
+        basePrice: parseInt(playerBasePrice) || 500000, playerCategory: playerCategory,
+        availability: 'Yes', consent: true, isOverseas: playerIsOverseas, bio: playerBio, name: playerName,
+      };
+
+      const result = await registerPlayer(registrationData);
+      if (result) {
+        const playersRes = await fetch(`${API_BASE}/players?matchId=${matchRef.id}`);
+        if (playersRes.ok) {
+          const playersData = await playersRes.json();
+          if (playersData.data && Array.isArray(playersData.data)) setPlayers(playersData.data);
+          else if (Array.isArray(playersData)) setPlayers(playersData);
+        }
+        resetAddPlayerForm();
+        setActiveSection('players');
+      } else {
+        setAddPlayerError('Registration failed. The API returned no data — please check if the player already exists.');
+      }
+    } catch (err: any) {
+      console.error('❌ Player registration failed:', err);
+      setAddPlayerError(err?.message || 'Failed to register player. Please try again.');
+    } finally {
+      setAddPlayerLoading(false);
+    }
+  };
+
+  // Helper: Calculate player count for a team from players data
+  const getTeamPlayerCount = useMemo(() => {
+    const playerCountMap: Record<string, number> = {};
+    players.forEach(player => {
+      const teamId = (player as any).soldTo || player.teamId;
+      if (teamId && player.status === 'SOLD') {
+        playerCountMap[teamId] = (playerCountMap[teamId] || 0) + 1;
+      }
+    });
+    return (teamId: string) => playerCountMap[teamId] || 0;
+  }, [players]);
+
+  // Report computed values
+  const soldPlayersCount = players.filter(p => p.status === 'SOLD').length;
+  const unsoldPlayersCount = players.filter(p => p.status === 'UNSOLD').length;
+  const pendingPlayersCount = players.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING').length;
+  const totalAmountSpent = players.filter(p => p.status === 'SOLD').reduce((sum, p) => sum + ((p as any).soldAmount || (p as any).soldPrice || (p as any).currentBid || 0), 0);
+
   return (
     <>
-      {/* Loading State */}
+      {/* Loading State \u2014 HUD Boot Sequence */}
       {loading && (
-        <div className="h-screen w-screen flex items-center justify-center bg-gradient-to-br from-white via-blue-50 to-purple-50">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-blue-600 text-lg font-bold">Loading dashboard...</p>
+        <div className="h-screen w-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 25%, #1a0a12 50%, #0d0d1a 100%)' }}>
+          <div className="absolute inset-0 opacity-[0.03]" style={{ background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255, 0, 102, 0.3) 2px, rgba(255, 0, 102, 0.3) 4px)' }}></div>
+          <div className="text-center relative z-10">
+            <div className="relative mx-auto mb-6 w-20 h-20">
+              <div className="animate-spin rounded-full h-20 w-20 border-4 border-pink-500/20 border-t-pink-500"></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Shield size={28} className="text-pink-400/60" />
+              </div>
+            </div>
+            <p className="text-pink-400 text-lg font-black uppercase tracking-wider">Initializing Control Room</p>
+            <div className="mt-3 w-48 h-1 mx-auto bg-pink-900/30 rounded-full overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-pink-500 to-red-500 rounded-full" style={{animation: 'hud-load 2s ease-in-out infinite'}}></div>
+            </div>
+            <p className="text-pink-400/40 text-xs mt-2 font-semibold">Loading admin systems...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Error State - No Match Found */}
+      {!loading && !activeMatch && (
+        <div className="h-screen w-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 25%, #1a0a12 50%, #0d0d1a 100%)' }}>
+          <div className="absolute inset-0 opacity-[0.03]" style={{ background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255, 0, 102, 0.3) 2px, rgba(255, 0, 102, 0.3) 4px)' }}></div>
+          <div className="text-center relative z-10 max-w-md mx-auto p-8">
+            <div className="relative mx-auto mb-6 w-20 h-20 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.15), rgba(200,50,120,0.1))', border: '2px solid rgba(255,0,102,0.3)' }}>
+              <AlertCircle size={36} className="text-red-400" />
+            </div>
+            <h1 className="text-2xl font-black text-white mb-3">Match Data Not Found</h1>
+            <p className="text-pink-300/60 text-sm font-medium mb-6">
+              Unable to load match data. The match ID may be invalid or there was an error connecting to the database.
+            </p>
+            <div className="space-y-3">
+              <div className="rounded-xl p-4 text-left" style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.08), rgba(200,50,120,0.04))', border: '1px solid rgba(255,0,102,0.15)' }}>
+                <p className="text-xs text-pink-300/40 uppercase font-bold mb-1">Match ID from Session</p>
+                <p className="text-sm text-white font-mono">{sessionStorage.getItem('hypehammer_current_match_id') || 'None'}</p>
+              </div>
+              <div className="rounded-xl p-4 text-left" style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.08), rgba(200,50,120,0.04))', border: '1px solid rgba(255,0,102,0.15)' }}>
+                <p className="text-xs text-pink-300/40 uppercase font-bold mb-1">Logged in as</p>
+                <p className="text-sm text-white">{currentUser?.email || 'Unknown'}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                sessionStorage.removeItem('hypehammer_current_match_id');
+                window.location.href = '/';
+              }}
+              className="mt-6 px-6 py-3 rounded-full bg-gradient-to-r from-pink-500 to-red-500 hover:from-pink-600 hover:to-red-600 text-white font-bold text-sm shadow-lg transition-all flex items-center gap-2 mx-auto"
+            >
+              <ArrowLeft size={18} />
+              Return to Home
+            </button>
           </div>
         </div>
       )}
@@ -1073,1107 +2232,2179 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       {/* Main Dashboard - Only show if we have an active match */}
       {!loading && activeMatch && (
         <>
-      {/* Custom Scrollbar Styles */}
+      {/* AAA ESPORTS COMMAND CENTER — Cinematic Styles */}
       <style>{`
-        .custom-scrollbar {
-          -ms-overflow-style: none;  /* IE and Edge */
-          scrollbar-width: none;  /* Firefox */
+        .custom-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .custom-scrollbar::-webkit-scrollbar { display: none; }
+
+        /* === CORE KEYFRAMES — Fresh Red/Pink Energy === */
+        @keyframes neon-pulse {
+          0%, 100% { box-shadow: 0 0 10px rgba(255, 0, 102, 0.5), 0 0 30px rgba(255, 0, 102, 0.25), 0 0 60px rgba(255, 0, 102, 0.1); }
+          50% { box-shadow: 0 0 20px rgba(255, 0, 102, 0.7), 0 0 50px rgba(255, 0, 102, 0.4), 0 0 90px rgba(255, 0, 102, 0.18); }
         }
-        .custom-scrollbar::-webkit-scrollbar {
-          display: none;  /* Chrome, Safari, Opera */
+        @keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-10px); } }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+        @keyframes ring-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes pulse-glow { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.9; } }
+        @keyframes bg-shift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        @keyframes scan-line { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
+        @keyframes hud-blink { 0%, 90%, 100% { opacity: 1; } 95% { opacity: 0.2; } }
+        @keyframes neon-border-pulse { 0%, 100% { border-color: rgba(255, 0, 102, 0.15); } 50% { border-color: rgba(255, 0, 102, 0.65); } }
+        @keyframes hud-load { 0% { width: 0%; } 100% { width: 100%; } }
+
+        @keyframes holographic-ring {
+          0% { transform: rotate(0deg) scale(1); opacity: 0.6; }
+          50% { transform: rotate(180deg) scale(1.05); opacity: 1; }
+          100% { transform: rotate(360deg) scale(1); opacity: 0.6; }
         }
+        @keyframes particle-drift {
+          0% { transform: translate(0, 0) scale(1); opacity: 0; }
+          20% { opacity: 1; }
+          80% { opacity: 0.6; }
+          100% { transform: translate(var(--dx, 40px), var(--dy, -60px)) scale(0); opacity: 0; }
+        }
+        @keyframes light-sweep {
+          0% { transform: translateX(-100%) skewX(-15deg); }
+          100% { transform: translateX(300%) skewX(-15deg); }
+        }
+        @keyframes hex-breathe {
+          0%, 100% { filter: drop-shadow(0 0 6px rgba(255, 0, 102, 0.4)); transform: scale(1); }
+          50% { filter: drop-shadow(0 0 16px rgba(255, 0, 102, 0.8)); transform: scale(1.06); }
+        }
+        @keyframes data-stream {
+          0% { background-position: 0 0; }
+          100% { background-position: 0 -200px; }
+        }
+        @keyframes energy-flow {
+          0% { background-position: 0% 0%; }
+          100% { background-position: 0% 200%; }
+        }
+        @keyframes radar-sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes capsule-in {
+          0% { transform: translateY(24px) scale(0.94); opacity: 0; }
+          100% { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        @keyframes counter-roll {
+          0% { transform: translateY(100%); opacity: 0; }
+          100% { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes glitch-flicker {
+          0%, 92%, 94%, 96%, 100% { opacity: 1; }
+          93%, 95% { opacity: 0.4; transform: translateX(-2px); }
+        }
+        @keyframes panel-slide {
+          0% { clip-path: polygon(0 0, 0 0, 0 100%, 0 100%); }
+          100% { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+        }
+        @keyframes glow-breathe {
+          0%, 100% { opacity: 0.5; }
+          50% { opacity: 1; }
+        }
+
+        /* === UTILITY CLASSES === */
+        .neon-pulse { animation: neon-pulse 2s ease-in-out infinite; }
+        .float { animation: float 6s ease-in-out infinite; }
+        .shimmer { background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent); background-size: 200% 100%; animation: shimmer 3s infinite; }
+        .animated-bg { background-size: 400% 400%; animation: bg-shift 15s ease infinite; }
+        .notification-pulse { animation: neon-border-pulse 1.5s ease-in-out infinite; }
+        .holo-ring { animation: holographic-ring 4s linear infinite; }
+        .hex-breathe { animation: hex-breathe 2.5s ease-in-out infinite; }
+        .glitch-flicker { animation: glitch-flicker 4s ease-in-out infinite; }
+
+        /* HUD CARD — Warm Glass Panel */
+        .hud-card {
+          background: linear-gradient(135deg, rgba(255, 20, 100, 0.06) 0%, rgba(139, 0, 50, 0.1) 100%);
+          backdrop-filter: blur(28px) saturate(1.4);
+          border: 1px solid rgba(255, 0, 102, 0.15);
+          box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 60px rgba(255, 0, 102, 0.04);
+          transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+          position: relative;
+        }
+        .hud-card::after {
+          content: '';
+          position: absolute;
+          top: 0; left: 0; right: 0;
+          height: 1px;
+          background: linear-gradient(90deg, transparent 0%, rgba(255, 0, 102, 0.5) 20%, rgba(255, 100, 163, 0.4) 50%, rgba(255, 0, 102, 0.5) 80%, transparent 100%);
+          opacity: 0;
+          transition: opacity 0.35s;
+        }
+        .hud-card:hover {
+          transform: translateY(-3px);
+          box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 40px rgba(255, 0, 102, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+          border-color: rgba(255, 0, 102, 0.4);
+        }
+        .hud-card:hover::after { opacity: 1; }
+
+        /* CYBER GLOW */
+        .cyber-glow {
+          box-shadow: 0 0 30px rgba(255, 0, 102, 0.3), 0 0 60px rgba(255, 0, 102, 0.1), inset 0 0 30px rgba(255, 0, 102, 0.05);
+        }
+
+        /* GLASS CARD — Warm Tinted */
+        .glass-card {
+          background: linear-gradient(135deg, rgba(255, 20, 100, 0.08) 0%, rgba(139, 0, 50, 0.12) 100%);
+          backdrop-filter: blur(20px);
+          border: 1px solid rgba(255, 0, 102, 0.2);
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 60px rgba(255, 0, 102, 0.05);
+        }
+        .glass-card:hover {
+          border-color: rgba(255, 0, 102, 0.4);
+          box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 80px rgba(255, 0, 102, 0.1);
+        }
+
+        /* SPINE ICON (legacy compat) */
+        .spine-icon { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .spine-icon:hover { transform: scale(1.18); filter: drop-shadow(0 0 10px rgba(255, 0, 102, 0.7)); }
+
+        /* CAPSULE STAT — Broadcast Metric Pod */
+        .capsule-stat {
+          background: linear-gradient(135deg, rgba(255, 20, 100, 0.06), rgba(139, 0, 50, 0.1));
+          border: 1px solid rgba(255, 0, 102, 0.18);
+          border-radius: 28px;
+          padding: 28px 32px;
+          position: relative;
+          overflow: hidden;
+          transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .capsule-stat::before {
+          content: '';
+          position: absolute;
+          top: 0; left: -100%; width: 60%; height: 100%;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent);
+          animation: light-sweep 4s ease-in-out infinite;
+        }
+        .capsule-stat:hover {
+          border-color: rgba(255, 0, 102, 0.45);
+          box-shadow: 0 12px 40px rgba(255, 0, 102, 0.15);
+          transform: translateY(-3px);
+        }
+
+        /* ARENA SPOTLIGHT — Center Stage Glow */
+        .arena-spotlight {
+          position: relative;
+          background: radial-gradient(ellipse at center, rgba(255, 0, 102, 0.1) 0%, transparent 70%);
+        }
+        .arena-spotlight::before {
+          content: '';
+          position: absolute;
+          inset: -60px;
+          border-radius: 50%;
+          background: radial-gradient(circle, rgba(255, 0, 102, 0.08) 0%, transparent 60%);
+          animation: pulse-glow 3s ease-in-out infinite;
+          pointer-events: none;
+        }
+
+        /* MISSION WIDGET — Warm Glass Panel */
+        .mission-widget {
+          background: linear-gradient(160deg, rgba(255, 20, 100, 0.05) 0%, rgba(139, 0, 50, 0.08) 100%);
+          border: 1px solid rgba(255, 0, 102, 0.15);
+          border-radius: 24px;
+          position: relative;
+          overflow: hidden;
+        }
+        .mission-widget::before {
+          content: '';
+          position: absolute;
+          top: 0; left: 0;
+          width: 4px; height: 100%;
+          background: linear-gradient(180deg, rgba(255, 0, 102, 0.9), rgba(255, 100, 163, 0.6), transparent);
+        }
+
+        /* ANGLED SECTION HEADER */
+        .angled-header {
+          clip-path: polygon(0 0, 100% 0, 98% 100%, 0 100%);
+          background: linear-gradient(90deg, rgba(255, 0, 102, 0.12), transparent);
+          padding: 16px 24px;
+        }
+
+        /* NEON ROW */
+        .neon-row { transition: all 0.2s ease; }
+        .neon-row:hover {
+          background: rgba(255, 0, 102, 0.06) !important;
+          box-shadow: inset 4px 0 0 rgba(255, 0, 102, 0.7);
+        }
+
+        /* GRADIENT BORDER */
+        .gradient-border { position: relative; }
+        .gradient-border::before {
+          content: '';
+          position: absolute; inset: 0;
+          border-radius: inherit;
+          padding: 1px;
+          background: linear-gradient(135deg, rgba(255, 0, 102, 0.6), rgba(249, 115, 22, 0.4), rgba(255, 100, 163, 0.5));
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask-composite: exclude;
+          pointer-events: none;
+        }
+
+        /* STATUS PILL */
+        .status-pill {
+          font-size: 11px;
+          font-weight: 800;
+          padding: 4px 12px;
+          border-radius: 20px;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+
+        /* ENERGY LINE */
+        .energy-line {
+          background: linear-gradient(180deg, transparent 0%, rgba(255, 0, 102, 0.7) 20%, rgba(255, 100, 163, 0.5) 50%, rgba(255, 0, 102, 0.7) 80%, transparent 100%);
+          animation: energy-flow 3s linear infinite;
+          background-size: 100% 200%;
+        }
+
+        /* PARTICLE */
+        .particle {
+          position: absolute;
+          width: 4px; height: 4px;
+          border-radius: 50%;
+          background: rgba(255, 0, 102, 0.9);
+          animation: particle-drift 3s ease-out infinite;
+        }
+
+        /* DATA STREAM overlay */
+        .data-stream-bg {
+          background-image: repeating-linear-gradient(0deg, transparent, transparent 24px, rgba(255, 0, 102, 0.015) 24px, rgba(255, 0, 102, 0.015) 25px);
+          animation: data-stream 8s linear infinite;
+        }
+
+        /* HERO GLOW — Ambient Light */
+        .hero-glow {
+          position: absolute;
+          width: 500px;
+          height: 500px;
+          border-radius: 50%;
+          background: radial-gradient(circle, rgba(255, 0, 102, 0.25) 0%, transparent 70%);
+          filter: blur(80px);
+          pointer-events: none;
+        }
+
+        /* SHIMMER TEXT */
+        .shimmer-text {
+          background: linear-gradient(90deg, #ff0066, #ff66a3, #ff0066);
+          background-size: 200% auto;
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          animation: shimmer 3s linear infinite;
+        }
+
+        /* === PORTED FROM AUCTIONEER === */
+        @keyframes slideExpand {
+          0% { transform: scaleX(0); opacity: 0; }
+          100% { transform: scaleX(1); opacity: 1; }
+        }
+        @keyframes pulseGlow {
+          0%, 100% { box-shadow: 0 0 20px rgba(255, 0, 102, 0.4); }
+          50% { box-shadow: 0 0 40px rgba(255, 0, 102, 0.8), 0 0 60px rgba(255, 0, 102, 0.4); }
+        }
+        @keyframes cardReveal {
+          0% { opacity: 0; transform: translateY(20px) scale(0.95); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .cyber-button {
+          position: relative;
+          background: linear-gradient(135deg, rgba(255, 0, 102, 0.9) 0%, rgba(180, 0, 80, 0.9) 100%);
+          border: none;
+          overflow: hidden;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .cyber-button::before {
+          content: '';
+          position: absolute;
+          top: 0; left: -100%; width: 100%; height: 100%;
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+          transition: left 0.5s;
+        }
+        .cyber-button:hover::before { left: 100%; }
+        .cyber-button:hover {
+          transform: scale(1.05);
+          box-shadow: 0 0 40px rgba(255, 0, 102, 0.6), 0 0 80px rgba(255, 0, 102, 0.3);
+        }
+
+        .view-more-btn {
+          position: relative;
+          background: linear-gradient(135deg, rgba(255, 0, 102, 0.15) 0%, rgba(180, 0, 80, 0.25) 100%);
+          border: 1px solid rgba(255, 0, 102, 0.4);
+          overflow: hidden;
+          transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .view-more-btn::before {
+          content: '';
+          position: absolute;
+          top: 0; left: -100%; width: 100%; height: 100%;
+          background: linear-gradient(90deg, transparent, rgba(255, 0, 102, 0.3), transparent);
+          transition: left 0.6s ease;
+        }
+        .view-more-btn:hover::before { left: 100%; }
+        .view-more-btn:hover {
+          transform: translateX(8px);
+          border-color: rgba(255, 0, 102, 0.8);
+          box-shadow: 0 0 30px rgba(255, 0, 102, 0.4), 0 0 60px rgba(255, 0, 102, 0.2);
+          animation: pulseGlow 1.5s ease-in-out infinite;
+        }
+        .view-more-btn .arrow-icon { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .view-more-btn:hover .arrow-icon { transform: translateX(5px); }
+
+        .nav-icon {
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .nav-icon:hover {
+          transform: scale(1.2);
+          filter: drop-shadow(0 0 12px rgba(255, 0, 102, 0.8));
+        }
+        .nav-icon.active {
+          filter: drop-shadow(0 0 15px rgba(255, 0, 102, 1));
+        }
+
+        .slash-line {
+          position: absolute;
+          height: 2px;
+          background: linear-gradient(90deg, rgba(255, 0, 102, 0.8), transparent);
+        }
+
+        .neon-glow {
+          animation: neon-pulse 2s ease-in-out infinite;
+        }
+
+        .team-card, .player-card {
+          animation: cardReveal 0.5s ease-out forwards;
+          opacity: 0;
+        }
+        .team-card:nth-child(1), .player-card:nth-child(1) { animation-delay: 0.1s; }
+        .team-card:nth-child(2), .player-card:nth-child(2) { animation-delay: 0.15s; }
+        .team-card:nth-child(3), .player-card:nth-child(3) { animation-delay: 0.2s; }
+        .team-card:nth-child(4), .player-card:nth-child(4) { animation-delay: 0.25s; }
+        .team-card:nth-child(5), .player-card:nth-child(5) { animation-delay: 0.3s; }
+        .team-card:nth-child(6), .player-card:nth-child(6) { animation-delay: 0.35s; }
+
+        .skeleton-pulse {
+          animation: pulse 1.5s infinite;
+        }
+
+        /* Custom scrollbar — Auctioneer style */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(255, 0, 102, 0.05); }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 0, 102, 0.3); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255, 0, 102, 0.5); }
       `}</style>
 
-      <div className="h-screen bg-gradient-to-br from-white via-blue-50 to-purple-50 flex overflow-hidden">
-        {/* LEFT SIDEBAR - FLOATING ADMIN MENU */}
-        <div className={`fixed left-6 top-6 bottom-6 bg-white/95 backdrop-blur-2xl rounded-[2.5rem] shadow-2xl border-2 border-blue-200/50 p-8 z-30 hover:shadow-3xl transition-all duration-300 ${
-          sidebarCollapsed ? 'w-24' : 'w-72'
-        }`}>
-          {/* Toggle Button - Small circle at bottom right edge */}
-          <button
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="absolute -right-3 bottom-8 w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-full shadow-lg flex items-center justify-center transition-all group z-40"
-            title={sidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-          >
-            <ChevronRight size={16} className={`text-white transition-transform duration-300 ${sidebarCollapsed ? 'rotate-0' : 'rotate-180'}`} />
-          </button>
+      <div className="h-screen flex overflow-hidden relative" style={{ background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 25%, #1a0a12 50%, #0d0d1a 100%)' }}>
+        {/* Ambient hero glow effects */}
+        <div className="hero-glow" style={{ top: '5%', right: '15%' }}></div>
+        <div className="hero-glow" style={{ bottom: '15%', left: '8%', opacity: 0.4 }}></div>
+        {/* Warm animated background */}
+        <div className="absolute inset-0 opacity-25 animated-bg pointer-events-none" style={{ background: 'radial-gradient(ellipse at 20% 50%, rgba(255, 0, 102, 0.15) 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, rgba(249, 115, 22, 0.08) 0%, transparent 40%), radial-gradient(ellipse at 50% 80%, rgba(255, 0, 102, 0.06) 0%, transparent 50%)', backgroundSize: '400% 400%' }}></div>
+        {/* Subtle scan lines */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-[0.015]" style={{ background: 'repeating-linear-gradient(0deg, transparent, transparent 4px, rgba(255, 0, 102, 0.12) 4px, rgba(255, 0, 102, 0.12) 5px)' }}></div>
+        {/* Data stream overlay */}
+        <div className="absolute inset-0 pointer-events-none data-stream-bg opacity-30"></div>
 
-          {/* Logo */}
-          <div 
-            className={`flex items-center gap-3 mb-8 cursor-pointer hover:scale-105 transition-transform ${
-              sidebarCollapsed ? 'justify-center' : ''
-            }`}
-            onClick={() => setStatus(AuctionStatus.HOME)}
-          >
-            <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-purple-400 shadow-lg flex-shrink-0">
-              <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+        {/* CYBER SIDEBAR — Auctioneer-Style Vertical Spine */}
+        <div className="fixed left-8 top-1/2 -translate-y-1/2 z-50 flex flex-col items-center">
+          {/* Decorative slash lines — Top */}
+          <div className="flex flex-col items-center mb-4">
+            <div className="w-0.5 h-16 rounded-full" style={{ background: 'linear-gradient(180deg, transparent, rgba(255, 0, 102, 0.8), transparent)' }}></div>
+            <div className="relative h-8 w-12 flex items-center justify-center">
+              <div className="absolute w-[70px] h-[2px]" style={{ background: 'linear-gradient(90deg, transparent, rgba(255, 0, 102, 0.6), transparent)', transform: 'rotate(-45deg)' }}></div>
+              <div className="absolute w-[55px] h-[1px]" style={{ background: 'linear-gradient(90deg, transparent, rgba(255, 100, 163, 0.35), transparent)', transform: 'rotate(-45deg)', marginTop: '10px' }}></div>
             </div>
-            {!sidebarCollapsed && (
-              <div>
-                <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 leading-tight">
-                  ADMIN
-                </h1>
-                <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Control Panel</p>
-              </div>
-            )}
           </div>
 
-          {/* Navigation Menu */}
-          <nav className="space-y-2">
-            <button
-              onClick={() => setActiveSection('overview')}
-              className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-5'} py-4 rounded-2xl font-bold text-sm transition-all ${
-                activeSection === 'overview' 
-                  ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-xl scale-105' 
-                  : 'text-slate-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 hover:scale-102'
-              }`}
-              title="Overview"
-            >
-              <Home size={20} className="flex-shrink-0" />
-              {!sidebarCollapsed && <span>Overview</span>}
-            </button>
+          {/* Main Pill Dock — Auctioneer Style */}
+          <div className="relative">
+            <div className="w-14 py-6 rounded-full glass-card flex flex-col items-center gap-4">
 
-            <button
-              onClick={() => setActiveSection('reports')}
-              className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-5'} py-4 rounded-2xl font-bold text-sm transition-all ${
-                activeSection === 'reports' 
-                  ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-xl scale-105' 
-                  : 'text-slate-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 hover:scale-102'
-              }`}
-              title="Reports"
-            >
-              <FileText size={20} className="flex-shrink-0" />
-              {!sidebarCollapsed && <span>Reports</span>}
-            </button>
+              {/* Navigation Icons */}
+              {(() => {
+                const navItems = [
+                  { id: 'overview', icon: <Home size={20} />, label: 'Overview' },
+                  { id: 'reports', icon: <FileText size={20} />, label: 'Reports' },
+                  { id: 'players', icon: <Users size={20} />, label: 'Players' },
+                  { id: 'teams', icon: <Trophy size={20} />, label: 'Teams' },
+                  { id: 'auctioneers', icon: <Gavel size={20} />, label: 'Auctioneers', badge: pendingAuctioneers },
+                  { id: 'liveRoom', icon: <Radio size={20} />, label: 'Live Room' },
+                  { id: 'settings', icon: <Settings size={20} />, label: 'Settings' },
+                ];
+                const activeNavIndex = navItems.findIndex(n => n.id === activeSection);
+                return (
+                  <>
+                    {navItems.map((item) => (
+                      <div key={item.id} className="relative">
+                        <button
+                          onClick={() => {
+                            setActiveSection(item.id as any);
+                          }}
+                          className={`nav-icon w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
+                            activeSection === item.id
+                              ? 'active bg-gradient-to-br from-pink-500/40 to-red-600/40 text-pink-400'
+                              : 'text-pink-300/60 hover:text-pink-400 hover:bg-pink-500/10'
+                          }`}
+                          title={item.label}
+                        >
+                          {item.icon}
+                        </button>
+                        {item.badge !== undefined && item.badge > 0 && (
+                          <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[7px] font-black rounded-full flex items-center justify-center shadow-lg shadow-red-500/50 animate-pulse">
+                            {item.badge}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                    {/* Active Indicator Line */}
+                    {activeNavIndex >= 0 && (
+                      <div
+                        className="absolute -right-3 w-1 h-8 bg-gradient-to-b from-pink-500 to-red-500 rounded-full transition-all duration-300 neon-glow"
+                        style={{ top: `${24 + activeNavIndex * 56}px` }}
+                      ></div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
 
-            <button
-              onClick={() => setActiveSection('players')}
-              className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-5'} py-4 rounded-2xl font-bold text-sm transition-all ${
-                activeSection === 'players' 
-                  ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-xl scale-105' 
-                  : 'text-slate-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 hover:scale-102'
-              }`}
-              title="Players"
-            >
-              <Users size={20} className="flex-shrink-0" />
-              {!sidebarCollapsed && <span>Players</span>}
-            </button>
+          {/* Logout at bottom */}
+          <button
+            onClick={() => { sessionStorage.clear(); localStorage.clear(); setStatus(AuctionStatus.HOME); }}
+            className="nav-icon mt-4 w-10 h-10 rounded-xl flex items-center justify-center text-red-400/60 hover:text-red-400 hover:bg-red-500/20 transition-all"
+          >
+            <LogOut size={18} />
+          </button>
 
-            <button
-              onClick={() => setActiveSection('teams')}
-              className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-5'} py-4 rounded-2xl font-bold text-sm transition-all ${
-                activeSection === 'teams' 
-                  ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-xl scale-105' 
-                  : 'text-slate-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 hover:scale-102'
-              }`}
-              title="Teams"
-            >
-              <Trophy size={20} className="flex-shrink-0" />
-              {!sidebarCollapsed && <span>Teams</span>}
-            </button>
-
-            <button
-              onClick={() => setActiveSection('auctioneers')}
-              className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-5'} py-4 rounded-2xl font-bold text-sm transition-all ${
-                activeSection === 'auctioneers' 
-                  ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-xl scale-105' 
-                  : 'text-slate-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 hover:scale-102'
-              }`}
-              title="Auctioneers"
-            >
-              <Gavel size={20} className="flex-shrink-0" />
-              {!sidebarCollapsed && <span>Auctioneers</span>}
-              {!sidebarCollapsed && pendingAuctioneers > 0 && (
-                <span className="ml-auto px-2.5 py-1 bg-red-500 text-white text-xs rounded-full font-black shadow-lg">
-                  {pendingAuctioneers}
-                </span>
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveSection('liveMonitor')}
-              className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-5'} py-4 rounded-2xl font-bold text-sm transition-all ${
-                activeSection === 'liveMonitor' 
-                  ? 'bg-gradient-to-r from-red-500 to-orange-600 text-white shadow-xl animate-pulse scale-105' 
-                  : 'text-slate-700 hover:bg-gradient-to-r hover:from-red-50 hover:to-orange-50 hover:scale-102'
-              }`}
-              title="Live Monitor"
-            >
-              <Radio size={20} className="flex-shrink-0" />
-              {!sidebarCollapsed && <span>Live Monitor</span>}
-            </button>
-
-            <button
-              onClick={() => setActiveSection('analytics')}
-              className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-5'} py-4 rounded-2xl font-bold text-sm transition-all ${
-                activeSection === 'analytics' 
-                  ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-xl scale-105' 
-                  : 'text-slate-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 hover:scale-102'
-              }`}
-              title="Analytics"
-            >
-              <BarChart size={20} className="flex-shrink-0" />
-              {!sidebarCollapsed && <span>Analytics</span>}
-            </button>
-
-            <button
-              onClick={() => setActiveSection('settings')}
-              className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-3' : 'gap-3 px-5'} py-4 rounded-2xl font-bold text-sm transition-all ${
-                activeSection === 'settings' 
-                  ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-xl scale-105' 
-                  : 'text-slate-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 hover:scale-102'
-              }`}
-              title="Season Settings"
-            >
-              <Clock size={20} className="flex-shrink-0" />
-              {!sidebarCollapsed && <span>Season Settings</span>}
-            </button>
-          </nav>
+          {/* Decorative slash lines — Bottom */}
+          <div className="flex flex-col items-center mt-4">
+            <div className="relative h-8 w-12 flex items-center justify-center">
+              <div className="absolute w-[70px] h-[2px]" style={{ background: 'linear-gradient(90deg, transparent, rgba(255, 0, 102, 0.6), transparent)', transform: 'rotate(45deg)' }}></div>
+              <div className="absolute w-[55px] h-[1px]" style={{ background: 'linear-gradient(90deg, transparent, rgba(255, 100, 163, 0.35), transparent)', transform: 'rotate(45deg)', marginTop: '-10px' }}></div>
+            </div>
+            <div className="w-0.5 h-16 rounded-full" style={{ background: 'linear-gradient(180deg, rgba(255, 0, 102, 0.8), transparent)' }}></div>
+          </div>
         </div>
 
         {/* MAIN CONTENT AREA */}
-        <div className={`flex-1 transition-all duration-300 ${sidebarCollapsed ? 'pl-32' : 'pl-80'}`}>
-          {/* TOP BAR - GLOBAL CONTROL STRIP */}
-          <div className="bg-white/90 backdrop-blur-xl rounded-[2.5rem] border-2 border-blue-200 px-8 py-4 mx-6 mt-6 sticky top-6 z-20 shadow-lg">
-            <div className="flex items-center justify-between">
-              {/* Season Info */}
-              <div className="flex items-center gap-4">
-                <div>
-                  <h2 className="text-2xl font-black text-slate-800">
-                    {activeMatch?.name || 'No Season Selected'}
-                  </h2>
-                  <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-                    {activeMatch?.sport || 'Cricket'} • {activeMatch?.year || new Date().getFullYear()}
-                  </p>
+        <div className="ml-28 min-h-screen flex flex-col flex-1">
+          {/* TOP COMMAND BAR — Cinematic Control Ribbon */}
+          <div className="mx-8 mt-6 sticky top-6 z-20">
+            <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(90deg, rgba(26, 10, 10, 0.96), rgba(45, 10, 10, 0.92), rgba(26, 10, 10, 0.96))', border: '1px solid rgba(255, 0, 102, 0.15)', boxShadow: '0 8px 48px rgba(0, 0, 0, 0.5), 0 0 60px rgba(255, 0, 102, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.04)' }}>
+              {/* Top edge glow line */}
+              <div className="absolute top-0 left-[10%] right-[10%] h-[1px]" style={{ background: 'linear-gradient(90deg, transparent, rgba(255, 0, 102, 0.7), rgba(255, 100, 163, 0.5), rgba(255, 0, 102, 0.7), transparent)' }}></div>
+              <div className="px-8 py-4 flex items-center justify-between gap-6">
+                {/* Left: Title + Status */}
+                <div className="flex items-center gap-4 flex-shrink-0">
+                  <div className="w-[4px] h-11 rounded-full" style={{ background: 'linear-gradient(180deg, rgba(255, 0, 102, 0.9), rgba(249, 115, 22, 0.7))' }}></div>
+                  <div>
+                    <h2 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-red-400 to-orange-400 uppercase tracking-[0.2em] leading-tight glitch-flicker">
+                      Command Center
+                    </h2>
+                    <p className="text-[10px] text-pink-400/40 font-bold uppercase tracking-[0.3em] mt-0.5">
+                      {activeMatch?.name || 'No Season'} <span className="text-red-400/30">|</span> {activeMatch?.sport || 'Cricket'} <span className="text-red-400/30">|</span> {activeMatch?.year || new Date().getFullYear()}
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              {/* Actions */}
-              <div className="flex items-center gap-4">
-                {/* Live Room Button */}
-                <button
-                  onClick={() => setActiveSection('liveRoom')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition-all shadow-lg ${
-                    activeSection === 'liveRoom'
-                      ? 'bg-red-500 text-white'
-                      : 'bg-red-500/10 border-2 border-red-500/20 hover:bg-red-500 hover:text-white text-red-600'
-                  }`}
-                >
-                  <Radio size={16} className={liveAuctionStatus === 'LIVE' ? 'animate-pulse' : ''} />
-                  Live Room
-                </button>
+                {/* Center: Search with holographic border */}
+                <div className="flex-1 max-w-lg mx-4">
+                  <div className="relative group">
+                    <div className="absolute -inset-[1px] rounded-xl opacity-0 group-focus-within:opacity-100 transition-opacity" style={{ background: 'linear-gradient(90deg, rgba(255, 0, 102, 0.4), rgba(249, 115, 22, 0.3), rgba(255, 0, 102, 0.4))' }}></div>
+                    <div className="relative">
+                      <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-pink-400/30" />
+                      <input
+                        type="text"
+                        placeholder="Search users, auctions, teams..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-11 pr-5 py-2.5 rounded-xl text-sm font-semibold text-pink-100 placeholder-pink-400/25 transition-all focus:outline-none"
+                        style={{ background: 'rgba(255, 0, 102, 0.05)', border: '1px solid rgba(255, 0, 102, 0.12)' }}
+                      />
+                    </div>
+                  </div>
+                </div>
 
-                {/* Logout */}
-                <button 
-                  onClick={() => {
-                    sessionStorage.clear();
-                    localStorage.clear();
-                    setStatus(AuctionStatus.HOME);
-                  }} 
-                  className="px-4 py-2 rounded-xl bg-red-500/10 border-2 border-red-500/20 hover:bg-red-500 hover:text-white transition-all flex items-center gap-2 text-sm font-bold text-red-600"
-                >
-                  <LogOut size={16} />
-                  Logout
-                </button>
+                {/* Right: Actions */}
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {/* Live Room */}
+                  <button
+                    onClick={() => setActiveSection('liveRoom')}
+                    className={`flex items-center gap-2 px-5 py-2 rounded-xl font-bold text-sm transition-all ${
+                      activeSection === 'liveRoom'
+                        ? 'text-white neon-pulse'
+                        : 'text-red-400/70 hover:text-red-400'
+                    }`}
+                    style={{
+                      background: activeSection === 'liveRoom' ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.6), rgba(249, 115, 22, 0.5))' : 'rgba(239, 68, 68, 0.06)',
+                      border: `1px solid ${activeSection === 'liveRoom' ? 'rgba(239, 68, 68, 0.5)' : 'rgba(239, 68, 68, 0.15)'}`,
+                    }}
+                  >
+                    <Radio size={15} className={liveAuctionStatus === 'LIVE' ? 'animate-pulse' : ''} />
+                    <span className="hidden xl:inline">LIVE ROOM</span>
+                  </button>
+
+                  {/* Admin Profile Ring */}
+                  <div className="relative group cursor-pointer" title={`${currentUser.name} • Click to Logout`} onClick={() => { sessionStorage.clear(); localStorage.clear(); setStatus(AuctionStatus.HOME); }}>
+                    <div className="absolute -inset-1 rounded-full opacity-0 group-hover:opacity-60 blur-md transition-opacity" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.6), rgba(249, 115, 22, 0.5))', animation: 'ring-rotate 3s linear infinite' }}></div>
+                    <div className="relative w-10 h-10 rounded-full flex items-center justify-center text-white font-black text-sm hover:scale-110 transition-transform overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.7), rgba(249, 115, 22, 0.6))', border: '2px solid rgba(255, 0, 102, 0.4)' }}>
+                      {(resolvedMatch?.profilePhotoURL || currentMatch?.profilePhotoURL) ? (
+                        <img src={resolvedMatch?.profilePhotoURL || currentMatch?.profilePhotoURL} alt={currentUser.name} className="w-full h-full object-cover" />
+                      ) : (
+                        currentUser.name?.[0] || 'A'
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
           {/* DYNAMIC CONTENT SECTIONS */}
-          <div className="px-6 py-6 pb-12 overflow-y-auto h-[calc(100vh-8rem)] admin-content-scroll">
-            
-            {/* 1️⃣ OVERVIEW SECTION */}
+          <div className="px-8 py-8 pb-20 overflow-y-auto h-[calc(100vh-7rem)] admin-content-scroll custom-scrollbar">
+
+            {/* 1️⃣ OVERVIEW SECTION — Auctioneer-Style Home */}
             {activeSection === 'overview' && (
-              <div className="space-y-8 animate-in fade-in duration-500">
-                {/* Main Layout - Live Auction Left, KPI Cards Right (Vertical) */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* LEFT: Live Auction Card */}
-                  <div 
-                    className="lg:col-span-2 cursor-pointer group relative"
-                    onClick={() => {
-                      setActiveSection('liveMonitor');
-                    }}
-                  >
-                    <div className="absolute inset-0 bg-gradient-to-br from-red-400 to-orange-600 rounded-3xl blur-xl opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                    <div className="relative bg-white/90 backdrop-blur-xl border-2 border-red-200 rounded-3xl p-6 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all h-full">
-                      <div className="flex flex-col items-center justify-center h-full min-h-[320px]">
-                        {console.log('📺 Admin: Overview rendering - currentBiddingPlayer:', currentBiddingPlayer?.name || 'NULL')}
-                        {/* Player Photo */}
-                        {currentBiddingPlayer?.imageUrl ? (
-                          <img 
-                            src={currentBiddingPlayer.imageUrl} 
-                            alt={currentBiddingPlayer.name}
-                            className="w-40 h-40 rounded-full object-cover mb-6 border-4 border-red-200 shadow-2xl"
-                            onError={(e) => console.error('❌ Player image failed to load:', currentBiddingPlayer.imageUrl)}
-                          />
-                        ) : (
-                          <div className="w-40 h-40 rounded-full bg-gradient-to-br from-red-200 to-orange-200 flex items-center justify-center mb-6 border-4 border-red-200 shadow-2xl">
-                            <Users size={70} className="text-red-600" />
+              <div className="animate-in fade-in duration-500 flex flex-col gap-6">
+                {/* MAIN GRID */}
+                <div className="grid grid-cols-12 gap-6">
+                  {/* ROW 1: HERO CARD */}
+                  <div className="col-span-8">
+                    <div className="h-full glass-card rounded-3xl overflow-hidden relative group transition-all duration-500" style={{ minHeight: '320px' }}>
+                      {/* Layer 0: Base gradient */}
+                      <div className="absolute inset-0 bg-gradient-to-br from-pink-600/20 via-red-900/30 to-purple-900/20"></div>
+                      {/* Layer 1: SVG artwork */}
+                      <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+                        <svg className="absolute right-0 top-0 h-full" viewBox="0 0 500 400" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMaxYMid slice" style={{ width: '55%', opacity: 0.9 }}>
+                          <polygon points="200,0 500,0 500,400 280,400 160,250" fill="url(#heroGrad1)" />
+                          <polygon points="250,0 500,0 500,350 320,400 220,220" fill="url(#heroGrad2)" />
+                          <rect x="180" y="0" width="4" height="500" transform="rotate(15 180 0)" fill="rgba(255,0,102,0.4)" />
+                          <rect x="210" y="-20" width="2" height="500" transform="rotate(15 210 0)" fill="rgba(255,0,102,0.25)" />
+                          <rect x="240" y="-40" width="1.5" height="500" transform="rotate(15 240 0)" fill="rgba(255,0,102,0.15)" />
+                          <polygon points="350,30 500,30 500,180 380,200" fill="rgba(255,20,100,0.08)" stroke="rgba(255,0,102,0.2)" strokeWidth="1" />
+                          <polygon points="400,180 500,150 500,320 420,340" fill="rgba(200,50,120,0.06)" stroke="rgba(255,0,102,0.15)" strokeWidth="0.5" />
+                          <polygon points="420,90 450,60 480,90 450,120" fill="rgba(255,0,102,0.15)" stroke="rgba(255,0,102,0.5)" strokeWidth="1.5" />
+                          <polygon points="350,250 370,230 390,250 370,270" fill="rgba(255,0,102,0.1)" stroke="rgba(255,0,102,0.35)" strokeWidth="1" />
+                          <polygon points="460,200 475,185 490,200" fill="rgba(255,100,160,0.12)" />
+                          <polygon points="300,320 320,300 340,330" fill="rgba(255,100,160,0.08)" />
+                          <line x1="260" y1="100" x2="500" y2="100" stroke="rgba(255,0,102,0.12)" strokeWidth="0.5" />
+                          <line x1="280" y1="200" x2="500" y2="200" stroke="rgba(255,0,102,0.08)" strokeWidth="0.5" />
+                          <line x1="300" y1="300" x2="500" y2="300" stroke="rgba(255,0,102,0.1)" strokeWidth="0.5" />
+                          {[320,360,400,440,480].map(x => [60,120,180,240,300,360].map(y => (
+                            <circle key={`${x}-${y}`} cx={x} cy={y} r="1" fill="rgba(255,0,102,0.15)" />
+                          )))}
+                          <defs>
+                            <linearGradient id="heroGrad1" x1="200" y1="0" x2="500" y2="400" gradientUnits="userSpaceOnUse">
+                              <stop offset="0%" stopColor="rgba(255,0,102,0.18)" />
+                              <stop offset="50%" stopColor="rgba(180,0,80,0.22)" />
+                              <stop offset="100%" stopColor="rgba(100,0,50,0.28)" />
+                            </linearGradient>
+                            <linearGradient id="heroGrad2" x1="250" y1="0" x2="500" y2="400" gradientUnits="userSpaceOnUse">
+                              <stop offset="0%" stopColor="rgba(255,20,100,0.1)" />
+                              <stop offset="100%" stopColor="rgba(139,0,50,0.2)" />
+                            </linearGradient>
+                          </defs>
+                        </svg>
+                        <div className="absolute -right-10 top-1/2 -translate-y-1/2 w-80 h-80 rounded-full" style={{ background: 'radial-gradient(circle, rgba(255,0,102,0.2) 0%, transparent 70%)', filter: 'blur(40px)' }} />
+                      </div>
+                      {/* Layer 2: Left readability gradient */}
+                      <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-black/20 to-transparent" />
+                      <div className="absolute bottom-0 left-0 w-full h-1/3 bg-gradient-to-t from-black/60 to-transparent" />
+                      {/* Layer 3: Content */}
+                      <div className="relative h-full p-8 flex flex-col justify-between z-10">
+                        <div>
+                          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full mb-4 ${
+                            liveAuctionStatus === 'ENDED' ? 'bg-green-500/20 border border-green-500/30' :
+                            liveAuctionStatus === 'LIVE' ? 'bg-red-500/20 border border-red-500/30' :
+                            'bg-pink-500/20 border border-pink-500/30'
+                          }`}>
+                            <div className={`w-2 h-2 rounded-full animate-pulse ${
+                              liveAuctionStatus === 'ENDED' ? 'bg-green-500' :
+                              liveAuctionStatus === 'LIVE' ? 'bg-red-500' : 'bg-pink-500'
+                            }`}></div>
+                            <span className={`text-xs font-bold tracking-wider uppercase ${
+                              liveAuctionStatus === 'ENDED' ? 'text-green-300' :
+                              liveAuctionStatus === 'LIVE' ? 'text-red-300' : 'text-pink-300'
+                            }`}>
+                              {liveAuctionStatus === 'ENDED' ? 'Auction Ended' : liveAuctionStatus === 'LIVE' ? 'Live Now' : 'Ready to Start'}
+                            </span>
                           </div>
-                        )}
-                        
-                        <p className="text-2xl font-black text-slate-800 mb-6 text-center">{currentBiddingPlayer?.name || 'Ready'}</p>
-                        
-                        <div className="w-full max-w-sm space-y-3 mb-6">
-                          <div className="bg-gradient-to-r from-green-50 to-green-100 border border-green-200 rounded-2xl p-3 text-center">
-                            <p className="text-xs font-bold text-green-600 uppercase tracking-wider mb-1">Current Bid</p>
-                            <p className="text-xl font-black text-slate-800">₹{(currentBid / 100000).toFixed(1)}L</p>
+                          <h2 className="text-4xl font-black text-white mb-2">{activeMatch?.name || 'No Active Auction'}</h2>
+                          <p className="text-pink-200/60 text-lg">{activeMatch?.year || new Date().getFullYear()} Season</p>
+                          {activeMatch?.place && (
+                            <p className="text-pink-300/50 text-sm mt-1.5 flex items-center gap-1.5">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-pink-400/60"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                              {activeMatch.place}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-end justify-between">
+                          <div className="flex gap-4">
+                            {liveAuctionStatus === 'ENDED' ? (
+                              <button onClick={() => setActiveSection('reports')} className="cyber-button px-6 py-3 rounded-full text-white font-black tracking-wider flex items-center gap-2.5 text-sm" style={{ background: 'linear-gradient(135deg, #10B981, #059669)' }}>
+                                <FileText size={18} /> VIEW REPORT
+                              </button>
+                            ) : liveAuctionStatus === 'LIVE' ? (
+                              <button onClick={() => setActiveSection('liveRoom')} className="cyber-button px-6 py-3 rounded-full text-white font-black tracking-wider flex items-center gap-2.5 text-sm">
+                                <Radio size={18} /> ENTER LIVE ROOM
+                              </button>
+                            ) : (
+                              <button onClick={() => setActiveSection('liveRoom')} className="cyber-button px-6 py-3 rounded-full text-white font-black tracking-wider flex items-center gap-2.5 text-sm">
+                                <Radio size={18} /> OPEN LIVE ROOM
+                              </button>
+                            )}
+                            <button onClick={() => setActiveSection('reports')} className="px-5 py-3 rounded-full bg-white/5 border border-pink-500/20 text-pink-300 hover:bg-pink-500/10 transition-all font-bold tracking-wider text-sm">
+                              VIEW DETAILS
+                            </button>
                           </div>
-                          
-                          <div className="bg-gradient-to-r from-purple-50 to-purple-100 border border-purple-200 rounded-2xl p-3 text-center">
-                            <p className="text-xs font-bold text-purple-600 uppercase tracking-wider mb-2">Leading Team</p>
-                            <div className="flex items-center justify-center gap-3">
-                              {(() => {
-                                const leadingTeam = teams.find(t => t.name === leadingTeamName);
-                                console.log('🔍 Looking for team:', leadingTeamName, 'Found:', leadingTeam?.name, 'Logo:', leadingTeam?.logo);
-                                return leadingTeam?.logo ? (
-                                  <img 
-                                    src={leadingTeam.logo} 
-                                    alt={leadingTeamName}
-                                    className="w-8 h-8 rounded-full object-cover"
-                                    onError={(e) => console.error('❌ Team logo failed to load:', leadingTeam.logo)}
-                                  />
-                                ) : (
-                                  <div className="w-8 h-8 rounded-full bg-purple-200 flex items-center justify-center">
-                                    <Trophy size={16} className="text-purple-600" />
-                                  </div>
-                                );
-                              })()}
-                              <p className="text-lg font-black text-slate-800">{leadingTeamName || 'None'}</p>
+                          <div className="flex gap-6">
+                            <div className="text-right">
+                              <p className="text-pink-400/60 text-xs uppercase tracking-wider">Teams</p>
+                              <p className="text-2xl font-black text-white">{totalTeams}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-pink-400/60 text-xs uppercase tracking-wider">Players</p>
+                              <p className="text-2xl font-black text-white">{totalPlayers}</p>
                             </div>
                           </div>
                         </div>
-                        
-                        <div className={`px-6 py-2 rounded-full font-bold text-sm flex items-center gap-2 ${
-                          liveAuctionStatus === 'LIVE' 
-                            ? 'bg-red-500 text-white' 
-                            : liveAuctionStatus === 'PAUSED'
-                            ? 'bg-yellow-500 text-white'
-                            : 'bg-blue-500 text-white'
-                        }`}>
-                          <span className={`w-2 h-2 rounded-full ${liveAuctionStatus === 'LIVE' ? 'animate-pulse' : ''}`}></span>
-                          {liveAuctionStatus}
-                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* RIGHT: KPI Cards Stacked Vertically */}
-                  <div className="lg:col-span-1 space-y-3">
-                    {/* Teams KPI */}
-                    <div className="group relative">
-                      <div className="absolute inset-0 bg-gradient-to-br from-blue-400 to-blue-600 rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                      <div className="relative bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-2xl p-3 shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="p-2 bg-blue-100 rounded-lg">
-                            <Trophy size={18} className="text-blue-600" />
-                          </div>
-                          <span className="text-xs font-bold text-blue-600">{approvedTeams} Approved</span>
-                        </div>
-                        <h3 className="text-2xl font-black text-slate-800 mb-0.5">{totalTeams}</h3>
-                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Teams</p>
-                      </div>
-                    </div>
-
-                    {/* Players KPI */}
-                    <div className="group relative">
-                      <div className="absolute inset-0 bg-gradient-to-br from-purple-400 to-purple-600 rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                      <div className="relative bg-white/90 backdrop-blur-xl border-2 border-purple-200 rounded-2xl p-3 shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="p-2 bg-purple-100 rounded-lg">
-                            <Users size={18} className="text-purple-600" />
-                          </div>
-                          <span className="text-xs font-bold text-purple-600">{soldPlayers} Sold</span>
-                        </div>
-                        <h3 className="text-2xl font-black text-slate-800 mb-0.5">{totalPlayers}</h3>
-                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Players</p>
-                      </div>
-                    </div>
-
-                    {/* Budget KPI */}
-                    <div className="group relative">
-                      <div className="absolute inset-0 bg-gradient-to-br from-green-400 to-green-600 rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                      <div className="relative bg-white/90 backdrop-blur-xl border-2 border-green-200 rounded-2xl p-3 shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="p-2 bg-green-100 rounded-lg">
-                            <DollarSign size={18} className="text-green-600" />
-                          </div>
-                          <span className="text-xs font-bold text-green-600">Pool</span>
-                        </div>
-                        <h3 className="text-2xl font-black text-slate-800 mb-0.5">₹{(totalBudget / 1000000).toFixed(0)}M</h3>
-                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Total Budget</p>
-                      </div>
-                    </div>
-
-                    {/* Auctioneers KPI */}
-                    <div className="group relative">
-                      <div className="absolute inset-0 bg-gradient-to-br from-orange-400 to-red-600 rounded-2xl blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                      <div className="relative bg-white/90 backdrop-blur-xl border-2 border-orange-200 rounded-2xl p-3 shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="p-2 bg-orange-100 rounded-lg">
-                            <Gavel size={18} className="text-orange-600" />
-                          </div>
-                          <span className="text-xs font-bold text-orange-600">{approvedAuctioneers} Active</span>
-                        </div>
-                        <h3 className="text-2xl font-black text-slate-800 mb-0.5">{auctioneers.length}</h3>
-                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Auctioneers</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* FIRST ROW - 2 CHARTS */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* 3. Team Performance - Budget Spending Histogram (MOVED TO FIRST ROW LEFT) */}
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-green-200 rounded-3xl p-6 shadow-xl">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-black text-slate-800">Team Spending Performance</h3>
-                      <div className="p-2 bg-green-100 rounded-xl">
-                        <Target size={20} className="text-green-600" />
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-center">
-                      <div className="relative w-72 h-72">
-                        <svg viewBox="0 0 200 200">
-                          {/* Background circles */}
-                          <circle cx="100" cy="100" r="80" fill="none" stroke="#E5E7EB" strokeWidth="1" />
-                          <circle cx="100" cy="100" r="60" fill="none" stroke="#E5E7EB" strokeWidth="1" />
-                          <circle cx="100" cy="100" r="40" fill="none" stroke="#E5E7EB" strokeWidth="1" />
-                          <circle cx="100" cy="100" r="20" fill="none" stroke="#E5E7EB" strokeWidth="1" />
-                          
-                          {/* Team bars - showing budget spending */}
-                          {teams.slice(0, 8).map((team, idx) => {
-                            const angle = (idx * 360) / Math.min(teams.length, 8);
-                            const spent = (team.budget || 0) - (team.remainingBudget || 0);
-                            const maxBudget = team.budget || 10000000;
-                            const spentPercentage = (spent / maxBudget) * 100;
-                            const radius = (spentPercentage / 100) * 80;
-                            const x = 100 + radius * Math.cos(((angle - 90) * Math.PI) / 180);
-                            const y = 100 + radius * Math.sin(((angle - 90) * Math.PI) / 180);
-                            
-                            const colors = ['#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#EF4444', '#06B6D4', '#F97316'];
-                            
-                            return (
-                              <g key={idx}>
-                                <line
-                                  x1="100"
-                                  y1="100"
-                                  x2={x}
-                                  y2={y}
-                                  stroke={colors[idx]}
-                                  strokeWidth="8"
-                                  strokeLinecap="round"
-                                  className="hover:opacity-70 transition-opacity"
-                                />
-                                <circle cx={x} cy={y} r="4" fill={colors[idx]} />
-                              </g>
-                            );
-                          })}
-                          
-                          {/* Center circle */}
-                          <circle cx="100" cy="100" r="15" fill="white" stroke="#3B82F6" strokeWidth="2" />
-                        </svg>
-                      </div>
-                    </div>
-                    <div className="mt-4 grid grid-cols-2 gap-2">
-                      {teams.slice(0, 8).map((team, idx) => {
-                        const colors = ['text-blue-600', 'text-purple-600', 'text-pink-600', 'text-yellow-600', 'text-green-600', 'text-red-600', 'text-cyan-600', 'text-orange-600'];
-                        const spent = (team.budget || 0) - (team.remainingBudget || 0);
-                        return (
-                          <div key={idx} className="flex items-center justify-between gap-2 text-xs">
-                            <span className="font-semibold text-slate-700 truncate">{team.name}</span>
-                            <div className="flex flex-col items-end">
-                              <span className={`font-black ${colors[idx]}`}>₹{(spent / 100000).toFixed(1)}L</span>
-                              <span className="text-[10px] text-slate-400">{((spent / (team.budget || 10000000)) * 100).toFixed(0)}%</span>
+                  {/* LIVE BIDDING PLAYER CARD */}
+                  <div className="col-span-4">
+                    <div className="rounded-3xl overflow-hidden relative h-full" style={{ minHeight: '320px' }}>
+                      {currentBiddingPlayer && liveAuctionStatus === 'LIVE' ? (
+                        <>
+                          <div className="absolute inset-0 bg-cover bg-center bg-no-repeat" style={{ backgroundImage: currentBiddingPlayer.imageUrl ? `url(${currentBiddingPlayer.imageUrl})` : 'linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(217, 119, 6, 0.3))' }} />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
+                          <div className="relative h-full flex flex-col justify-between p-5 z-10">
+                            <div className="flex justify-between items-start">
+                              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/90 border border-red-400 shadow-lg" style={{ boxShadow: '0 0 15px rgba(239, 68, 68, 0.4)' }}>
+                                <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                                <span className="text-white text-[10px] font-black tracking-wider uppercase">LIVE FOR BIDDING</span>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* 2. Team Budget Pie Chart */}
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-purple-200 rounded-3xl p-6 shadow-xl">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-black text-slate-800">Budget Distribution</h3>
-                      <div className="p-2 bg-purple-100 rounded-xl">
-                        <PieChart size={20} className="text-purple-600" />
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-center">
-                      <div className="relative w-64 h-64">
-                        <svg viewBox="0 0 200 200" className="transform -rotate-90">
-                          {(() => {
-                            const colors = ['#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#EF4444', '#06B6D4', '#F97316'];
-                            let currentAngle = 0;
-                            // Calculate spent as: initial budget - remaining budget
-                            const teamSpending = teams.map(t => ({
-                              ...t,
-                              spent: (t.budget || 0) - (t.remainingBudget || 0)
-                            }));
-                            const totalSpent = teamSpending.reduce((sum, t) => sum + t.spent, 0) || 1;
-                            
-                            return teamSpending.map((team, idx) => {
-                              const spent = team.spent || 0;
-                              if (spent === 0) return null; // Skip teams with no spending
-                              const percentage = (spent / totalSpent) * 100;
-                              const angle = (percentage / 100) * 360;
-                              const startAngle = currentAngle;
-                              currentAngle += angle;
-                              
-                              const x1 = 100 + 80 * Math.cos((startAngle * Math.PI) / 180);
-                              const y1 = 100 + 80 * Math.sin((startAngle * Math.PI) / 180);
-                              const x2 = 100 + 80 * Math.cos((currentAngle * Math.PI) / 180);
-                              const y2 = 100 + 80 * Math.sin((currentAngle * Math.PI) / 180);
-                              const largeArc = angle > 180 ? 1 : 0;
-                              
-                              return (
-                                <path
-                                  key={idx}
-                                  d={`M 100 100 L ${x1} ${y1} A 80 80 0 ${largeArc} 1 ${x2} ${y2} Z`}
-                                  fill={colors[idx % colors.length]}
-                                  className="hover:opacity-80 transition-opacity cursor-pointer"
-                                />
-                              );
-                            });
-                          })()}
-                        </svg>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="text-center">
-                            <p className="text-3xl font-black text-slate-800">₹{(teams.reduce((sum, t) => sum + ((t.budget || 0) - (t.remainingBudget || 0)), 0) / 1000000).toFixed(1)}M</p>
-                            <p className="text-xs font-bold text-slate-500">Spent</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-4 grid grid-cols-2 gap-2">
-                      {teams.slice(0, 8).map((team, idx) => {
-                        const colors = ['bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-yellow-500', 'bg-green-500', 'bg-red-500', 'bg-cyan-500', 'bg-orange-500'];
-                        const spent = (team.budget || 0) - (team.remainingBudget || 0);
-                        return (
-                          <div key={idx} className="flex items-center gap-2">
-                            <div className={`w-3 h-3 rounded-full ${colors[idx]}`}></div>
                             <div>
-                              <span className="text-xs font-semibold text-slate-700 truncate block">{team.name}</span>
-                              <span className="text-[10px] text-slate-500">₹{(spent / 100000).toFixed(1)}L</span>
+                              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/80 border border-amber-400/50 mb-2">
+                                <span className="text-white text-[10px] font-bold tracking-wider uppercase">{currentBiddingPlayer.role || 'PLAYER'}</span>
+                              </div>
+                              <h2 className="text-xl font-black text-white mb-1" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>{currentBiddingPlayer.name}</h2>
+                              <p className="text-amber-300 text-xs font-medium">Base Price: ₹{((currentBiddingPlayer.basePrice || 0) / 100000).toFixed(1)}L</p>
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                {/* INFO SECTION */}
-                <div className="bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-200 rounded-3xl p-6 shadow-xl">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="text-center">
-                      <div className="w-16 h-16 mx-auto mb-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center">
-                        <Trophy size={32} className="text-white" />
-                      </div>
-                      <h4 className="text-2xl font-black text-slate-800 mb-1">{players.filter(p => p.status === 'SOLD').length}/{totalPlayers}</h4>
-                      <p className="text-sm font-bold text-slate-600">Players Sold</p>
-                    </div>
-                    <div className="text-center">
-                      <div className="w-16 h-16 mx-auto mb-3 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl flex items-center justify-center">
-                        <DollarSign size={32} className="text-white" />
-                      </div>
-                      <h4 className="text-2xl font-black text-slate-800 mb-1">₹{(teams.reduce((sum, t) => sum + ((t.budget || 0) - (t.remainingBudget || 0)), 0) / 1000000).toFixed(1)}M</h4>
-                      <p className="text-sm font-bold text-slate-600">Total Spent</p>
-                    </div>
-                    <div className="text-center">
-                      <div className="w-16 h-16 mx-auto mb-3 bg-gradient-to-br from-orange-500 to-red-600 rounded-2xl flex items-center justify-center">
-                        <Activity size={32} className="text-white" />
-                      </div>
-                      <h4 className="text-2xl font-black text-slate-800 mb-1">{approvedTeams}/{totalTeams}</h4>
-                      <p className="text-sm font-bold text-slate-600">Active Teams</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* SECOND ROW - 2 CHARTS */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* 1. Price Pyramid Chart (MOVED TO SECOND ROW LEFT) */}
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-black text-slate-800">Player Price Distribution</h3>
-                      <div className="p-2 bg-blue-100 rounded-xl">
-                        <TrendingUp size={20} className="text-blue-600" />
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      {(() => {
-                        const priceRanges = [
-                          { label: '₹10L+', min: 1000000, color: 'bg-gradient-to-r from-purple-500 to-pink-600' },
-                          { label: '₹5-10L', min: 500000, max: 1000000, color: 'bg-gradient-to-r from-blue-500 to-purple-500' },
-                          { label: '₹2-5L', min: 200000, max: 500000, color: 'bg-gradient-to-r from-green-500 to-blue-500' },
-                          { label: '₹1-2L', min: 100000, max: 200000, color: 'bg-gradient-to-r from-yellow-500 to-green-500' },
-                          { label: '< ₹1L', max: 100000, color: 'bg-gradient-to-r from-orange-500 to-yellow-500' }
-                        ];
-                        const maxCount = Math.max(...priceRanges.map(range => 
-                          players.filter(p => {
-                            const price = p.soldAmount || p.basePrice || 0;
-                            return (range.min === undefined || price >= range.min) && (range.max === undefined || price < range.max);
-                          }).length
-                        ), 1);
-                        
-                        return priceRanges.map((range, idx) => {
-                          const count = players.filter(p => {
-                            const price = p.soldAmount || p.basePrice || 0;
-                            return (range.min === undefined || price >= range.min) && (range.max === undefined || price < range.max);
-                          }).length;
-                          const percentage = (count / maxCount) * 100;
-                          
-                          return (
-                            <div key={idx} className="flex items-center gap-4">
-                              <span className="text-sm font-bold text-slate-700 w-20">{range.label}</span>
-                              <div className="flex-1 bg-gray-100 rounded-full h-8 overflow-hidden relative">
-                                <div 
-                                  className={`h-full ${range.color} transition-all duration-1000 flex items-center justify-end pr-3`}
-                                  style={{ width: `${percentage}%` }}
-                                >
-                                  {count > 0 && <span className="text-white font-black text-xs">{count}</span>}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        });
-                      })()}
+                        </>
+                      ) : (
+                        <div className="h-full glass-card rounded-3xl flex flex-col items-center justify-center p-6 border border-amber-500/20" style={{ background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(217, 119, 6, 0.05))' }}>
+                          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-amber-500/20 to-amber-600/10 flex items-center justify-center mb-4 border border-amber-500/30">
+                            <Activity size={36} className="text-amber-400/60" />
+                          </div>
+                          <h3 className="text-lg font-bold text-white mb-2">{liveAuctionStatus === 'ENDED' ? 'Auction Ended' : 'Waiting for Bidding'}</h3>
+                          <p className="text-amber-400/60 text-sm text-center">{liveAuctionStatus === 'ENDED' ? 'All players have been auctioned' : liveAuctionStatus === 'LIVE' ? 'Next player loading...' : 'Start the auction to see live bidding'}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* 4. Team-Player Dot Plot with Price Details (MOVED TO RIGHT) */}
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-orange-200 rounded-3xl p-6 shadow-xl">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-black text-slate-800">Team Rosters & Prices</h3>
-                      <div className="p-2 bg-orange-100 rounded-xl">
-                        <Users size={20} className="text-orange-600" />
+                  {/* ROW 2: REGISTERED TEAMS + QUICK ACTIONS */}
+                  <div className="col-span-8">
+                    <div className="glass-card rounded-3xl p-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                          <Users size={18} className="text-pink-400" />
+                          Registered Teams
+                          <span className="text-pink-400/60 text-sm font-normal">({teams.length})</span>
+                        </h3>
+                        <button 
+                          onClick={() => setActiveSection('teams')}
+                          className="text-pink-400 hover:text-pink-300 text-xs flex items-center gap-1 transition-all font-medium"
+                        >
+                          View More <ChevronRight size={14} />
+                        </button>
                       </div>
-                    </div>
-                    <div className="space-y-4 max-h-[300px] overflow-y-auto">
-                      {teams.map((team, idx) => {
-                        const teamPlayers = players.filter(p => p.soldTo === team.id);
-                        const totalPlayerValue = teamPlayers.reduce((sum, p) => sum + (p.soldAmount || 0), 0);
-                        const colors = ['bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-yellow-500', 'bg-green-500', 'bg-red-500', 'bg-cyan-500', 'bg-orange-500'];
-                        const spent = (team.budget || 0) - (team.remainingBudget || 0);
-                        
-                        return (
-                          <div key={idx} className="border-2 border-slate-100 rounded-2xl p-4 hover:border-blue-300 transition-all">
-                            <div className="flex items-center justify-between mb-3">
+
+                      {loading ? (
+                        <div className="grid grid-cols-2 gap-4">
+                          {[1, 2, 3, 4].map((i) => (
+                            <div key={i} className="glass-card rounded-2xl p-3 border border-amber-500/20" style={{ background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.05), rgba(217, 119, 6, 0.05))' }}>
                               <div className="flex items-center gap-3">
-                                <div className={`w-8 h-8 rounded-xl ${colors[idx % colors.length]} flex items-center justify-center text-white font-bold text-sm`}>
-                                  {team.name?.[0] || 'T'}
-                                </div>
-                                <div>
-                                  <p className="font-black text-slate-800 text-sm">{team.name}</p>
-                                  <p className="text-xs text-slate-500">{teamPlayers.length} players</p>
+                                <div className="animate-pulse bg-gradient-to-r from-amber-500/30 to-amber-600/20 w-10 h-10 rounded-lg" style={{ boxShadow: '0 0 15px rgba(245, 158, 11, 0.15)' }}></div>
+                                <div className="flex-1">
+                                  <div className="animate-pulse bg-gradient-to-r from-amber-500/25 to-amber-600/15 w-3/4 h-3 rounded mb-1"></div>
+                                  <div className="animate-pulse bg-gradient-to-r from-amber-500/20 to-amber-600/10 w-1/2 h-2 rounded"></div>
                                 </div>
                               </div>
-                              <div className="text-right">
-                                <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold block mb-1">
-                                  Spent: ₹{(spent / 100000).toFixed(1)}L
-                                </span>
-                                <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold block">
-                                  Value: ₹{(totalPlayerValue / 100000).toFixed(1)}L
-                                </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : teams.length > 0 ? (
+                        <div className="grid grid-cols-2 gap-4">
+                          {teams.slice(0, 4).map((team) => (
+                            <div key={team.id} className="team-card glass-card rounded-2xl p-3 transition-all duration-300 cursor-pointer group border border-pink-500/10 hover:border-pink-500/30">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-pink-500/20 to-red-600/20 flex items-center justify-center overflow-hidden border border-pink-500/20 flex-shrink-0">
+                                  {team.logo ? (
+                                    <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <Users size={18} className="text-pink-400" />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="text-white font-bold text-sm group-hover:text-pink-300 transition-colors truncate">{team.name}</h4>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <span className="text-xs font-medium text-pink-400/80">
+                                      ₹{((team.remainingBudget || team.budget || 0) / 10000000).toFixed(1)}Cr
+                                    </span>
+                                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-pink-500/20 text-pink-400">
+                                      {getTeamStats(team).squadSize} Players
+                                    </span>
+                                  </div>
+                                </div>
                               </div>
                             </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {teamPlayers.map((player, pIdx) => (
-                                <div
-                                  key={pIdx}
-                                  className={`w-2 h-2 rounded-full ${colors[idx % colors.length]} cursor-help`}
-                                  title={`${player.name}: ₹${((player.soldAmount || 0) / 100000).toFixed(1)}L`}
-                                ></div>
-                              ))}
-                              {teamPlayers.length === 0 && (
-                                <p className="text-xs text-slate-400 italic">No players yet</p>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center py-8">
+                          <Users size={32} className="text-pink-400/30 mr-3" />
+                          <p className="text-pink-300/60 text-sm">No teams registered</p>
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              </div>
-            )}
-            
-            {/* 2️⃣ SEASON SETTINGS SECTION */}
-            {activeSection === 'settings' && (
-              <div className="space-y-6 animate-in fade-in duration-500">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-3xl font-black text-slate-800">Season Settings</h2>
-                  <div className="flex items-center gap-3">
-                    {editingSettings ? (
-                      <>
-                        <button
-                          onClick={() => setEditingSettings(false)}
-                          className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm transition-all flex items-center gap-2"
+
+                  {/* QUICK ACTIONS */}
+                  <div className="col-span-4">
+                    <div className="glass-card rounded-3xl p-5 h-full">
+                      <h3 className="text-lg font-bold text-white mb-4">Quick Actions</h3>
+                      <div className="flex flex-col gap-3">
+                        {liveAuctionStatus === 'ENDED' ? (
+                          <button 
+                            onClick={() => setActiveSection('reports')}
+                            className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-green-500/20 to-emerald-600/20 border border-green-500/30 text-green-300 hover:border-green-500/50 hover:bg-green-500/30 transition-all flex items-center justify-center gap-3 font-medium"
+                          >
+                            <FileText size={18} />
+                            View Auction Report
+                          </button>
+                        ) : liveAuctionStatus === 'LIVE' ? (
+                          <button 
+                            onClick={() => setActiveSection('liveRoom')}
+                            className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-red-500/20 to-rose-600/20 border border-red-500/30 text-red-300 hover:border-red-500/50 hover:bg-red-500/30 transition-all flex items-center justify-center gap-3 font-medium"
+                          >
+                            <Radio size={18} className="animate-pulse" />
+                            Enter Live Room
+                          </button>
+                        ) : (
+                          <button 
+                            onClick={() => setActiveSection('liveRoom')}
+                            className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-pink-500/20 to-red-600/20 border border-pink-500/30 text-pink-300 hover:border-pink-500/50 hover:bg-pink-500/30 transition-all flex items-center justify-center gap-3 font-medium"
+                          >
+                            <Radio size={18} />
+                            Open Live Room
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => setActiveSection('teams')}
+                          className="w-full px-4 py-3 rounded-xl bg-white/5 border border-pink-500/10 text-pink-300/80 hover:border-pink-500/30 hover:bg-white/10 transition-all flex items-center justify-center gap-3 font-medium"
                         >
-                          <X size={16} />
-                          Cancel
+                          <Users size={18} />
+                          Manage Teams
                         </button>
-                        <button
-                          onClick={handleSaveSettings}
-                          className="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white font-bold text-sm transition-all flex items-center gap-2"
+                        <button 
+                          onClick={() => setActiveSection('settings')}
+                          className="w-full px-4 py-3 rounded-xl bg-white/5 border border-pink-500/10 text-pink-300/80 hover:border-pink-500/30 hover:bg-white/10 transition-all flex items-center justify-center gap-3 font-medium"
                         >
-                          <Save size={16} />
-                          Save
+                          <Settings size={18} />
+                          Season Settings
                         </button>
-                      </>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ROW 3: PLAYERS GRID */}
+                  <div className="col-span-12 mt-4">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-xl font-bold text-white flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-pink-500/30 to-red-600/30 flex items-center justify-center">
+                          <User size={20} className="text-pink-400" />
+                        </div>
+                        Registered Players
+                        <span className="text-pink-400/60 text-sm font-normal ml-2">
+                          ({players.length} total)
+                        </span>
+                      </h3>
+                      <button 
+                        onClick={() => setActiveSection('players')}
+                        className="view-more-btn px-6 py-3 rounded-full text-pink-300 font-bold tracking-wider flex items-center gap-2"
+                      >
+                        View All Players
+                        <ChevronRight size={18} className="arrow-icon" />
+                      </button>
+                    </div>
+
+                    {loading ? (
+                      <div className="grid grid-cols-6 gap-4">
+                        {[1, 2, 3, 4, 5, 6].map((i) => (
+                          <div key={i} className="glass-card rounded-2xl p-4 h-48 border border-amber-500/20" style={{ background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.05), rgba(217, 119, 6, 0.05))' }}>
+                            <div className="animate-pulse bg-gradient-to-r from-amber-500/30 to-amber-600/20 w-20 h-20 rounded-full mx-auto mb-3" style={{ boxShadow: '0 0 20px rgba(245, 158, 11, 0.2)' }}></div>
+                            <div className="animate-pulse bg-gradient-to-r from-amber-500/25 to-amber-600/15 w-3/4 h-4 rounded mx-auto mb-2"></div>
+                            <div className="animate-pulse bg-gradient-to-r from-amber-500/20 to-amber-600/10 w-1/2 h-3 rounded mx-auto"></div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : players.length > 0 ? (
+                      <div className="grid grid-cols-6 gap-4">
+                        {players.slice(0, 12).map((player, idx) => (
+                          <div key={player.id || idx} className="player-card glass-card rounded-2xl p-4 transition-all duration-300 cursor-pointer group text-center">
+                            <div className="relative w-20 h-20 mx-auto mb-3">
+                              <div className="w-full h-full rounded-full bg-gradient-to-br from-pink-500/20 to-red-600/20 flex items-center justify-center overflow-hidden border-2 border-pink-500/30 group-hover:border-pink-500/60 transition-all">
+                                {player.imageUrl ? (
+                                  <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover" />
+                                ) : (
+                                  <User size={32} className="text-pink-400" />
+                                )}
+                              </div>
+                              <div className={`absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                player.status === 'SOLD' 
+                                  ? 'bg-green-500 text-white' 
+                                  : player.status === 'UNSOLD'
+                                  ? 'bg-red-500 text-white'
+                                  : 'bg-pink-500 text-white'
+                              }`}>
+                                {player.status === 'SOLD' ? '✓' : player.status === 'UNSOLD' ? '✗' : '●'}
+                              </div>
+                            </div>
+                            <h4 className="text-white font-bold text-sm mb-1 group-hover:text-pink-300 transition-colors truncate">{player.name}</h4>
+                            <p className="text-pink-400/60 text-xs mb-2 truncate">{player.role || 'Player'}</p>
+                            <div className="flex items-center justify-center gap-1">
+                              <Star size={12} className="text-pink-400" />
+                              <span className="text-pink-300 text-xs font-medium">
+                                ₹{((player.basePrice || 0) / 100000).toFixed(0)}L
+                              </span>
+                            </div>
+                            {player.status === 'SOLD' && player.soldAmount && (
+                              <div className="mt-2 flex items-center justify-center gap-1 text-green-400">
+                                <TrendingUp size={12} />
+                                <span className="text-xs font-bold">₹{((player.soldAmount || 0) / 100000).toFixed(0)}L</span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     ) : (
-                      <>
-                        <button
-                          onClick={() => setEditingSettings(true)}
-                          className="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-sm transition-all flex items-center gap-2"
-                        >
-                          <Edit size={16} />
-                          Edit
-                        </button>
-                        <button
-                          onClick={handleLockSeason}
-                          className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-sm transition-all flex items-center gap-2"
-                        >
-                          <Lock size={16} />
-                          Lock
-                        </button>
-                      </>
+                      <div className="glass-card rounded-2xl p-10 text-center">
+                        <User size={48} className="text-pink-400/30 mx-auto mb-4" />
+                        <p className="text-pink-300/60">No players registered yet</p>
+                      </div>
                     )}
                   </div>
                 </div>
-
-                {/* Match Status Control */}
-                <div className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200 rounded-3xl p-6 shadow-lg">
-                  <div className="flex items-center justify-between">
+              </div>
+            )}
+            
+            {/* 2️⃣ ADMIN SETTINGS — Professional Compact Layout */}
+            {activeSection === 'settings' && (
+              <div className="animate-in fade-in duration-500">
+                {/* Section Header */}
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-[4px] h-10 rounded-full" style={{ background: 'linear-gradient(180deg, rgba(255, 0, 102, 0.9), rgba(249, 115, 22, 0.6))' }}></div>
                     <div>
-                      <h3 className="text-lg font-black text-slate-900 mb-2">Match Status</h3>
-                      <p className="text-sm text-slate-600">Current status: <span className="font-bold text-purple-600">{resolvedMatch?.status || 'UNKNOWN'}</span></p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={async () => {
-                          const response = await fetch(`${API_BASE}/match-status/${resolvedMatch?.id}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ status: 'SETUP', updatedBy: currentUser.email })
-                          });
-                          if (response.ok) {
-                            alert('Match status updated to SETUP');
-                            setResolvedMatch(prev => prev ? {...prev, status: 'SETUP'} : null);
-                            addSystemLog('admin', 'Match status changed to SETUP');
-                          }
-                        }}
-                        className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
-                          resolvedMatch?.status === 'SETUP'
-                            ? 'bg-blue-500 text-white'
-                            : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
-                        }`}
-                      >
-                        Upcoming
-                      </button>
-                      <button
-                        onClick={async () => {
-                          const response = await fetch(`${API_BASE}/match-status/${resolvedMatch?.id}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ status: 'ONGOING', updatedBy: currentUser.email })
-                          });
-                          if (response.ok) {
-                            alert('Match status updated to ONGOING');
-                            setResolvedMatch(prev => prev ? {...prev, status: 'ONGOING'} : null);
-                            addSystemLog('admin', 'Match status changed to ONGOING');
-                          }
-                        }}
-                        className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
-                          resolvedMatch?.status === 'ONGOING'
-                            ? 'bg-green-500 text-white animate-pulse'
-                            : 'bg-green-100 text-green-600 hover:bg-green-200'
-                        }`}
-                      >
-                        Live Now
-                      </button>
-                      <button
-                        onClick={async () => {
-                          const response = await fetch(`${API_BASE}/match-status/${resolvedMatch?.id}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ status: 'COMPLETED', updatedBy: currentUser.email })
-                          });
-                          if (response.ok) {
-                            alert('Match status updated to COMPLETED');
-                            setResolvedMatch(prev => prev ? {...prev, status: 'COMPLETED'} : null);
-                            addSystemLog('admin', 'Match status changed to COMPLETED');
-                          }
-                        }}
-                        className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
-                          resolvedMatch?.status === 'COMPLETED'
-                            ? 'bg-gray-500 text-white'
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                        }`}
-                      >
-                        Completed
-                      </button>
+                      <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-red-400 to-orange-400 uppercase tracking-wider">Settings</h2>
+                      <p className="text-xs text-pink-400/40 font-bold uppercase tracking-[0.2em] mt-0.5">Admin Control Panel</p>
                     </div>
                   </div>
+                  
+                  {/* Tab Navigation - Right Side */}
+                  <div className="flex items-center gap-2 p-2 rounded-xl hud-card">
+                    {([
+                      { id: 'account' as const, label: 'Account & Auction', icon: <User size={18} /> },
+                      { id: 'platform' as const, label: 'Platform', icon: <Shield size={18} /> },
+                      { id: 'media' as const, label: 'Media', icon: <Image size={18} /> },
+                    ]).map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setSettingsTab(tab.id)}
+                      className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all ${
+                        settingsTab === tab.id
+                          ? 'bg-gradient-to-r from-pink-600/80 to-red-600/80 text-white shadow-lg'
+                          : 'text-pink-300/50 hover:text-pink-300 hover:bg-pink-500/10'
+                      }`}
+                    >
+                      {tab.icon}
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl">
-                    <label className="block text-sm font-bold text-slate-600 mb-2 uppercase tracking-wider">Season Name</label>
-                    <input
-                      type="text"
-                      value={seasonSettings.name}
-                      onChange={(e) => setSeasonSettings({...seasonSettings, name: e.target.value})}
-                      disabled={!editingSettings}
-                      className="w-full px-4 py-3 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-lg font-bold disabled:bg-gray-50"
-                    />
+                <div className="grid grid-cols-12 gap-4">
+
+                  {/* ── LEFT COLUMN: Personal Info Card (always visible) ── */}
+                  <div className="col-span-12 lg:col-span-4">
+                    <div className="hud-card rounded-2xl overflow-hidden">
+                      {/* Profile Header */}
+                      <div className="relative h-28" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.3), rgba(249, 115, 22, 0.2), rgba(139, 0, 50, 0.3))' }}>
+                        <div className="absolute inset-0 opacity-20" style={{ background: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,255,255,0.03) 3px, rgba(255,255,255,0.03) 4px)' }}></div>
+                      </div>
+                      <div className="px-6 pb-6 -mt-14 relative">
+                        {/* Avatar */}
+                        <div className="relative w-28 h-28 rounded-2xl overflow-hidden mb-4 flex-shrink-0" style={{ border: '3px solid rgba(255, 0, 102, 0.4)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.2)' }}>
+                          {(resolvedMatch || currentMatch)?.profilePhotoURL ? (
+                            <img src={(resolvedMatch || currentMatch)?.profilePhotoURL} alt="Admin" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-3xl font-black text-white" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.7), rgba(249, 115, 22, 0.6))' }}>
+                              {currentUser.name?.[0]?.toUpperCase() || 'A'}
+                            </div>
+                          )}
+                        </div>
+                        <h3 className="text-lg font-black text-pink-100 truncate">{activeMatch?.organizerName || currentUser.name}</h3>
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="px-3 py-1 rounded text-xs font-black uppercase tracking-wider bg-pink-500/20 text-pink-400 border border-pink-500/30">Admin</span>
+                          {activeMatch?.designation && (
+                            <span className="px-3 py-1 rounded text-xs font-black uppercase tracking-wider bg-orange-500/15 text-orange-400 border border-orange-500/25">{activeMatch.designation}</span>
+                          )}
+                        </div>
+                        <div className="mt-4 space-y-2">
+                          <div className="flex items-center gap-2 text-sm text-pink-300/60">
+                            <Mail size={14} className="text-pink-400/40 flex-shrink-0" />
+                            <span className="truncate">{activeMatch?.organizerEmail || currentUser.email}</span>
+                          </div>
+                          {activeMatch?.organizerPhone && (
+                            <div className="flex items-center gap-2 text-sm text-pink-300/60">
+                              <User size={14} className="text-pink-400/40 flex-shrink-0" />
+                              <span>{activeMatch.organizerPhone}</span>
+                            </div>
+                          )}
+                          {(activeMatch?.organizationName) && (
+                            <div className="flex items-center gap-2 text-sm text-pink-300/60">
+                              <Briefcase size={14} className="text-pink-400/40 flex-shrink-0" />
+                              <span className="truncate">{activeMatch.organizationName}</span>
+                            </div>
+                          )}
+                        </div>
+                        {/* Quick Stats */}
+                        <div className="mt-5 grid grid-cols-3 gap-3">
+                          <div className="text-center p-3 rounded-lg bg-pink-900/20 border border-pink-500/15">
+                            <p className="text-lg font-black text-pink-100">{players.length}</p>
+                            <p className="text-[10px] font-bold uppercase text-pink-400/40 tracking-wider">Players</p>
+                          </div>
+                          <div className="text-center p-3 rounded-lg bg-pink-900/20 border border-pink-500/15">
+                            <p className="text-lg font-black text-pink-100">{teams.length}</p>
+                            <p className="text-[10px] font-bold uppercase text-pink-400/40 tracking-wider">Teams</p>
+                          </div>
+                          <div className="text-center p-3 rounded-lg bg-pink-900/20 border border-pink-500/15">
+                            <p className="text-lg font-black text-emerald-400">₹{((seasonSettings.baseTeamBudget || 0) / 10000000).toFixed(1)}Cr</p>
+                            <p className="text-[10px] font-bold uppercase text-pink-400/40 tracking-wider">Budget</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Match Status Control — compact */}
+                    <div className="hud-card rounded-2xl p-4 mt-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Activity size={14} className="text-pink-400/60" />
+                        <h4 className="text-[10px] font-black text-pink-400/60 uppercase tracking-wider">Match Status</h4>
+                      </div>
+                      <div className="flex gap-1.5">
+                        {(['SETUP', 'ONGOING', 'COMPLETED'] as const).map(s => (
+                          <button
+                            key={s}
+                            onClick={async () => {
+                              const response = await fetch(`${API_BASE}/match-status/${resolvedMatch?.id}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ status: s, updatedBy: currentUser.email })
+                              });
+                              if (response.ok) {
+                                setResolvedMatch(prev => prev ? {...prev, status: s} : null);
+                                addSystemLog('admin', `Match status → ${s}`);
+                              }
+                            }}
+                            className={`flex-1 px-2 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${
+                              resolvedMatch?.status === s
+                                ? s === 'ONGOING' ? 'bg-green-500 text-white neon-pulse' :
+                                  s === 'COMPLETED' ? 'bg-gray-500 text-white' : 'bg-blue-500 text-white'
+                                : 'hud-card text-pink-300/40 hover:text-pink-300/70'
+                            }`}
+                          >
+                            {s === 'SETUP' ? 'Setup' : s === 'ONGOING' ? 'Live' : 'Done'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl">
-                    <label className="block text-sm font-bold text-slate-600 mb-2 uppercase tracking-wider">Sport Type</label>
-                    <select
-                      value={seasonSettings.sport}
-                      onChange={(e) => setSeasonSettings({...seasonSettings, sport: e.target.value})}
-                      disabled={!editingSettings}
-                      className="w-full px-4 py-3 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-lg font-bold disabled:bg-gray-50"
-                    >
-                      <option value="Cricket">Cricket</option>
-                      <option value="Football">Football</option>
-                      <option value="Basketball">Basketball</option>
-                      <option value="Kabaddi">Kabaddi</option>
-                    </select>
-                  </div>
+                  {/* ── RIGHT COLUMN: Tab Content ── */}
+                  <div className="col-span-12 lg:col-span-8">
 
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl">
-                    <label className="block text-sm font-bold text-slate-600 mb-2 uppercase tracking-wider">Auction Duration (minutes)</label>
-                    <input
-                      type="number"
-                      value={seasonSettings.duration}
-                      onChange={(e) => setSeasonSettings({...seasonSettings, duration: parseInt(e.target.value)})}
-                      disabled={!editingSettings}
-                      className="w-full px-4 py-3 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-lg font-bold disabled:bg-gray-50"
-                    />
-                  </div>
+                    {/* ─── ACCOUNT & AUCTION TAB (COMBINED) ─── */}
+                    {settingsTab === 'account' && (
+                      <div className="space-y-4">
+                        {/* Account Settings Card */}
+                        <div className="hud-card rounded-2xl p-5">
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-lg bg-pink-500/20 flex items-center justify-center border border-pink-500/30">
+                                <User size={14} className="text-pink-400" />
+                              </div>
+                              <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Account Settings</h3>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {editingAccount ? (
+                                <>
+                                  <button onClick={() => { setEditingAccount(false); if (activeMatch) setAccountSettings({ name: activeMatch.organizerName || currentUser.name || '', email: activeMatch.organizerEmail || currentUser.email || '', phone: activeMatch.organizerPhone || '', organizationName: activeMatch.organizationName || '', organizationType: activeMatch.organizationType || '', designation: activeMatch.designation || '' }); }} className="px-3 py-1.5 rounded-lg hud-card text-pink-300/60 text-[10px] font-bold flex items-center gap-1 hover:bg-pink-500/10 transition-all">
+                                    <X size={12} /> Cancel
+                                  </button>
+                                  <button onClick={handleSaveAccountSettings} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
+                                    <Save size={12} /> Save
+                                  </button>
+                                </>
+                              ) : (
+                                <button onClick={() => setEditingAccount(true)} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-600 to-red-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
+                                  <Edit size={12} /> Edit
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Full Name</label>
+                              <input type="text" value={accountSettings.name} onChange={(e) => setAccountSettings({...accountSettings, name: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Email Address</label>
+                              <input type="email" value={accountSettings.email} onChange={(e) => setAccountSettings({...accountSettings, email: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Phone Number</label>
+                              <input type="tel" value={accountSettings.phone} onChange={(e) => setAccountSettings({...accountSettings, phone: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" placeholder="Not set" />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Designation</label>
+                              <select value={accountSettings.designation} onChange={(e) => setAccountSettings({...accountSettings, designation: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
+                                <option value="">Select</option>
+                                <option value="Organizer">Organizer</option>
+                                <option value="Coordinator">Coordinator</option>
+                                <option value="Owner">Owner</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                        {/* Password Change Card */}
+                        <div className="hud-card rounded-2xl p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Lock size={14} className="text-orange-400/60" />
+                            <h4 className="text-[10px] font-black text-pink-400/50 uppercase tracking-wider">Security</h4>
+                          </div>
+                          <p className="text-xs text-pink-300/40 mb-3">Password can be changed via the authentication system.</p>
+                          <button className="px-4 py-2 rounded-lg hud-card text-pink-300/50 text-[10px] font-bold uppercase tracking-wider hover:bg-pink-500/10 hover:text-pink-300 transition-all flex items-center gap-2" onClick={() => alert('Password reset will be sent to your email.')}>
+                            <Lock size={12} />
+                            Request Password Reset
+                          </button>
+                        </div>
+                        
+                        {/* Auction Configuration Card */}
+                        <div className="hud-card rounded-2xl p-5">
+                          <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
+                              <Gavel size={14} className="text-indigo-400" />
+                            </div>
+                            <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Auction Configuration</h3>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {editingSettings ? (
+                              <>
+                                <button onClick={() => setEditingSettings(false)} className="px-3 py-1.5 rounded-lg hud-card text-pink-300/60 text-[10px] font-bold flex items-center gap-1 hover:bg-pink-500/10 transition-all">
+                                  <X size={12} /> Cancel
+                                </button>
+                                <button onClick={handleSaveSettings} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
+                                  <Save size={12} /> Save
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => setEditingSettings(true)} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-600 to-red-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
+                                  <Edit size={12} /> Edit
+                                </button>
+                                <button onClick={handleLockSeason} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-red-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
+                                  <Lock size={12} /> Lock
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
 
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl">
-                    <label className="block text-sm font-bold text-slate-600 mb-2 uppercase tracking-wider">Bid Increment (₹)</label>
-                    <input
-                      type="number"
-                      value={seasonSettings.bidIncrement}
-                      onChange={(e) => setSeasonSettings({...seasonSettings, bidIncrement: parseInt(e.target.value)})}
-                      disabled={!editingSettings}
-                      className="w-full px-4 py-3 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-lg font-bold disabled:bg-gray-50"
-                    />
-                  </div>
+                        {/* Season Info Row */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                          <div>
+                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Season Name</label>
+                            <input type="text" value={seasonSettings.name} onChange={(e) => setSeasonSettings({...seasonSettings, name: e.target.value})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Sport Type</label>
+                            <select value={seasonSettings.sport} onChange={(e) => setSeasonSettings({...seasonSettings, sport: e.target.value})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
+                              <option value="Cricket">Cricket</option>
+                              <option value="Football">Football</option>
+                              <option value="Basketball">Basketball</option>
+                              <option value="Kabaddi">Kabaddi</option>
+                            </select>
+                          </div>
+                        </div>
 
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl">
-                    <label className="block text-sm font-bold text-slate-600 mb-2 uppercase tracking-wider">Max Teams</label>
-                    <input
-                      type="number"
-                      value={seasonSettings.maxTeams}
-                      onChange={(e) => setSeasonSettings({...seasonSettings, maxTeams: parseInt(e.target.value)})}
-                      disabled={!editingSettings}
-                      className="w-full px-4 py-3 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-lg font-bold disabled:bg-gray-50"
-                    />
-                  </div>
+                        {/* Budget & Bid Row */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                          <div>
+                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Base Team Budget (₹)</label>
+                            <input type="number" value={seasonSettings.baseTeamBudget} onChange={(e) => setSeasonSettings({...seasonSettings, baseTeamBudget: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all font-mono" />
+                            <p className="text-[9px] text-emerald-400/50 mt-0.5 font-mono">₹{(seasonSettings.baseTeamBudget || 0).toLocaleString()}</p>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Bid Increment (₹)</label>
+                            <input type="number" value={seasonSettings.bidIncrement} onChange={(e) => setSeasonSettings({...seasonSettings, bidIncrement: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all font-mono" />
+                            <p className="text-[9px] text-emerald-400/50 mt-0.5 font-mono">₹{(seasonSettings.bidIncrement || 0).toLocaleString()}</p>
+                          </div>
+                        </div>
 
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl">
-                    <label className="block text-sm font-bold text-slate-600 mb-2 uppercase tracking-wider">Max Squad Size</label>
-                    <input
-                      type="number"
-                      value={seasonSettings.maxSquadSize}
-                      onChange={(e) => setSeasonSettings({...seasonSettings, maxSquadSize: parseInt(e.target.value)})}
-                      disabled={!editingSettings}
-                      className="w-full px-4 py-3 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-lg font-bold disabled:bg-gray-50"
-                    />
-                  </div>
+                        {/* Team & Squad Row */}
+                        <div className="grid grid-cols-3 gap-3 mb-4">
+                          <div>
+                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Max Teams</label>
+                            <input type="number" value={seasonSettings.maxTeams} onChange={(e) => setSeasonSettings({...seasonSettings, maxTeams: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Min Squad</label>
+                            <input type="number" value={seasonSettings.minSquadSize} onChange={(e) => setSeasonSettings({...seasonSettings, minSquadSize: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Max Squad</label>
+                            <input type="number" value={seasonSettings.maxSquadSize} onChange={(e) => setSeasonSettings({...seasonSettings, maxSquadSize: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                          </div>
+                        </div>
 
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl md:col-span-2">
-                    <label className="block text-sm font-bold text-slate-600 mb-2 uppercase tracking-wider">Base Team Budget (₹)</label>
-                    <input
-                      type="number"
-                      value={seasonSettings.baseTeamBudget}
-                      onChange={(e) => setSeasonSettings({...seasonSettings, baseTeamBudget: parseInt(e.target.value)})}
-                      disabled={!editingSettings}
-                      className="w-full px-4 py-3 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-lg font-bold disabled:bg-gray-50"
-                    />
+                        {/* Duration Row */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Auction Duration (min)</label>
+                            <input type="number" value={seasonSettings.duration} onChange={(e) => setSeasonSettings({...seasonSettings, duration: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                          </div>
+                          <div className="flex items-end">
+                            <div className="w-full p-2.5 rounded-lg bg-pink-900/10 border border-pink-500/10">
+                              <p className="text-[9px] text-pink-300/40 flex items-center gap-1.5"><AlertCircle size={10} /> Budget changes won't affect existing teams</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      </div>
+                    )}
+
+                    {/* ─── PLATFORM TAB ─── */}
+                    {settingsTab === 'platform' && (
+                      <div className="space-y-4">
+                        <div className="hud-card rounded-2xl p-5">
+                          <div className="flex items-center gap-2 mb-4">
+                            <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
+                              <Shield size={14} className="text-cyan-400" />
+                            </div>
+                            <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Organization & Platform</h3>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                            <div>
+                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Organization Name</label>
+                              <input type="text" value={accountSettings.organizationName} onChange={(e) => setAccountSettings({...accountSettings, organizationName: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" placeholder="Not set" />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Organization Type</label>
+                              <select value={accountSettings.organizationType} onChange={(e) => setAccountSettings({...accountSettings, organizationType: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
+                                <option value="">Select</option>
+                                <option value="Sports Club">Sports Club</option>
+                                <option value="Corporate">Corporate</option>
+                                <option value="Educational">Educational</option>
+                                <option value="Government">Government</option>
+                                <option value="Other">Other</option>
+                              </select>
+                            </div>
+                          </div>
+                          {!editingAccount && (
+                            <button onClick={() => { setEditingAccount(true); setSettingsTab('account'); }} className="text-[10px] text-pink-400/40 hover:text-pink-400 transition-all flex items-center gap-1 font-bold">
+                              <Edit size={10} /> Edit in Account tab
+                            </button>
+                          )}
+                        </div>
+                        {/* Access & Role Info */}
+                        <div className="hud-card rounded-2xl p-5">
+                          <div className="flex items-center gap-2 mb-4">
+                            <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center border border-amber-500/30">
+                              <Star size={14} className="text-amber-400" />
+                            </div>
+                            <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Access & Role</h3>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
+                              <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Role</p>
+                              <p className="text-sm font-black text-pink-100">Administrator</p>
+                            </div>
+                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
+                              <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Access Level</p>
+                              <p className="text-sm font-black text-pink-100">Full Access</p>
+                            </div>
+                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
+                              <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Match ID</p>
+                              <p className="text-[11px] font-mono text-pink-300/60 truncate">{activeMatch?.id || '—'}</p>
+                            </div>
+                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
+                              <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Venue</p>
+                              <p className="text-sm font-bold text-pink-100 truncate">{activeMatch?.place || activeMatch?.venueLocation || activeMatch?.venueMode || '—'}</p>
+                            </div>
+                          </div>
+                        </div>
+                        {/* Data Stats */}
+                        <div className="hud-card rounded-2xl p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <BarChart3 size={14} className="text-pink-400/60" />
+                            <h4 className="text-[10px] font-black text-pink-400/50 uppercase tracking-wider">Data Overview</h4>
+                          </div>
+                          <div className="grid grid-cols-4 gap-2">
+                            <div className="text-center p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                              <p className="text-lg font-black text-blue-400">{players.length}</p>
+                              <p className="text-[8px] font-bold uppercase text-blue-400/50 tracking-wider">Players</p>
+                            </div>
+                            <div className="text-center p-2.5 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                              <p className="text-lg font-black text-orange-400">{teams.length}</p>
+                              <p className="text-[8px] font-bold uppercase text-orange-400/50 tracking-wider">Teams</p>
+                            </div>
+                            <div className="text-center p-2.5 rounded-lg bg-green-500/10 border border-green-500/20">
+                              <p className="text-lg font-black text-green-400">{players.filter(p => p.status === 'SOLD').length}</p>
+                              <p className="text-[8px] font-bold uppercase text-green-400/50 tracking-wider">Sold</p>
+                            </div>
+                            <div className="text-center p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                              <p className="text-lg font-black text-amber-400">{players.filter(p => p.status === 'PENDING' || p.status === 'AVAILABLE').length}</p>
+                              <p className="text-[8px] font-bold uppercase text-amber-400/50 tracking-wider">Pending</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ─── MEDIA TAB ─── */}
+                    {settingsTab === 'media' && (
+                      <div className="space-y-4">
+                        <div className="hud-card rounded-2xl p-5">
+                          <div className="flex items-center gap-2 mb-4">
+                            <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center border border-purple-500/30">
+                              <Image size={14} className="text-purple-400" />
+                            </div>
+                            <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Profile Image</h3>
+                          </div>
+                          <div className="flex items-start gap-5">
+                            {/* Current Image */}
+                            <div className="flex-shrink-0">
+                              <div className="w-28 h-28 rounded-2xl overflow-hidden" style={{ border: '2px solid rgba(255, 0, 102, 0.3)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.1)' }}>
+                                {(resolvedMatch || currentMatch)?.profilePhotoURL ? (
+                                  <img src={(resolvedMatch || currentMatch)?.profilePhotoURL} alt="Profile" className="w-full h-full object-cover" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-3xl font-black text-white" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.5), rgba(249, 115, 22, 0.4))' }}>
+                                    {currentUser.name?.[0]?.toUpperCase() || 'A'}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            {/* Upload Zone */}
+                            <div className="flex-1">
+                              <p className="text-xs text-pink-300/50 mb-3">Upload a new profile photo. Supported: JPG, PNG, WebP. Max 5MB.</p>
+                              <label className={`flex items-center justify-center gap-2 px-4 py-3 rounded-xl cursor-pointer transition-all ${uploadingPhoto ? 'opacity-50 pointer-events-none' : 'hover:bg-pink-500/15 hover:border-pink-500/40'}`} style={{ background: 'rgba(255, 0, 102, 0.06)', border: '1px dashed rgba(255, 0, 102, 0.25)' }}>
+                                {uploadingPhoto ? (
+                                  <><Loader2 size={16} className="text-pink-400 animate-spin" /><span className="text-[10px] font-bold text-pink-400 uppercase tracking-wider">Uploading...</span></>
+                                ) : (
+                                  <><Upload size={16} className="text-pink-400/60" /><span className="text-[10px] font-bold text-pink-300/60 uppercase tracking-wider">Choose File</span></>
+                                )}
+                                <input
+                                  type="file"
+                                  accept="image/jpeg,image/png,image/webp"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      if (file.size > 5 * 1024 * 1024) { alert('File too large (max 5MB)'); return; }
+                                      handleProfilePhotoUpload(file);
+                                    }
+                                  }}
+                                />
+                              </label>
+                              {(resolvedMatch || currentMatch)?.profilePhotoURL && (
+                                <p className="text-[9px] text-green-400/50 mt-2 flex items-center gap-1"><CheckCircle size={10} /> Current photo loaded from server</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {/* Document Info */}
+                        <div className="hud-card rounded-2xl p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <FileText size={14} className="text-pink-400/60" />
+                            <h4 className="text-[10px] font-black text-pink-400/50 uppercase tracking-wider">Verification Documents</h4>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10 flex items-center gap-3">
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${activeMatch?.governmentIdURL ? 'bg-green-500/20 border-green-500/30' : 'bg-pink-900/20 border-pink-500/15'} border`}>
+                                {activeMatch?.governmentIdURL ? <CheckCircle size={14} className="text-green-400" /> : <X size={14} className="text-pink-400/30" />}
+                              </div>
+                              <div>
+                                <p className="text-xs font-bold text-pink-100">Government ID</p>
+                                <p className="text-[9px] text-pink-300/40">{activeMatch?.governmentId || 'Not provided'}</p>
+                              </div>
+                            </div>
+                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10 flex items-center gap-3">
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${activeMatch?.organizerProofURL ? 'bg-green-500/20 border-green-500/30' : 'bg-pink-900/20 border-pink-500/15'} border`}>
+                                {activeMatch?.organizerProofURL ? <CheckCircle size={14} className="text-green-400" /> : <X size={14} className="text-pink-400/30" />}
+                              </div>
+                              <div>
+                                <p className="text-xs font-bold text-pink-100">Organizer Proof</p>
+                                <p className="text-[9px] text-pink-300/40">{activeMatch?.organizerProofURL ? 'Uploaded' : 'Not provided'}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                   </div>
                 </div>
               </div>
             )}
 
-            {/* 3️⃣ PLAYERS MANAGEMENT */}
+            {/* 3️⃣ PLAYERS — Delegated to PlayersPage */}
             {activeSection === 'players' && (
-              <div className="space-y-6 animate-in fade-in duration-500">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-3xl font-black text-slate-800">Players Management</h2>
+              <PlayersPage
+                onClose={() => setActiveSection('overview')}
+                currentMatch={resolvedMatch || currentMatch}
+                onAddPlayer={() => { resetAddPlayerForm(); setActiveSection('addPlayer'); }}
+              />
+            )}
+
+            {/* 3B: ADD PLAYER FORM */}
+            {activeSection === 'addPlayer' && (
+              <div className="flex-1 p-6 pr-8 pb-16">
+                {/* Header */}
+                <div className="flex items-center justify-between mb-8">
                   <div className="flex items-center gap-4">
-                    <div className="relative">
-                      <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="Search players..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-12 pr-6 py-3 rounded-2xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-sm font-semibold"
-                      />
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(236, 72, 153, 0.15)', border: '1px solid rgba(236, 72, 153, 0.3)' }}>
+                      <Plus size={24} className="text-pink-400" />
                     </div>
-                    <select
-                      value={playerFilter}
-                      onChange={(e) => setPlayerFilter(e.target.value as any)}
-                      className="px-4 py-3 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-sm font-bold"
-                    >
-                      <option value="all">All Players</option>
-                      <option value="available">Available</option>
-                      <option value="sold">Sold</option>
-                      <option value="unsold">Unsold</option>
-                    </select>
+                    <div>
+                      <h1 className="text-3xl font-black text-white tracking-tight">Register New Player</h1>
+                      <p className="text-pink-400/50 text-sm mt-1">Complete all required fields to add a player to {(resolvedMatch || currentMatch)?.name || 'this auction'}</p>
+                    </div>
                   </div>
+                  <button
+                    onClick={() => setActiveSection('players')}
+                    className="px-6 py-3 rounded-full bg-white/5 border border-pink-500/25 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2.5 text-sm font-bold"
+                    style={{ boxShadow: '0 0 12px rgba(255,0,102,0.1)' }}
+                  >
+                    <ArrowLeft size={20} />
+                    Back to Players
+                  </button>
                 </div>
 
-                <div className="grid gap-3">
-                  {(() => {
-                    const sorted = [...filteredPlayers].sort((a, b) => {
-                      if (a.status === 'UNSOLD' && b.status !== 'UNSOLD') return 1;
-                      if (a.status !== 'UNSOLD' && b.status === 'UNSOLD') return -1;
-                      return 0;
-                    });
-                    const unsoldCount = sorted.filter(p => p.status === 'UNSOLD').length;
-                    const regularCount = sorted.length - unsoldCount;
-                    return sorted.map((player, index) => (
-                      <>
-                        {index === regularCount && unsoldCount > 0 && (
-                          <div className="py-2 px-2 flex items-center gap-2 text-xs font-bold text-orange-600">
-                            <div className="flex-1 h-px bg-orange-200"></div>
-                            <span>Re-Auction</span>
-                            <div className="flex-1 h-px bg-orange-200"></div>
+                {/* Error Message */}
+                {addPlayerError && (
+                  <div className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm mb-6" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#fca5a5' }}>
+                    <AlertCircle size={16} />
+                    {addPlayerError}
+                  </div>
+                )}
+
+                {/* Form Content */}
+                <div className="max-w-7xl space-y-5">
+                  {/* Row 1: Player Photo + Personal Information */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                    {/* Left: Player Photo with Preview */}
+                    <div className="lg:col-span-3">
+                      <div className="glass-card rounded-2xl p-5 h-full">
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <Image size={16} />
+                          Player Photo
+                        </h3>
+                        <div 
+                          className="relative rounded-xl cursor-pointer transition-all h-[150px] flex items-center justify-center overflow-hidden"
+                          style={{ 
+                            background: isDraggingPlayerPhoto ? 'rgba(236, 72, 153, 0.15)' : playerPhotoPreviewUrl ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.3)',
+                            border: `2px dashed ${isDraggingPlayerPhoto ? 'rgba(236, 72, 153, 0.6)' : playerPhotoFile ? 'rgba(34, 197, 94, 0.5)' : 'rgba(236, 72, 153, 0.25)'}`
+                          }}
+                          onDragOver={e => handlePlayerDragOver(e, 'photo')}
+                          onDragLeave={e => handlePlayerDragLeave(e, 'photo')}
+                          onDrop={e => handlePlayerDrop(e, 'photo')}
+                          onClick={() => document.getElementById('playerPhotoInput')?.click()}
+                        >
+                          <input type="file" id="playerPhotoInput" accept="image/*" onChange={handlePlayerPhotoUpload} className="hidden" />
+                          {playerPhotoPreviewUrl ? (
+                            <div className="relative w-full h-full">
+                              <img src={playerPhotoPreviewUrl} alt="Player Photo Preview" className="w-full h-full object-contain p-4" />
+                              <div className="absolute top-2 right-2 flex items-center gap-2">
+                                <CheckCircle size={20} className="text-green-400" />
+                              </div>
+                              <button 
+                                type="button" 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  if (playerPhotoPreviewUrl) URL.revokeObjectURL(playerPhotoPreviewUrl);
+                                  setPlayerPhotoFile(null);
+                                  setPlayerPhotoPreviewUrl(null);
+                                }} 
+                                className="absolute bottom-1 left-1/2 -translate-x-1/2 px-3 py-1 rounded-lg bg-red-500/20 border border-red-400/40 text-red-300 hover:bg-red-500/30 text-[10px] font-semibold transition-all"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="text-center px-3 py-2">
+                              <Image size={32} className="mx-auto mb-1 text-pink-400/60" />
+                              <p className="text-xs font-bold text-white mb-1">Upload Photo</p>
+                              <p className="text-[10px] text-pink-400/70">Click or drag</p>
+                              <p className="text-[10px] text-pink-400/40">(JPG, PNG)</p>
+                            </div>
+                          )}
+                        </div>
+                        {playerPhotoFile && (
+                          <div className="mt-1 text-center">
+                            <p className="text-[10px] text-green-400 font-semibold truncate">✓ {playerPhotoFile.name}</p>
+                            <p className="text-[10px] text-pink-400/50">{(playerPhotoFile.size / 1024 / 1024).toFixed(2)} MB</p>
                           </div>
                         )}
-                    <div key={player.id} className={`bg-white/90 backdrop-blur-xl border-2 rounded-xl p-4 shadow-lg hover:shadow-xl transition-all ${
-                      player.status === 'UNSOLD' ? 'border-orange-300' : 'border-blue-200'
-                    }`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center text-white font-black text-lg overflow-hidden flex-shrink-0">
-                            {player.imageUrl ? (
-                              <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover" />
-                            ) : (
-                              player.name.charAt(0)
-                            )}
+                      </div>
+                    </div>
+
+                    {/* Right: Personal Information */}
+                    <div className="lg:col-span-9">
+                      <div className="glass-card rounded-2xl p-5 h-full">
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <User size={16} />
+                          Personal Information
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Full Name <span className="text-red-400">*</span></label>
+                            <input type="text" value={playerName} onChange={e => setPlayerName(e.target.value)} placeholder="Player Full Name" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
                           </div>
                           <div>
-                            <h3 className="text-base font-black text-slate-800">{player.name}</h3>
-                            <p className="text-xs text-slate-600">{player.role || 'N/A'}</p>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Email <span className="text-red-400">*</span></label>
+                            <input type="email" value={playerEmail} onChange={e => setPlayerEmail(e.target.value)} placeholder="email@example.com" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
                           </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <div className="text-right">
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Base Price</p>
-                            <p className="text-sm font-black text-slate-800">₹{((player.basePrice || 0) / 100000).toFixed(1)}L</p>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Phone</label>
+                            <input type="tel" value={playerPhone} onChange={e => setPlayerPhone(e.target.value)} placeholder="+91 1234567890" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
                           </div>
-                          {player.status === 'SOLD' && (
-                            <>
-                              <div className="text-right">
-                                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Sold Price</p>
-                                <p className="text-sm font-black text-green-600">₹{((player.soldAmount || player.soldPrice || player.finalPrice || player.currentBid || player.basePrice || 0) / 100000).toFixed(1)}L</p>
-                              </div>
-                              <div className="text-right min-w-[100px]">
-                                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Team</p>
-                                <p className="text-sm font-black text-purple-600 truncate">
-                                  {teams.find(t => t.id === (player.soldTo || player.leadingTeamId))?.name || 
-                                   player.teamName || 
-                                   player.leadingTeamName ||
-                                   'N/A'}
-                                </p>
-                              </div>
-                            </>
-                          )}
-                          <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
-                            player.status === 'SOLD' ? 'bg-green-100 text-green-700' :
-                            player.status === 'UNSOLD' ? 'bg-orange-100 text-orange-700' :
-                            'bg-blue-100 text-blue-700'
-                          }`}>
-                            {player.status || 'AVAILABLE'}
-                          </span>
-                          {currentMatch?.status === 'SETUP' && (
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => handleEditPlayerPrice(player.id)}
-                                className="p-1.5 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-600 transition-colors"
-                                title="Edit Price"
-                              >
-                                <Edit size={14} />
-                              </button>
-                              <button
-                                onClick={() => handleRemovePlayer(player.id)}
-                                className="p-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 transition-colors"
-                                title="Remove Player"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          )}
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Password <span className="text-red-400">*</span></label>
+                            <input type="password" value={playerPassword} onChange={e => setPlayerPassword(e.target.value)} placeholder="••••••••" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
                         </div>
                       </div>
                     </div>
-                      </>
-                    ))
-                  })}
+                  </div>
+
+                  {/* Row 2: Player Details */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                    <div className="lg:col-span-12">
+                      <div className="glass-card rounded-2xl p-5">
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <Activity size={16} />
+                          Player Details
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Playing Role <span className="text-red-400">*</span></label>
+                            <select value={playerRoleId} onChange={e => setPlayerRoleId(e.target.value)} className="w-full px-4 py-3 rounded-xl text-sm text-white focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }}>
+                              <option value="" style={{ background: '#1a0a1e', color: '#fff' }}>Select Role</option>
+                              {((resolvedMatch || currentMatch)?.config?.roles || []).map((role: any) => (
+                                <option key={role.id} value={role.id} style={{ background: '#1a0a1e', color: '#fff' }}>{role.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Base Price (₹) <span className="text-red-400">*</span></label>
+                            <input type="number" value={playerBasePrice} onChange={e => setPlayerBasePrice(e.target.value)} placeholder="500000" min={50000} className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Age</label>
+                            <input type="number" value={playerAge} onChange={e => setPlayerAge(e.target.value)} placeholder="25" min={14} max={60} className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Gender <span className="text-red-400">*</span></label>
+                            <select value={playerGender} onChange={e => setPlayerGender(e.target.value)} className="w-full px-4 py-3 rounded-xl text-sm text-white focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }}>
+                              <option value="" style={{ background: '#1a0a1e', color: '#fff' }}>Select Gender</option>
+                              <option value="Male" style={{ background: '#1a0a1e', color: '#fff' }}>Male</option>
+                              <option value="Female" style={{ background: '#1a0a1e', color: '#fff' }}>Female</option>
+                              <option value="Other" style={{ background: '#1a0a1e', color: '#fff' }}>Other</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Nationality <span className="text-red-400">*</span></label>
+                            <input type="text" value={playerNationality} onChange={e => setPlayerNationality(e.target.value)} placeholder="e.g., Indian" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Batting Style</label>
+                            <select value={playerBattingStyle} onChange={e => setPlayerBattingStyle(e.target.value)} className="w-full px-4 py-3 rounded-xl text-sm text-white focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }}>
+                              <option value="" style={{ background: '#1a0a1e', color: '#fff' }}>Select Style</option>
+                              <option value="Right-hand Bat" style={{ background: '#1a0a1e', color: '#fff' }}>Right-hand Bat</option>
+                              <option value="Left-hand Bat" style={{ background: '#1a0a1e', color: '#fff' }}>Left-hand Bat</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Bowling Style</label>
+                            <select value={playerBowlingStyle} onChange={e => setPlayerBowlingStyle(e.target.value)} className="w-full px-4 py-3 rounded-xl text-sm text-white focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }}>
+                              <option value="" style={{ background: '#1a0a1e', color: '#fff' }}>Select Style</option>
+                              <option value="Right-arm Fast" style={{ background: '#1a0a1e', color: '#fff' }}>Right-arm Fast</option>
+                              <option value="Left-arm Fast" style={{ background: '#1a0a1e', color: '#fff' }}>Left-arm Fast</option>
+                              <option value="Right-arm Medium" style={{ background: '#1a0a1e', color: '#fff' }}>Right-arm Medium</option>
+                              <option value="Left-arm Medium" style={{ background: '#1a0a1e', color: '#fff' }}>Left-arm Medium</option>
+                              <option value="Off-spin" style={{ background: '#1a0a1e', color: '#fff' }}>Off-spin</option>
+                              <option value="Leg-spin" style={{ background: '#1a0a1e', color: '#fff' }}>Leg-spin</option>
+                              <option value="Left-arm Spin" style={{ background: '#1a0a1e', color: '#fff' }}>Left-arm Spin</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Experience Level</label>
+                            <select value={playerExperience} onChange={e => setPlayerExperience(e.target.value)} className="w-full px-4 py-3 rounded-xl text-sm text-white focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }}>
+                              <option value="" style={{ background: '#1a0a1e', color: '#fff' }}>Select Level</option>
+                              <option value="Beginner" style={{ background: '#1a0a1e', color: '#fff' }}>Beginner</option>
+                              <option value="Intermediate" style={{ background: '#1a0a1e', color: '#fff' }}>Intermediate</option>
+                              <option value="Advanced" style={{ background: '#1a0a1e', color: '#fff' }}>Advanced</option>
+                              <option value="Professional" style={{ background: '#1a0a1e', color: '#fff' }}>Professional</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 3: Additional Info + Overseas */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                    <div className="lg:col-span-8">
+                      <div className="glass-card rounded-2xl p-5 h-full">
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <FileText size={16} />
+                          Additional Information
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Previous Teams</label>
+                            <input type="text" value={playerPreviousTeams} onChange={e => setPlayerPreviousTeams(e.target.value)} placeholder="e.g., Mumbai XI, Delhi Kings" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Player Category</label>
+                            <select value={playerCategory} onChange={e => setPlayerCategory(e.target.value)} className="w-full px-4 py-3 rounded-xl text-sm text-white focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }}>
+                              <option value="" style={{ background: '#1a0a1e', color: '#fff' }}>Select Category</option>
+                              <option value="A+" style={{ background: '#1a0a1e', color: '#fff' }}>A+ (Elite)</option>
+                              <option value="A" style={{ background: '#1a0a1e', color: '#fff' }}>A (Star)</option>
+                              <option value="B" style={{ background: '#1a0a1e', color: '#fff' }}>B (Regular)</option>
+                              <option value="C" style={{ background: '#1a0a1e', color: '#fff' }}>C (Emerging)</option>
+                            </select>
+                          </div>
+                          <div className="md:col-span-2">
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Bio / Description</label>
+                            <textarea value={playerBio} onChange={e => setPlayerBio(e.target.value)} placeholder="Brief description of the player's career, specialties, achievements..." rows={3} className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all resize-none" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="lg:col-span-4">
+                      <div className="glass-card rounded-2xl p-5 h-full flex flex-col justify-center">
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <Target size={16} />
+                          Classification
+                        </h3>
+                        <label className="flex items-center gap-3 p-4 rounded-xl cursor-pointer transition-all hover:bg-white/5" style={{ background: playerIsOverseas ? 'rgba(236, 72, 153, 0.1)' : 'rgba(0,0,0,0.2)', border: `1px solid ${playerIsOverseas ? 'rgba(236, 72, 153, 0.4)' : 'rgba(236,72,153,0.15)'}` }}>
+                          <input type="checkbox" checked={playerIsOverseas} onChange={e => setPlayerIsOverseas(e.target.checked)} className="sr-only peer" />
+                          <div className="w-10 h-6 rounded-full relative transition-all peer-checked:bg-pink-500/60" style={{ background: playerIsOverseas ? 'rgba(236, 72, 153, 0.6)' : 'rgba(255,255,255,0.1)' }}>
+                            <div className="absolute w-4 h-4 bg-white rounded-full top-1 transition-all" style={{ left: playerIsOverseas ? '22px' : '4px' }} />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-white">Overseas Player</p>
+                            <p className="text-[10px] text-pink-400/50">Mark if the player is a foreign national</p>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 4: Documents & Verification */}
+                  <div className="glass-card rounded-2xl p-5">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                      {/* Left: Verification */}
+                      <div>
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <Shield size={16} />
+                          Verification
+                        </h3>
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Government ID Number <span className="text-red-400">*</span></label>
+                            <input type="text" value={playerGovId} onChange={e => setPlayerGovId(e.target.value)} placeholder="Aadhaar / PAN / Passport Number" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Upload ID Proof */}
+                      <div>
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <Upload size={16} />
+                          ID Proof Document
+                        </h3>
+                        <div>
+                          <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Upload ID Proof <span className="text-red-400">*</span></label>
+                          <div 
+                            className="relative rounded-xl p-4 cursor-pointer transition-all"
+                            style={{ 
+                              background: isDraggingPlayerGovId ? 'rgba(236, 72, 153, 0.15)' : playerGovIdFile ? 'rgba(34, 197, 94, 0.1)' : 'rgba(0,0,0,0.3)',
+                              border: `2px dashed ${isDraggingPlayerGovId ? 'rgba(236, 72, 153, 0.6)' : playerGovIdFile ? 'rgba(34, 197, 94, 0.5)' : 'rgba(236, 72, 153, 0.25)'}`
+                            }}
+                            onDragOver={e => handlePlayerDragOver(e, 'govId')}
+                            onDragLeave={e => handlePlayerDragLeave(e, 'govId')}
+                            onDrop={e => handlePlayerDrop(e, 'govId')}
+                            onClick={() => document.getElementById('playerGovIdInput')?.click()}
+                          >
+                            <input type="file" id="playerGovIdInput" accept=".pdf,.jpg,.jpeg,.png" onChange={handlePlayerGovIdUpload} className="hidden" />
+                            <div className="text-center">
+                              {playerGovIdFile ? (
+                                <>
+                                  <CheckCircle size={28} className="mx-auto mb-2 text-green-400" />
+                                  <p className="text-sm font-bold text-green-300 mb-1">✓ ID Uploaded</p>
+                                  <p className="text-xs text-pink-300/60 truncate">{playerGovIdFile.name}</p>
+                                  <p className="text-xs text-pink-400/40 mt-1">({(playerGovIdFile.size / 1024 / 1024).toFixed(2)} MB)</p>
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); setPlayerGovIdFile(null); }} className="mt-2 text-xs text-red-400 hover:text-red-300 font-semibold">Remove</button>
+                                </>
+                              ) : (
+                                <>
+                                  <Upload size={24} className="mx-auto mb-2 text-pink-400/60" />
+                                  <p className="text-xs font-semibold text-white mb-1">ID Proof</p>
+                                  <p className="text-[10px] text-pink-400/50">Click or drag file</p>
+                                  <p className="text-[10px] text-pink-400/30 mt-0.5">(PDF, JPG, PNG)</p>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="flex items-center justify-end gap-3 pt-2">
+                    <button
+                      onClick={() => { setActiveSection('players'); resetAddPlayerForm(); }}
+                      disabled={addPlayerLoading}
+                      className="px-6 py-3 rounded-xl text-sm font-semibold text-pink-300/70 hover:text-white hover:bg-white/5 transition-all disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleAddPlayer}
+                      disabled={addPlayerLoading}
+                      className="px-10 py-3 rounded-xl font-bold text-sm flex items-center gap-2 transition-all duration-300 disabled:opacity-50 hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, #ec4899, #e11d48)',
+                        color: '#fff',
+                        boxShadow: '0 0 20px rgba(236, 72, 153, 0.3)'
+                      }}
+                    >
+                      {addPlayerLoading ? <><Loader2 size={18} className="animate-spin" /> Registering Player...</> : <><Plus size={18} /> Register Player</>}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* 4️⃣ TEAMS MANAGEMENT */}
-            {activeSection === 'teams' && (
-              <div className="space-y-6 animate-in fade-in duration-500">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-3xl font-black text-slate-800">Teams Management</h2>
+            {/* 4️⃣ TEAMS — Grid with TeamHUDCard */}
+            {activeSection === 'teams' && (() => {
+              const filteredTeamsLocal = teams.filter(team => {
+                if (!teamSearchQuery.trim()) return true;
+                const query = teamSearchQuery.toLowerCase();
+                return team.name.toLowerCase().includes(query) || 
+                       (team.homeCity && team.homeCity.toLowerCase().includes(query));
+              });
+              return (
+              <div className="flex-1 p-6 pr-8 pb-16">
+                {/* Header - Game HUD Style */}
+                <div className="flex items-center justify-between mb-10">
                   <div className="flex items-center gap-4">
+                    <div 
+                      className="w-12 h-12 rounded-xl flex items-center justify-center"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.25), rgba(180, 50, 120, 0.2))',
+                        border: '1px solid rgba(236, 72, 153, 0.4)',
+                        boxShadow: '0 0 20px rgba(236, 72, 153, 0.25)'
+                      }}
+                    >
+                      <Shield size={24} className="text-pink-400" />
+                    </div>
+                    <div>
+                      <h1 className="text-3xl font-black text-white tracking-tight">Team Command Center</h1>
+                      <p className="text-pink-400/50 text-sm mt-1">{(resolvedMatch || currentMatch)?.name || 'All Teams'} &mdash; {filteredTeamsLocal.length} franchise{filteredTeamsLocal.length !== 1 ? 's' : ''} registered</p>
+                    </div>
+                  </div>
+                  
+                  {/* Search Bar + Add Team + Exit Button */}
+                  <div className="flex items-center gap-3">
                     <div className="relative">
-                      <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-pink-400/50" />
                       <input
                         type="text"
+                        value={teamSearchQuery}
+                        onChange={(e) => setTeamSearchQuery(e.target.value)}
                         placeholder="Search teams..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-12 pr-6 py-3 rounded-2xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-sm font-semibold"
+                        className="w-64 pl-10 pr-4 py-2.5 rounded-xl text-sm text-white placeholder-pink-400/40 transition-all duration-300 focus:w-80 focus:outline-none"
+                        style={{
+                          background: 'rgba(0, 0, 0, 0.4)',
+                          border: '1px solid rgba(236, 72, 153, 0.25)',
+                          boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
+                        }}
+                        onFocus={(e) => {
+                          e.target.style.border = '1px solid rgba(236, 72, 153, 0.6)';
+                          e.target.style.boxShadow = 'inset 0 2px 4px rgba(0,0,0,0.2), 0 0 15px rgba(236, 72, 153, 0.15)';
+                        }}
+                        onBlur={(e) => {
+                          e.target.style.border = '1px solid rgba(236, 72, 153, 0.25)';
+                          e.target.style.boxShadow = 'inset 0 2px 4px rgba(0,0,0,0.2)';
+                        }}
                       />
                     </div>
-                    <select
-                      value={teamFilter}
-                      onChange={(e) => setTeamFilter(e.target.value as any)}
-                      className="px-4 py-3 rounded-xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none text-sm font-bold"
+                    <button
+                      onClick={() => { resetAddTeamForm(); setActiveSection('addTeam'); }}
+                      className="px-5 py-2.5 rounded-full font-bold text-sm flex items-center gap-2 transition-all duration-300 hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, #ec4899, #e11d48)',
+                        color: '#fff',
+                        boxShadow: '0 0 20px rgba(236, 72, 153, 0.35)',
+                        border: '1px solid rgba(236, 72, 153, 0.6)'
+                      }}
                     >
-                      <option value="all">All Teams</option>
-                      <option value="active">Active</option>
-                      <option value="inactive">Inactive</option>
-                    </select>
+                      <Plus size={16} />
+                      Add Team
+                    </button>
+                    <button
+                      onClick={() => setActiveSection('overview')}
+                      className="px-5 py-2.5 rounded-full bg-white/5 border border-pink-500/20 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2 text-sm font-semibold"
+                    >
+                      <ArrowLeft size={16} />
+                      Exit
+                    </button>
                   </div>
                 </div>
 
+                {/* Teams Grid - Using TeamHUDCard */}
                 {loading ? (
-                  <div className="text-center py-12">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                    <p className="text-slate-500 mt-4 font-semibold">Loading teams...</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+                      <div key={i} className="rounded-xl p-5 h-64" style={{ background: 'linear-gradient(145deg, rgba(20, 10, 25, 0.95), rgba(30, 15, 35, 0.9))', border: '1px solid rgba(236, 72, 153, 0.2)' }}>
+                        <div className="flex items-center gap-3 mb-4">
+                          <div className="animate-pulse bg-pink-500/15 w-14 h-14 rounded-lg"></div>
+                          <div className="flex-1">
+                            <div className="animate-pulse bg-pink-500/15 w-3/4 h-4 rounded mb-2"></div>
+                            <div className="animate-pulse bg-pink-500/10 w-1/2 h-3 rounded"></div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 mb-3">
+                          <div className="animate-pulse bg-pink-500/10 h-14 rounded-lg"></div>
+                          <div className="animate-pulse bg-pink-500/10 h-14 rounded-lg"></div>
+                        </div>
+                        <div className="animate-pulse bg-pink-500/10 w-full h-2.5 rounded-full"></div>
+                      </div>
+                    ))}
                   </div>
-                ) : filteredTeams.length === 0 ? (
-                  <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-2xl p-12 text-center">
-                    <Trophy size={48} className="mx-auto text-slate-300 mb-4" />
-                    <h3 className="text-xl font-black text-slate-600 mb-2">No Teams Yet</h3>
-                    <p className="text-slate-500">Waiting for team registrations...</p>
+                ) : filteredTeamsLocal.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {filteredTeamsLocal.map((team) => (
+                      <TeamHUDCard
+                        key={team.id}
+                        team={team}
+                        playerCount={getTeamPlayerCount(team.id)}
+                        maxPlayers={18}
+                        onClick={() => {
+                          setSelectedTeamId(team.id);
+                          setActiveSection('teamDetail');
+                        }}
+                      />
+                    ))}
                   </div>
                 ) : (
-                  <div className="grid gap-3">
-                    {filteredTeams.map((team) => (
-                    <div key={team.id} className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-xl p-4 shadow-lg hover:shadow-xl transition-all">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-black text-lg overflow-hidden flex-shrink-0">
-                            {team.logo ? (
-                              <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
-                            ) : (
-                              team.name?.charAt(0) || 'T'
-                            )}
-                          </div>
-                          <div>
-                            <h3 className="text-base font-black text-slate-800">{team.name}</h3>
-                            <p className="text-xs text-slate-600">{team.repName || 'No Rep'}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <div className="text-right">
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Budget</p>
-                            <p className="text-sm font-black text-slate-800">₹{((team.budget || team.initialBudget || 0) / 1000000).toFixed(1)}M</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Spent</p>
-                            <p className="text-sm font-black text-orange-600">₹{(getTeamStats(team).spent / 1000000).toFixed(1)}M</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Remaining</p>
-                            <p className={`text-sm font-black ${getTeamStats(team).remaining >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                              ₹{(getTeamStats(team).remaining / 1000000).toFixed(1)}M
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Squad</p>
-                            <p className="text-sm font-black text-purple-600">{getTeamStats(team).squadSize} Players</p>
-                          </div>
-                          <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
-                            getTeamStats(team).squadSize > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
-                          }`}>
-                            {getTeamStats(team).squadSize > 0 ? 'ACTIVE' : 'INACTIVE'}
-                          </span>
-                          {currentMatch?.status === 'SETUP' && (
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => handleEditTeamBudget(team.id)}
-                                className="p-1.5 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-600 transition-colors"
-                                title="Edit Budget"
-                              >
-                                <Edit size={14} />
-                              </button>
-                              <button
-                                onClick={() => handleDisableTeam(team.id)}
-                                className="p-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 transition-colors"
-                                title="Disable Team"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                  <div className="rounded-xl p-12 text-center" style={{ background: 'linear-gradient(145deg, rgba(20, 10, 25, 0.7), rgba(30, 15, 35, 0.6))', border: '1px dashed rgba(236, 72, 153, 0.25)' }}>
+                    <div className="w-20 h-20 rounded-full mx-auto mb-4 flex items-center justify-center" style={{ background: 'rgba(236, 72, 153, 0.08)', border: '1px solid rgba(236, 72, 153, 0.15)' }}>
+                      <Users size={32} className="text-pink-400/30" />
                     </div>
-                    ))}
+                    <h3 className="text-lg font-bold text-white mb-2">No Teams Registered</h3>
+                    <p className="text-pink-400/40 text-sm mb-6">No teams have registered for this auction yet.</p>
+                    <button
+                      onClick={() => { resetAddTeamForm(); setActiveSection('addTeam'); }}
+                      className="px-6 py-3 rounded-full font-bold text-sm inline-flex items-center gap-2 transition-all"
+                      style={{
+                        background: 'linear-gradient(135deg, #ec4899, #e11d48)',
+                        color: '#fff',
+                        boxShadow: '0 0 20px rgba(236, 72, 153, 0.35)'
+                      }}
+                    >
+                      <Plus size={16} />
+                      Add First Team
+                    </button>
                   </div>
                 )}
               </div>
+              );
+            })()}
+
+            {/* 4B: ADD TEAM FORM */}
+            {activeSection === 'addTeam' && (
+              <div className="flex-1 p-6 pr-8 pb-16">
+                {/* Header */}
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(236, 72, 153, 0.15)', border: '1px solid rgba(236, 72, 153, 0.3)' }}>
+                      <Plus size={24} className="text-pink-400" />
+                    </div>
+                    <div>
+                      <h1 className="text-3xl font-black text-white tracking-tight">Register New Team</h1>
+                      <p className="text-pink-400/50 text-sm mt-1">Complete all required fields to add a franchise to {(resolvedMatch || currentMatch)?.name || 'this auction'}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setActiveSection('teams')}
+                    className="px-6 py-3 rounded-full bg-white/5 border border-pink-500/25 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2.5 text-sm font-bold"
+                    style={{ boxShadow: '0 0 12px rgba(255,0,102,0.1)' }}
+                  >
+                    <ArrowLeft size={20} />
+                    Back to Teams
+                  </button>
+                </div>
+
+                {/* Error Message */}
+                {addTeamError && (
+                  <div className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm mb-6" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#fca5a5' }}>
+                    <AlertCircle size={16} />
+                    {addTeamError}
+                  </div>
+                )}
+
+                {/* Form Content */}
+                <div className="max-w-7xl space-y-5">
+                  {/* Row 1: Upload Logo + Personal Information */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                    {/* Left: Upload Logo with Preview */}
+                    <div className="lg:col-span-3">
+                      <div className="glass-card rounded-2xl p-5 h-full">
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <Image size={16} />
+                          Team Logo
+                        </h3>
+                        <div 
+                          className="relative rounded-xl cursor-pointer transition-all h-[150px] flex items-center justify-center overflow-hidden"
+                          style={{ 
+                            background: isDraggingLogo ? 'rgba(236, 72, 153, 0.15)' : teamLogoPreviewUrl ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.3)',
+                            border: `2px dashed ${isDraggingLogo ? 'rgba(236, 72, 153, 0.6)' : teamLogoFile ? 'rgba(34, 197, 94, 0.5)' : 'rgba(236, 72, 153, 0.25)'}`
+                          }}
+                          onDragOver={e => handleDragOver(e, 'logo')}
+                          onDragLeave={e => handleDragLeave(e, 'logo')}
+                          onDrop={e => handleDrop(e, 'logo')}
+                          onClick={() => document.getElementById('teamLogoInput')?.click()}
+                        >
+                          <input type="file" id="teamLogoInput" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                          {teamLogoPreviewUrl ? (
+                            <div className="relative w-full h-full">
+                              <img src={teamLogoPreviewUrl} alt="Team Logo Preview" className="w-full h-full object-contain p-4" />
+                              <div className="absolute top-2 right-2 flex items-center gap-2">
+                                <CheckCircle size={20} className="text-green-400" />
+                              </div>
+                              <button 
+                                type="button" 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  if (teamLogoPreviewUrl) URL.revokeObjectURL(teamLogoPreviewUrl);
+                                  setTeamLogoFile(null);
+                                  setTeamLogoPreviewUrl(null);
+                                }} 
+                                className="absolute bottom-1 left-1/2 -translate-x-1/2 px-3 py-1 rounded-lg bg-red-500/20 border border-red-400/40 text-red-300 hover:bg-red-500/30 text-[10px] font-semibold transition-all"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="text-center px-3 py-2">
+                              <Image size={32} className="mx-auto mb-1 text-pink-400/60" />
+                              <p className="text-xs font-bold text-white mb-1">Upload Logo</p>
+                              <p className="text-[10px] text-pink-400/70">Click or drag</p>
+                              <p className="text-[10px] text-pink-400/40">(JPG, PNG)</p>
+                            </div>
+                          )}
+                        </div>
+                        {teamLogoFile && (
+                          <div className="mt-1 text-center">
+                            <p className="text-[10px] text-green-400 font-semibold truncate">✓ {teamLogoFile.name}</p>
+                            <p className="text-[10px] text-pink-400/50">{(teamLogoFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Right: Personal Information */}
+                    <div className="lg:col-span-9">
+                      <div className="glass-card rounded-2xl p-5 h-full">
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <User size={16} />
+                          Personal Information
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Full Name <span className="text-red-400">*</span></label>
+                            <input type="text" value={ownerName} onChange={e => setOwnerName(e.target.value)} placeholder="Representative Full Name" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Email <span className="text-red-400">*</span></label>
+                            <input type="email" value={teamEmail} onChange={e => setTeamEmail(e.target.value)} placeholder="email@example.com" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Phone</label>
+                            <input type="tel" value={teamPhone} onChange={e => setTeamPhone(e.target.value)} placeholder="+91 1234567890" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Password <span className="text-red-400">*</span></label>
+                            <input type="password" value={teamPassword} onChange={e => setTeamPassword(e.target.value)} placeholder="••••••••" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 2: Team Details */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                    <div className="lg:col-span-12">
+                      <div className="glass-card rounded-2xl p-5">
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <Trophy size={16} />
+                          Team Details
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Team Name <span className="text-red-400">*</span></label>
+                            <input type="text" value={teamName} onChange={e => setTeamName(e.target.value)} placeholder="e.g., Mumbai Warriors" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Team Short Code <span className="text-red-400">*</span></label>
+                            <input type="text" value={teamShortCode} onChange={e => setTeamShortCode(e.target.value.toUpperCase())} maxLength={5} placeholder="e.g., MUM" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 uppercase focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Home City <span className="text-red-400">*</span></label>
+                            <input type="text" value={homeCity} onChange={e => setHomeCity(e.target.value)} placeholder="e.g., Mumbai" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Role in Team <span className="text-red-400">*</span></label>
+                            <select value={roleInTeam} onChange={e => setRoleInTeam(e.target.value)} className="w-full px-4 py-3 rounded-xl text-sm text-white focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }}>
+                              <option value="" style={{ background: '#1a0a1e', color: '#fff' }}>Select Role</option>
+                              <option value="Owner" style={{ background: '#1a0a1e', color: '#fff' }}>Owner</option>
+                              <option value="Manager" style={{ background: '#1a0a1e', color: '#fff' }}>Manager</option>
+                              <option value="Captain" style={{ background: '#1a0a1e', color: '#fff' }}>Captain</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 3: Required Documents & Verification */}
+                  <div className="glass-card rounded-2xl p-5">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                      {/* Left: Required Documents */}
+                      <div>
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <Upload size={16} />
+                          Required Documents
+                        </h3>
+                        <div className="space-y-4">
+                              <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Authorization Letter <span className="text-red-400">*</span></label>
+                            <div 
+                              className="relative rounded-xl p-4 cursor-pointer transition-all"
+                              style={{ 
+                                background: isDraggingAuth ? 'rgba(236, 72, 153, 0.15)' : authLetterFile ? 'rgba(34, 197, 94, 0.1)' : 'rgba(0,0,0,0.3)',
+                                border: `2px dashed ${isDraggingAuth ? 'rgba(236, 72, 153, 0.6)' : authLetterFile ? 'rgba(34, 197, 94, 0.5)' : 'rgba(236, 72, 153, 0.25)'}`
+                              }}
+                              onDragOver={e => handleDragOver(e, 'auth')}
+                              onDragLeave={e => handleDragLeave(e, 'auth')}
+                              onDrop={e => handleDrop(e, 'auth')}
+                              onClick={() => document.getElementById('authLetterInput')?.click()}
+                            >
+                              <input type="file" id="authLetterInput" accept=".pdf" onChange={handleAuthLetterUpload} className="hidden" />
+                              <div className="text-center">
+                                {authLetterFile ? (
+                                  <>
+                                    <CheckCircle size={28} className="mx-auto mb-2 text-green-400" />
+                                    <p className="text-sm font-bold text-green-300 mb-1">✓ Letter Uploaded</p>
+                                    <p className="text-xs text-pink-300/60 truncate">{authLetterFile.name}</p>
+                                    <p className="text-xs text-pink-400/40 mt-1">({(authLetterFile.size / 1024 / 1024).toFixed(2)} MB)</p>
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setAuthLetterFile(null); }} className="mt-2 text-xs text-red-400 hover:text-red-300 font-semibold">Remove</button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <FileIcon size={24} className="mx-auto mb-2 text-pink-400/60" />
+                                    <p className="text-xs font-semibold text-white mb-1">Auth Letter</p>
+                                    <p className="text-[10px] text-pink-400/50">Click or drag PDF</p>
+                                    <p className="text-[10px] text-pink-400/30 mt-0.5">(Max 10MB)</p>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Verification */}
+                      <div>
+                        <h3 className="text-sm font-black text-pink-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <Shield size={16} />
+                          Verification
+                        </h3>
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Government ID Number <span className="text-red-400">*</span></label>
+                            <input type="text" value={governmentId} onChange={e => setGovernmentId(e.target.value)} placeholder="Aadhaar / PAN / Driving License Number" className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Upload ID Proof <span className="text-red-400">*</span></label>
+                            <div 
+                              className="relative rounded-xl p-4 cursor-pointer transition-all"
+                              style={{ 
+                                background: isDraggingGovId ? 'rgba(236, 72, 153, 0.15)' : govIdFile ? 'rgba(34, 197, 94, 0.1)' : 'rgba(0,0,0,0.3)',
+                                border: `2px dashed ${isDraggingGovId ? 'rgba(236, 72, 153, 0.6)' : govIdFile ? 'rgba(34, 197, 94, 0.5)' : 'rgba(236, 72, 153, 0.25)'}`
+                              }}
+                              onDragOver={e => handleDragOver(e, 'govId')}
+                              onDragLeave={e => handleDragLeave(e, 'govId')}
+                              onDrop={e => handleDrop(e, 'govId')}
+                              onClick={() => document.getElementById('govIdInput')?.click()}
+                            >
+                              <input type="file" id="govIdInput" accept=".pdf,.jpg,.jpeg,.png" onChange={handleGovIdUpload} className="hidden" />
+                              <div className="text-center">
+                                {govIdFile ? (
+                                  <>
+                                    <CheckCircle size={28} className="mx-auto mb-2 text-green-400" />
+                                    <p className="text-sm font-bold text-green-300 mb-1">✓ ID Uploaded</p>
+                                    <p className="text-xs text-pink-300/60 truncate">{govIdFile.name}</p>
+                                    <p className="text-xs text-pink-400/40 mt-1">({(govIdFile.size / 1024 / 1024).toFixed(2)} MB)</p>
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setGovIdFile(null); }} className="mt-2 text-xs text-red-400 hover:text-red-300 font-semibold">Remove</button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Upload size={24} className="mx-auto mb-2 text-pink-400/60" />
+                                    <p className="text-xs font-semibold text-white mb-1">ID Proof</p>
+                                    <p className="text-[10px] text-pink-400/50">Click or drag file</p>
+                                    <p className="text-[10px] text-pink-400/30 mt-0.5">(PDF, JPG, PNG)</p>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="flex items-center justify-end gap-3 pt-2">
+                    <button
+                      onClick={() => { setActiveSection('teams'); resetAddTeamForm(); }}
+                      disabled={addTeamLoading}
+                      className="px-6 py-3 rounded-xl text-sm font-semibold text-pink-300/70 hover:text-white hover:bg-white/5 transition-all disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleAddTeam}
+                      disabled={addTeamLoading}
+                      className="px-10 py-3 rounded-xl font-bold text-sm flex items-center gap-2 transition-all duration-300 disabled:opacity-50 hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, #ec4899, #e11d48)',
+                        color: '#fff',
+                        boxShadow: '0 0 20px rgba(236, 72, 153, 0.3)'
+                      }}
+                    >
+                      {addTeamLoading ? <><Loader2 size={18} className="animate-spin" /> Registering Team...</> : <><Plus size={18} /> Register Team</>}
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
+
+            {/* 4C: TEAM DETAIL — TeamSquadPage */}
+            {activeSection === 'teamDetail' && (() => {
+              const selectedTeam = teams.find(t => t.id === selectedTeamId);
+              if (!selectedTeam) {
+                return (
+                  <div className="flex-1 p-6 flex items-center justify-center">
+                    <div className="text-center">
+                      <Users size={64} className="text-pink-400/30 mx-auto mb-4" />
+                      <h3 className="text-xl font-bold text-white mb-2">Team Not Found</h3>
+                      <button 
+                        onClick={() => setActiveSection('teams')}
+                        className="mt-4 px-6 py-3 rounded-full bg-pink-500/20 border border-pink-500/30 text-pink-300 hover:bg-pink-500/30 transition-all"
+                      >
+                        Back to Teams
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <TeamSquadPage
+                  team={selectedTeam}
+                  players={players}
+                  onBack={() => setActiveSection('teams')}
+                />
+              );
+            })()}
 
             {/* 5️⃣ AUCTIONEERS MANAGEMENT */}
             {activeSection === 'auctioneers' && (
               <div className="space-y-6 animate-in fade-in duration-500">
-                <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center justify-between mb-3">
                   <div>
-                    <h2 className="text-3xl font-black text-slate-800">Auctioneer Applications</h2>
-                    <p className="text-sm text-slate-600 mt-2 font-semibold">
-                      ⚠️ Only ONE auctioneer per season. Approving one will auto-reject others.
+                    <div className="flex items-center gap-3 mb-1">
+                      <div className="w-[4px] h-8 rounded-full" style={{ background: 'linear-gradient(180deg, rgba(249, 115, 22, 0.9), rgba(255, 0, 102, 0.6))' }}></div>
+                      <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-red-400 to-pink-400 uppercase tracking-wider">Auctioneer Applications</h2>
+                    </div>
+                    <p className="text-sm text-pink-400/60 mt-1 font-semibold">
+                      Only ONE auctioneer per season. Approving one will auto-reject others.
                     </p>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="px-4 py-2 bg-yellow-100 text-yellow-800 rounded-full text-sm font-bold">
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm font-bold">
                       {pendingAuctioneers} Pending
                     </span>
-                    <span className="px-4 py-2 bg-green-100 text-green-800 rounded-full text-sm font-bold">
+                    <span className="px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm font-bold">
                       {approvedAuctioneers} Approved
                     </span>
                   </div>
                 </div>
 
-                <div className="grid gap-4">
+                <div className="grid gap-3">
                   {auctioneers.map((auctioneer) => (
-                    <div key={auctioneer.id} className="space-y-3">
-                      <div className={`bg-white/90 backdrop-blur-xl border-2 rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all ${
-                        auctioneer.status === 'approved' ? 'border-green-400' :
-                        auctioneer.status === 'rejected' ? 'border-red-400' :
-                        'border-blue-200'
-                      }`}>
+                    <div key={auctioneer.id} className="space-y-2">
+                      <div className={`hud-card rounded-xl p-4 transition-all ${
+                        auctioneer.status === 'approved' ? 'border-green-500/40' :
+                        auctioneer.status === 'rejected' ? 'border-red-500/40' :
+                        ''
+                      }`} style={{ borderWidth: auctioneer.status !== 'pending' ? '2px' : '1px' }}>
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-white font-black text-2xl">
-                              <Gavel size={32} />
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-white font-black neon-pulse">
+                              <Gavel size={24} />
                             </div>
                             <div>
-                              <h3 className="text-xl font-black text-slate-800">{auctioneer.name}</h3>
-                              <p className="text-sm text-slate-600">{auctioneer.email}</p>
-                              <p className="text-xs text-slate-500 mt-1">
+                              <h3 className="text-lg font-black text-pink-100">{auctioneer.name}</h3>
+                              <p className="text-sm text-pink-400/60">{auctioneer.email}</p>
+                              <p className="text-xs text-pink-400/50 mt-0.5">
                                 {auctioneer.experience || '0'} years exp • {auctioneer.languagesKnown?.join(', ') || 'N/A'}
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-2">
                             <button
                               onClick={() => {
                                 if (selectedAuctioneer?.id === auctioneer.id) {
@@ -2182,37 +4413,37 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                                   setSelectedAuctioneer(auctioneer);
                                 }
                               }}
-                              className={`px-4 py-2 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${
+                              className={`px-3 py-2 rounded-lg font-bold text-sm transition-all flex items-center gap-2 ${
                                 selectedAuctioneer?.id === auctioneer.id 
-                                  ? 'bg-blue-500 hover:bg-blue-600 text-white' 
-                                  : 'bg-blue-100 hover:bg-blue-200 text-blue-700'
+                                  ? 'bg-gradient-to-r from-pink-600 to-red-600 text-white neon-pulse' 
+                                  : 'hud-card text-pink-300 hover:bg-pink-500/20'
                               }`}
                             >
                               <Eye size={16} />
-                              {selectedAuctioneer?.id === auctioneer.id ? 'Hide' : 'View'} Details
+                              {selectedAuctioneer?.id === auctioneer.id ? 'Hide' : 'View'}
                             </button>
                             {auctioneer.status === 'approved' ? (
-                              <div className="flex items-center gap-2 px-4 py-2 bg-green-100 rounded-full">
-                                <CheckCircle size={18} className="text-green-600" />
-                                <span className="text-sm font-bold text-green-800">APPROVED</span>
+                              <div className="flex items-center gap-2 px-3 py-2 bg-green-500/20 rounded-lg">
+                                <CheckCircle size={16} className="text-green-400" />
+                                <span className="text-sm font-bold text-green-400">APPROVED</span>
                               </div>
                             ) : auctioneer.status === 'rejected' ? (
-                              <div className="flex items-center gap-2 px-4 py-2 bg-red-100 rounded-full">
-                                <XCircle size={18} className="text-red-600" />
-                                <span className="text-sm font-bold text-red-800">REJECTED</span>
+                              <div className="flex items-center gap-2 px-3 py-2 bg-red-500/20 rounded-lg">
+                                <XCircle size={16} className="text-red-400" />
+                                <span className="text-sm font-bold text-red-400">REJECTED</span>
                               </div>
                             ) : (
                               <>
                                 <button
                                   onClick={() => handleRejectAuctioneer(auctioneer.id)}
-                                  className="px-4 py-2 rounded-xl bg-red-100 hover:bg-red-200 text-red-700 font-bold text-sm transition-all flex items-center gap-2"
+                                  className="px-3 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-400 font-bold text-sm transition-all flex items-center gap-2"
                                 >
                                   <X size={16} />
                                   Reject
                                 </button>
                                 <button
                                   onClick={() => handleApproveAuctioneer(auctioneer.id)}
-                                  className="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white font-bold text-sm shadow-lg transition-all flex items-center gap-2"
+                                  className="px-3 py-2 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-sm transition-all flex items-center gap-2 neon-pulse"
                                 >
                                   <Check size={16} />
                                   Approve
@@ -2225,86 +4456,86 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
                       {/* Inline Detail View */}
                       {selectedAuctioneer?.id === auctioneer.id && (
-                        <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-2xl p-6 border-2 border-slate-200 space-y-4 animate-in slide-in-from-top duration-300">
+                        <div className="hud-card rounded-xl p-5 space-y-4 animate-in slide-in-from-top duration-300">
                           {/* Personal Information */}
                           <div>
-                            <h4 className="text-base font-black text-slate-800 mb-3 flex items-center gap-2">
-                              <User size={18} className="text-blue-600" />
+                            <h4 className="text-base font-black text-pink-200 mb-3 flex items-center gap-2">
+                              <User size={18} className="text-blue-400" />
                               Personal Information
                             </h4>
-                            <div className="grid grid-cols-3 gap-4 text-sm">
-                              <div className="bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Full Name</p>
-                                <p className="text-slate-800 font-semibold">{auctioneer.name || 'N/A'}</p>
+                            <div className="grid grid-cols-3 gap-3 text-sm">
+                              <div className="hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">Full Name</p>
+                                <p className="text-pink-100 font-semibold">{auctioneer.name || 'N/A'}</p>
                               </div>
-                              <div className="bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Email</p>
-                                <p className="text-slate-800 font-semibold break-all">{auctioneer.email || 'N/A'}</p>
+                              <div className="hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">Email</p>
+                                <p className="text-pink-100 font-semibold break-all">{auctioneer.email || 'N/A'}</p>
                               </div>
-                              <div className="bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Phone</p>
-                                <p className="text-slate-800 font-semibold">{auctioneer.phone || 'N/A'}</p>
+                              <div className="hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">Phone</p>
+                                <p className="text-pink-100 font-semibold">{auctioneer.phone || 'N/A'}</p>
                               </div>
-                              <div className="col-span-3 bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Auctioneer ID</p>
-                                <p className="text-slate-800 font-mono text-sm">{auctioneer.id || 'N/A'}</p>
+                              <div className="col-span-3 hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">Auctioneer ID</p>
+                                <p className="text-pink-100 font-mono text-sm">{auctioneer.id || 'N/A'}</p>
                               </div>
                             </div>
                           </div>
 
                           {/* Professional Details */}
                           <div>
-                            <h4 className="text-base font-black text-slate-800 mb-3 flex items-center gap-2">
-                              <Gavel size={18} className="text-purple-600" />
+                            <h4 className="text-base font-black text-pink-200 mb-3 flex items-center gap-2">
+                              <Gavel size={18} className="text-purple-400" />
                               Professional Details
                             </h4>
-                            <div className="grid grid-cols-3 gap-4 text-sm">
-                              <div className="bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Experience Level</p>
-                                <p className="text-slate-800 font-semibold">{auctioneer.experienceLevel || 'N/A'}</p>
+                            <div className="grid grid-cols-3 gap-3 text-sm">
+                              <div className="hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">Experience Level</p>
+                                <p className="text-pink-100 font-semibold">{auctioneer.experienceLevel || 'N/A'}</p>
                               </div>
-                              <div className="bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">License</p>
-                                <p className="text-slate-800 font-semibold">{auctioneer.auctioneerLicense || 'N/A'}</p>
+                              <div className="hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">License</p>
+                                <p className="text-pink-100 font-semibold">{auctioneer.auctioneerLicense || 'N/A'}</p>
                               </div>
-                              <div className="bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Govt ID Number</p>
-                                <p className="text-slate-800 font-semibold">{auctioneer.governmentId || 'N/A'}</p>
+                              <div className="hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">Govt ID Number</p>
+                                <p className="text-pink-100 font-semibold">{auctioneer.governmentId || 'N/A'}</p>
                               </div>
-                              <div className="col-span-3 bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-2">Languages Known</p>
+                              <div className="col-span-3 hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-2">Languages Known</p>
                                 <div className="flex flex-wrap gap-2">
                                   {auctioneer.languages && auctioneer.languages.length > 0 ? (
                                     auctioneer.languages.map((lang: string, idx: number) => (
-                                      <span key={idx} className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-bold">
+                                      <span key={idx} className="px-2.5 py-1 bg-purple-500/20 text-purple-400 rounded-lg text-xs font-bold">
                                         {lang}
                                       </span>
                                     ))
                                   ) : (
-                                    <span className="text-slate-500 text-xs">No languages specified</span>
+                                    <span className="text-pink-400/60 text-xs">No languages specified</span>
                                   )}
                                 </div>
                               </div>
-                              <div className="col-span-3 bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Previous Auctions</p>
-                                <p className="text-slate-800 font-semibold whitespace-pre-wrap text-xs">{auctioneer.previousAuctions || 'No previous auctions mentioned'}</p>
+                              <div className="col-span-3 hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">Previous Auctions</p>
+                                <p className="text-pink-100 font-semibold whitespace-pre-wrap text-xs">{auctioneer.previousAuctions || 'No previous auctions mentioned'}</p>
                               </div>
                             </div>
                           </div>
 
                           {/* Application Status */}
                           <div>
-                            <h4 className="text-base font-black text-slate-800 mb-3 flex items-center gap-2">
-                              <FileText size={18} className="text-green-600" />
+                            <h4 className="text-base font-black text-pink-200 mb-3 flex items-center gap-2">
+                              <FileText size={18} className="text-green-400" />
                               Application Status
                             </h4>
-                            <div className="grid grid-cols-3 gap-4 text-sm">
-                              <div className="bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Status</p>
-                                <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold ${
-                                  auctioneer.status === 'approved' ? 'bg-green-100 text-green-700' :
-                                  auctioneer.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                                  'bg-yellow-100 text-yellow-700'
+                            <div className="grid grid-cols-3 gap-3 text-sm">
+                              <div className="hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">Status</p>
+                                <span className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-bold ${
+                                  auctioneer.status === 'approved' ? 'bg-green-500/20 text-green-400' :
+                                  auctioneer.status === 'rejected' ? 'bg-red-500/20 text-red-400' :
+                                  'bg-yellow-500/20 text-yellow-400'
                                 }`}>
                                   {auctioneer.status === 'approved' ? <CheckCircle size={14} /> :
                                    auctioneer.status === 'rejected' ? <XCircle size={14} /> :
@@ -2312,9 +4543,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                                   {(auctioneer.status || 'pending').toUpperCase()}
                                 </span>
                               </div>
-                              <div className="col-span-2 bg-white rounded-xl p-3">
-                                <p className="text-xs font-bold text-slate-500 uppercase mb-1">Applied On</p>
-                                <p className="text-slate-800 font-semibold text-xs">
+                              <div className="col-span-2 hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">Applied On</p>
+                                <p className="text-pink-100 font-semibold text-xs">
                                   {auctioneer.createdAt ? new Date(auctioneer.createdAt).toLocaleDateString('en-IN', {
                                     day: '2-digit',
                                     month: 'short',
@@ -2325,9 +4556,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                                 </p>
                               </div>
                               {auctioneer.assignedAuctionEvent && (
-                                <div className="col-span-3 bg-white rounded-xl p-3">
-                                  <p className="text-xs font-bold text-slate-500 uppercase mb-1">Assigned Event</p>
-                                  <p className="text-slate-800 font-semibold text-xs">{auctioneer.assignedAuctionEvent}</p>
+                                <div className="col-span-3 hud-card rounded-lg p-3">
+                                  <p className="text-xs font-bold text-pink-400/50 uppercase mb-1">Assigned Event</p>
+                                  <p className="text-pink-100 font-semibold text-xs">{auctioneer.assignedAuctionEvent}</p>
                                 </div>
                               )}
                             </div>
@@ -2336,23 +4567,23 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                           {/* Government ID Proof */}
                           {auctioneer.governmentIdFile && (
                             <div>
-                              <h4 className="text-base font-black text-slate-800 mb-3 flex items-center gap-2">
-                                <Shield size={18} className="text-red-600" />
+                              <h4 className="text-base font-black text-pink-200 mb-3 flex items-center gap-2">
+                                <Shield size={18} className="text-red-400" />
                                 Government ID Proof
                               </h4>
-                              <div className="bg-white rounded-xl p-4">
+                              <div className="hud-card rounded-lg p-4">
                                 {auctioneer.governmentIdFile.includes('.pdf') ? (
-                                  <div className="flex items-center gap-3 p-4 bg-red-50 rounded-lg border-2 border-red-200">
-                                    <FileText size={32} className="text-red-600" />
+                                  <div className="flex items-center gap-3 p-3 bg-red-500/20 rounded-lg border border-red-500/30">
+                                    <FileText size={28} className="text-red-400" />
                                     <div className="flex-1">
-                                      <p className="text-sm font-bold text-slate-800">PDF Document</p>
-                                      <p className="text-xs text-slate-600">Click to download or view</p>
+                                      <p className="text-sm font-bold text-pink-100">PDF Document</p>
+                                      <p className="text-xs text-pink-400/60">Click to download or view</p>
                                     </div>
                                     <a
                                       href={auctioneer.governmentIdFile}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-bold text-sm transition-all"
+                                      className="px-3 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-bold text-sm transition-all"
                                     >
                                       View PDF
                                     </a>
@@ -2383,10 +4614,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                   ))}
 
                   {auctioneers.length === 0 && (
-                    <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-2xl p-12 text-center">
-                      <Gavel size={48} className="mx-auto text-slate-300 mb-4" />
-                      <h3 className="text-xl font-black text-slate-600 mb-2">No Applications Yet</h3>
-                      <p className="text-slate-500">Waiting for auctioneers to apply...</p>
+                    <div className="hud-card rounded-2xl p-12 text-center">
+                      <Gavel size={48} className="mx-auto text-pink-500/30 mb-4" />
+                      <h3 className="text-xl font-black text-pink-300 mb-2">No Applications Yet</h3>
+                      <p className="text-pink-400/60">Waiting for auctioneers to apply...</p>
                     </div>
                   )}
                 </div>
@@ -2401,7 +4632,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                   {liveNotifications.map((notification) => (
                     <div
                       key={notification.id}
-                      className={`animate-in slide-in-from-right duration-300 shadow-2xl rounded-2xl overflow-hidden ${
+                      className={`animate-in slide-in-from-right duration-300 shadow-2xl rounded-xl overflow-hidden ${
                         notification.type === 'bid' ? 'bg-gradient-to-r from-blue-500 to-cyan-600' :
                         notification.type === 'sold' ? 'bg-gradient-to-r from-green-500 to-emerald-600' :
                         notification.type === 'unsold' ? 'bg-gradient-to-r from-gray-500 to-slate-600' :
@@ -2409,7 +4640,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         'bg-gradient-to-r from-purple-500 to-indigo-600'
                       }`}
                     >
-                      <div className="p-4 flex items-center gap-3">
+                      <div className="p-3 flex items-center gap-3">
                         <div className="flex-1">
                           <p className="text-white font-bold text-sm">{notification.message}</p>
                         </div>
@@ -2424,61 +4655,61 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                   ))}
                 </div>
 
-                <div className="grid grid-cols-12 gap-1.5 h-[calc(100vh-130px)]">
+                <div className="grid grid-cols-12 gap-3 h-[calc(100vh-130px)]">
                   {/* Left: Live Auction Display */}
                   <div className="col-span-8 h-full">
                     {/* Live Auction Card */}
-                    <div className="bg-white/90 backdrop-blur-xl border-2 border-cyan-200 rounded-3xl overflow-hidden shadow-xl h-full flex flex-col">
-                      <div className="bg-gradient-to-r from-red-100 to-orange-100 border-b-2 border-red-200 p-2">
-                        <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
-                          <Zap size={16} className="text-red-600" />
+                    <div className="mission-widget rounded-2xl overflow-hidden h-full flex flex-col cyber-glow">
+                      <div className="angled-header">
+                        <h3 className="text-xs font-black uppercase tracking-[0.2em] text-red-300 flex items-center gap-2">
+                          <Zap size={14} className="text-red-400 animate-pulse" />
                           Live Auction Room
                         </h3>
                       </div>
                       
-                      <div className="p-4 flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-cyan-50 flex-1">
+                      <div className="p-6 flex flex-col items-center justify-center flex-1">
                         {console.log('📺 Admin: LiveMonitor rendering - currentBiddingPlayer:', currentBiddingPlayer?.name || 'NULL')}
                         {currentBiddingPlayer ? (
                           <div className="text-center w-full max-w-md">
                             {/* Player Image */}
-                            <div className="h-48 flex items-center justify-center bg-slate-200 rounded-2xl border-4 border-white shadow-lg mb-3 mx-auto overflow-hidden">
+                            <div className="h-44 w-44 mx-auto flex items-center justify-center bg-pink-900/30 rounded-full border-4 border-pink-500/50 shadow-lg mb-4 overflow-hidden neon-pulse">
                               {currentBiddingPlayer.imageUrl ? (
-                                <img src={currentBiddingPlayer.imageUrl} alt={currentBiddingPlayer.name} className="max-h-full max-w-full object-cover rounded-xl" />
+                                <img src={currentBiddingPlayer.imageUrl} alt={currentBiddingPlayer.name} className="w-full h-full object-cover" />
                               ) : (
-                                <User size={60} className="text-gray-500" />
+                                <User size={60} className="text-pink-400" />
                               )}
                             </div>
 
                             {/* Player Info */}
-                            <h3 className="text-3xl font-black text-slate-800 mb-2 uppercase leading-tight">{currentBiddingPlayer.name}</h3>
-                            <p className="text-cyan-600 text-xs uppercase tracking-wider font-bold mb-3">{currentBiddingPlayer.role || currentBiddingPlayer.roleId || 'Player'}</p>
+                            <h3 className="text-2xl font-black text-pink-100 mb-2 uppercase leading-tight">{currentBiddingPlayer.name}</h3>
+                            <p className="text-cyan-400 text-xs uppercase tracking-wider font-bold mb-4">{currentBiddingPlayer.role || currentBiddingPlayer.roleId || 'Player'}</p>
 
                             {/* Current Bid */}
-                            <div className="bg-white border-4 border-red-400 rounded-2xl p-4 mb-2 shadow-lg">
-                              <p className="text-xs text-gray-600 uppercase tracking-wider font-bold mb-1">Current Bid</p>
-                              <p className="text-4xl font-black text-slate-800 mb-1">
+                            <div className="mission-widget rounded-xl p-4 mb-3 cyber-glow" style={{ border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                              <p className="text-xs text-pink-400/60 uppercase tracking-wider font-bold mb-1">Current Bid</p>
+                              <p className="text-4xl font-black text-green-400 mb-1">
                                 ₹{currentBid >= 10000000 ? (currentBid / 10000000).toFixed(1) + 'Cr' : (currentBid / 100000).toFixed(1) + 'L'}
                               </p>
                               {leadingTeamName ? (
-                                <p className="text-cyan-600 text-base font-bold animate-pulse">Leading: {leadingTeamName}</p>
+                                <p className="text-cyan-400 text-base font-bold animate-pulse">Leading: {leadingTeamName}</p>
                               ) : (
-                                <p className="text-gray-500 text-sm">No bids yet</p>
+                                <p className="text-pink-400/60 text-sm">No bids yet</p>
                               )}
                             </div>
 
                             {/* Base Price */}
-                            <p className="text-gray-600 text-xs">Base Price: ₹{(currentBiddingPlayer.basePrice / 100000).toFixed(1)}L</p>
+                            <p className="text-pink-400/60 text-xs">Base Price: ₹{(currentBiddingPlayer.basePrice / 100000).toFixed(1)}L</p>
                           </div>
                         ) : (
                           <div className="text-center">
-                            <Radio size={60} className={`mx-auto mb-4 ${liveAuctionStatus === 'LIVE' ? 'text-red-500 animate-pulse' : 'text-gray-400'}`} />
-                            <h3 className="text-2xl font-black text-slate-600 mb-2">
+                            <Radio size={60} className={`mx-auto mb-4 ${liveAuctionStatus === 'LIVE' ? 'text-red-500 animate-pulse' : 'text-pink-500/30'}`} />
+                            <h3 className="text-2xl font-black text-pink-300 mb-2">
                               {liveAuctionStatus === 'LIVE' ? 'Preparing Next Player...' :
                                liveAuctionStatus === 'PAUSED' ? 'Auction Paused' :
                                liveAuctionStatus === 'ENDED' ? 'Auction Ended' :
                                'Waiting to Start'}
                             </h3>
-                            <p className="text-gray-500 text-sm">
+                            <p className="text-pink-400/60 text-sm">
                               {liveAuctionStatus === 'LIVE' ? 'The next player will appear shortly' :
                                liveAuctionStatus === 'PAUSED' ? 'Auction temporarily on hold' :
                                liveAuctionStatus === 'ENDED' ? 'All players have been auctioned' :
@@ -2491,15 +4722,15 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                   </div>
 
                   {/* Right: Stats and Emergency Controls */}
-                  <div className="col-span-4 h-full grid grid-rows-5 gap-1.5">
+                  <div className="col-span-4 h-full grid grid-rows-5 gap-2">
                     {/* Row 1: Players Sold */}
-                    <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-2xl p-3 shadow-lg">
+                    <div className="mission-widget rounded-xl p-3">
                       <div className="flex items-center justify-between mb-1">
-                        <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">Players Sold</h4>
-                        <CheckCircle size={14} className="text-green-500" />
+                        <h4 className="text-xs font-bold text-pink-400/60 uppercase tracking-wider">Players Sold</h4>
+                        <CheckCircle size={14} className="text-green-400" />
                       </div>
-                      <p className="text-xl font-black text-green-600">{soldPlayers}/{totalPlayers}</p>
-                      <div className="mt-1 w-full bg-gray-200 rounded-full h-1">
+                      <p className="text-xl font-black text-green-400">{soldPlayers}/{totalPlayers}</p>
+                      <div className="mt-1 w-full bg-pink-900/30 rounded-full h-1">
                         <div 
                           className="bg-green-500 h-1 rounded-full transition-all duration-500"
                           style={{ width: `${totalPlayers > 0 ? (soldPlayers / totalPlayers) * 100 : 0}%` }}
@@ -2508,33 +4739,33 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                     </div>
 
                     {/* Row 2: Total Spent */}
-                    <div className="bg-white/90 backdrop-blur-xl border-2 border-orange-200 rounded-2xl p-3 shadow-lg">
+                    <div className="mission-widget rounded-xl p-3">
                       <div className="flex items-center justify-between mb-1">
-                        <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">Total Spent</h4>
-                        <DollarSign size={14} className="text-orange-500" />
+                        <h4 className="text-xs font-bold text-pink-400/60 uppercase tracking-wider">Total Spent</h4>
+                        <DollarSign size={14} className="text-orange-400" />
                       </div>
-                      <p className="text-xl font-black text-orange-600">₹{(spentBudget / 10000000).toFixed(1)}Cr</p>
-                      <p className="text-xs text-slate-500">of ₹{(totalBudget / 10000000).toFixed(1)}Cr</p>
+                      <p className="text-xl font-black text-orange-400">₹{(spentBudget / 10000000).toFixed(1)}Cr</p>
+                      <p className="text-xs text-pink-400/60">of ₹{(totalBudget / 10000000).toFixed(1)}Cr</p>
                     </div>
 
                     {/* Row 3: Teams Active and Remaining side by side */}
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <div className="bg-white/90 backdrop-blur-xl border-2 border-purple-200 rounded-2xl p-3 shadow-lg">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="mission-widget rounded-xl p-3">
                         <div className="flex items-center justify-between mb-1">
-                          <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">Teams Active</h4>
-                          <Users size={14} className="text-purple-500" />
+                          <h4 className="text-[10px] font-bold text-pink-400/60 uppercase">Active</h4>
+                          <Users size={12} className="text-purple-400" />
                         </div>
-                        <p className="text-xl font-black text-purple-600">{approvedTeams}</p>
-                        <p className="text-xs text-slate-500">Bidding teams</p>
+                        <p className="text-lg font-black text-purple-400">{approvedTeams}</p>
+                        <p className="text-[10px] text-pink-400/50">Teams</p>
                       </div>
 
-                      <div className="bg-white/90 backdrop-blur-xl border-2 border-cyan-200 rounded-2xl p-3 shadow-lg">
+                      <div className="mission-widget rounded-xl p-3">
                         <div className="flex items-center justify-between mb-1">
-                          <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">Remaining</h4>
-                          <Activity size={14} className="text-cyan-500" />
+                          <h4 className="text-[10px] font-bold text-pink-400/60 uppercase">Pending</h4>
+                          <Activity size={12} className="text-cyan-400" />
                         </div>
-                        <p className="text-xl font-black text-cyan-600">{pendingPlayers}</p>
-                        <p className="text-xs text-slate-500">Players pending</p>
+                        <p className="text-lg font-black text-cyan-400">{pendingPlayers}</p>
+                        <p className="text-[10px] text-pink-400/50">Players</p>
                       </div>
                     </div>
 
@@ -2544,393 +4775,114 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
               </div>
             )}
 
-            {/* 7️⃣ ANALYTICS */}
-            {activeSection === 'analytics' && (
-              <div className="space-y-6 animate-in fade-in duration-500">
-                <h2 className="text-3xl font-black text-slate-800 mb-6">Analytics & Insights</h2>
+            {/* 8️⃣ REPORTS — ReportSection + BiddingHistoryPage */}
+            {(activeSection === 'reports' || activeSection === 'report') && (() => {
+              const reportTeams = teams.map(team => {
+                const teamPlayers = players.filter(p => 
+                  (p as any).soldTo === team.id || (p as any).teamId === team.id || (p as any).buyingTeamId === team.id
+                );
+                const spent = teamPlayers.reduce((sum, p) => sum + ((p as any).soldAmount || (p as any).soldPrice || (p as any).currentBid || 0), 0);
+                return { ...team, acquiredPlayers: teamPlayers, totalSpent: spent };
+              });
+              const unassignedPlayers = players.filter(p => {
+                const hasTeam = (p as any).soldTo || (p as any).teamId || (p as any).buyingTeamId;
+                return !hasTeam && (p.status === 'UNSOLD' || p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status);
+              });
+              return (
+                <ReportSection
+                  teams={reportTeams}
+                  unassignedPlayers={unassignedPlayers}
+                  players={players}
+                  currentMatch={resolvedMatch || currentMatch}
+                  soldPlayersCount={soldPlayersCount}
+                  unsoldPlayersCount={unsoldPlayersCount}
+                  pendingPlayersCount={pendingPlayersCount}
+                  totalAmountSpent={totalAmountSpent}
+                  auctionStatus={liveAuctionStatus}
+                  currentBiddingPlayer={currentBiddingPlayer}
+                  onNavigateHistory={(player) => {
+                    setHistoryPlayer(player);
+                    setActiveSection('history');
+                  }}
+                />
+              );
+            })()}
 
-                {/* Budget Distribution */}
-                <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl p-6 shadow-xl">
-                  <h3 className="text-xl font-black text-slate-800 mb-6 flex items-center gap-2">
-                    <PieChart size={24} className="text-blue-600" />
-                    Budget Distribution
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="text-center p-6 bg-blue-50 rounded-2xl">
-                      <p className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-2">Total Pool</p>
-                      <p className="text-4xl font-black text-blue-600">₹{(totalBudget / 1000000).toFixed(0)}M</p>
-                    </div>
-                    <div className="text-center p-6 bg-green-50 rounded-2xl">
-                      <p className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-2">Spent</p>
-                      <p className="text-4xl font-black text-green-600">₹{(spentBudget / 1000000).toFixed(0)}M</p>
-                      <p className="text-xs text-slate-500 mt-2">{((spentBudget / totalBudget) * 100).toFixed(1)}%</p>
-                    </div>
-                    <div className="text-center p-6 bg-orange-50 rounded-2xl">
-                      <p className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-2">Remaining</p>
-                      <p className="text-4xl font-black text-orange-600">₹{(remainingBudget / 1000000).toFixed(0)}M</p>
-                      <p className="text-xs text-slate-500 mt-2">{((remainingBudget / totalBudget) * 100).toFixed(1)}%</p>
-                    </div>
-                  </div>
-                  
-                  {/* Visual Progress Bar */}
-                  <div className="mt-6">
-                    <div className="w-full h-8 bg-gray-200 rounded-full overflow-hidden flex">
-                      <div 
-                        className="bg-green-500 flex items-center justify-center text-white text-xs font-bold"
-                        style={{ width: `${(spentBudget / totalBudget) * 100}%` }}
-                      >
-                        {((spentBudget / totalBudget) * 100).toFixed(0)}% Spent
-                      </div>
-                      <div 
-                        className="bg-orange-300 flex items-center justify-center text-white text-xs font-bold"
-                        style={{ width: `${(remainingBudget / totalBudget) * 100}%` }}
-                      >
-                        {((remainingBudget / totalBudget) * 100).toFixed(0)}% Left
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Player Status Breakdown */}
-                <div className="bg-white/90 backdrop-blur-xl border-2 border-purple-200 rounded-3xl p-6 shadow-xl">
-                  <h3 className="text-xl font-black text-slate-800 mb-6 flex items-center gap-2">
-                    <BarChart3 size={24} className="text-purple-600" />
-                    Player Status
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="p-6 bg-green-50 rounded-2xl border-2 border-green-200">
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Sold</p>
-                        <CheckCircle size={20} className="text-green-600" />
-                      </div>
-                      <p className="text-5xl font-black text-green-600 mb-1">{soldPlayers}</p>
-                      <p className="text-xs text-slate-500">{totalPlayers > 0 ? ((soldPlayers / totalPlayers) * 100).toFixed(1) : 0}% of total</p>
-                    </div>
-                    
-                    <div className="p-6 bg-blue-50 rounded-2xl border-2 border-blue-200">
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Pending</p>
-                        <Clock size={20} className="text-blue-600" />
-                      </div>
-                      <p className="text-5xl font-black text-blue-600 mb-1">{pendingPlayers}</p>
-                      <p className="text-xs text-slate-500">{totalPlayers > 0 ? ((pendingPlayers / totalPlayers) * 100).toFixed(1) : 0}% of total</p>
-                    </div>
-                    
-                    <div className="p-6 bg-red-50 rounded-2xl border-2 border-red-200">
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Unsold</p>
-                        <XCircle size={20} className="text-red-600" />
-                      </div>
-                      <p className="text-5xl font-black text-red-600 mb-1">{unsoldPlayers}</p>
-                      <p className="text-xs text-slate-500">{totalPlayers > 0 ? ((unsoldPlayers / totalPlayers) * 100).toFixed(1) : 0}% of total</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Top Spenders */}
-                <div className="bg-white/90 backdrop-blur-xl border-2 border-orange-200 rounded-3xl p-6 shadow-xl">
-                  <h3 className="text-xl font-black text-slate-800 mb-6 flex items-center gap-2">
-                    <TrendingUp size={24} className="text-orange-600" />
-                    Top Spending Teams
-                  </h3>
-                  <div className="space-y-4">
-                    {teams
-                      .map(team => {
-                        const initialBudget = team.budget || team.initialBudget || 0;
-                        const remaining = team.remainingBudget !== undefined ? team.remainingBudget : initialBudget;
-                        const spent = initialBudget - remaining;
-                        return { ...team, spent, initialBudget, remaining };
-                      })
-                      .sort((a, b) => b.spent - a.spent)
-                      .slice(0, 5)
-                      .map((team, index) => (
-                        <div key={team.id} className="flex items-center justify-between p-4 bg-gradient-to-r from-orange-50 to-red-50 rounded-2xl border border-orange-200">
-                          <div className="flex items-center gap-4">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-white ${
-                              index === 0 ? 'bg-yellow-500' :
-                              index === 1 ? 'bg-gray-400' :
-                              index === 2 ? 'bg-orange-600' :
-                              'bg-slate-400'
-                            }`}>
-                              {index + 1}
-                            </div>
-                            {team.logo ? (
-                              <div className="w-12 h-12 rounded-xl overflow-hidden border-2 border-orange-300">
-                                <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
-                              </div>
-                            ) : (
-                              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-black text-xl border-2 border-orange-300">
-                                {team.name?.charAt(0) || 'T'}
-                              </div>
-                            )}
-                            <div>
-                              <h4 className="text-lg font-black text-slate-800">{team.name}</h4>
-                              <p className="text-xs text-slate-500">{team.squadSize || 0} players</p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-2xl font-black text-orange-600">₹{(team.spent / 1000000).toFixed(1)}M</p>
-                            <p className="text-xs text-slate-500">₹{(team.remaining / 1000000).toFixed(1)}M left</p>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* 8️⃣ REPORTS */}
-            {activeSection === 'reports' && (
-              <div className="space-y-6 animate-in fade-in duration-500">
-                <div className="flex items-center justify-between gap-4 mb-6 bg-gradient-to-br from-slate-50 to-white py-4 border-b-2 border-blue-200">
-                  <div className="flex-1 relative">
-                    <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
-                    <input
-                      type="text"
-                      placeholder="Search by team or player name..."
-                      value={reportSearchQuery}
-                      onChange={(e) => setReportSearchQuery(e.target.value)}
-                      className="w-full pl-12 pr-4 py-3 rounded-2xl border-2 border-blue-200 focus:border-blue-500 focus:outline-none bg-white text-slate-800 font-semibold placeholder:text-slate-400 transition-all"
-                    />
-                  </div>
-                  <button
-                    onClick={() => {
-                      const csvContent = generateReportCSV();
-                      const element = document.createElement('a');
-                      element.setAttribute('href', 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent));
-                      element.setAttribute('download', `auction_report_${currentMatch?.name || 'report'}.csv`);
-                      element.style.display = 'none';
-                      document.body.appendChild(element);
-                      element.click();
-                      document.body.removeChild(element);
-                    }}
-                    className="px-6 py-3 rounded-2xl bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-bold transition-all flex items-center gap-2 shadow-lg whitespace-nowrap"
-                  >
-                    <Download size={20} />
-                    Export CSV
-                  </button>
-                </div>
-
-                <div className="bg-white/90 backdrop-blur-xl border-2 border-blue-200 rounded-3xl overflow-hidden shadow-xl">
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gradient-to-r from-blue-100 to-purple-100 sticky top-0 z-10">
-                        <tr>
-                          <th className="px-6 py-4 text-left text-xs font-black text-slate-800 uppercase tracking-wider">Team</th>
-                          <th className="px-6 py-4 text-left text-xs font-black text-slate-800 uppercase tracking-wider">Player</th>
-                          <th className="px-6 py-4 text-left text-xs font-black text-slate-800 uppercase tracking-wider">Base Price</th>
-                          <th className="px-6 py-4 text-left text-xs font-black text-slate-800 uppercase tracking-wider">Sold Price</th>
-                          <th className="px-6 py-4 text-left text-xs font-black text-slate-800 uppercase tracking-wider">Profit/Loss</th>
-                          <th className="px-6 py-4 text-center text-xs font-black text-slate-800 uppercase tracking-wider">Bidding History</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200">
-                        {teams.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                              No teams available for report
-                            </td>
-                          </tr>
-                        ) : (
-                          teams
-                            .filter(team => {
-                              const teamMatch = team.name?.toLowerCase().includes(reportSearchQuery.toLowerCase());
-                              const teamPlayers = players.filter(p => p.status === 'SOLD' && (p.soldTo === team.id || p.leadingTeamId === team.id));
-                              const playerMatch = teamPlayers.some(p => p.name?.toLowerCase().includes(reportSearchQuery.toLowerCase()));
-                              return reportSearchQuery === '' || teamMatch || playerMatch;
-                            })
-                            .flatMap(team => {
-                            const teamPlayers = players.filter(p => p.status === 'SOLD' && (p.soldTo === team.id || p.leadingTeamId === team.id)).filter(p => 
-                              reportSearchQuery === '' || p.name?.toLowerCase().includes(reportSearchQuery.toLowerCase())
-                            );
-                            if (teamPlayers.length === 0) {
-                              return (
-                                <tr key={team.id} className="hover:bg-blue-50 transition-colors">
-                                  <td className="px-6 py-4">
-                                    <div className="flex items-center gap-3">
-                                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold overflow-hidden">
-                                        {team.logo ? (
-                                          <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
-                                        ) : (
-                                          team.name?.charAt(0) || 'T'
-                                        )}
-                                      </div>
-                                      <div>
-                                        <p className="font-bold text-slate-800">{team.name}</p>
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td colSpan={5} className="px-6 py-4 text-center text-sm text-slate-500">
-                                    No players assigned
-                                  </td>
-                                </tr>
-                              );
-                            }
-                            return teamPlayers.map((player, idx) => {
-                              const soldPrice = player.soldAmount || player.soldPrice || player.finalPrice || player.currentBid || 0;
-                              const difference = soldPrice - (player.basePrice || 0);
-                              const isExpanded = expandedPlayers.has(player.id);
-                              
-                              return (
-                                <React.Fragment key={player.id}>
-                                  <tr className={`${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-blue-100 transition-colors`}>
-                                    <td className="px-6 py-4">
-                                      {idx === 0 && (
-                                        <div className="flex items-center gap-3">
-                                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold overflow-hidden">
-                                            {team.logo ? (
-                                              <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
-                                            ) : (
-                                              team.name?.charAt(0) || 'T'
-                                            )}
-                                          </div>
-                                          <p className="font-bold text-slate-800">{team.name}</p>
-                                        </div>
-                                      )}
-                                    </td>
-                                    <td className="px-6 py-4">
-                                      <p className="font-semibold text-slate-800">{player.name}</p>
-                                      <p className="text-xs text-slate-500">{player.email || 'N/A'}</p>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                      <span className="font-semibold text-slate-700">₹{((player.basePrice || 0) / 100000).toFixed(1)}L</span>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                      <span className="font-bold text-green-600">₹{((player.soldAmount || player.soldPrice || player.finalPrice || player.currentBid || 0) / 100000).toFixed(1)}L</span>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                      <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold ${
-                                        difference > 0 ? 'bg-green-100 text-green-700' : 
-                                        difference < 0 ? 'bg-red-100 text-red-700' : 
-                                        'bg-gray-100 text-gray-700'
-                                      }`}>
-                                        {difference > 0 ? <TrendingUp size={12} /> : difference < 0 ? <TrendingDown size={12} /> : null}
-                                        ₹{(Math.abs(difference) / 100000).toFixed(1)}L
-                                      </span>
-                                    </td>
-                                    <td className="px-6 py-4 text-center">
-                                      <button
-                                        onClick={() => {
-                                          const newExpanded = new Set(expandedPlayers);
-                                          if (isExpanded) {
-                                            newExpanded.delete(player.id);
-                                          } else {
-                                            newExpanded.add(player.id);
-                                            if (!biddingHistory[player.id]) {
-                                              fetchBiddingHistory(player.id);
-                                            }
-                                          }
-                                          setExpandedPlayers(newExpanded);
-                                        }}
-                                        className="px-3 py-2 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-600 font-bold text-xs transition-all inline-flex items-center gap-1"
-                                      >
-                                        {isExpanded ? '▼' : '▶'} View
-                                      </button>
-                                    </td>
-                                  </tr>
-                                  {isExpanded && (
-                                    <tr className={`${idx % 2 === 0 ? 'bg-blue-50' : 'bg-blue-100'}`}>
-                                      <td colSpan={6} className="px-6 py-4">
-                                        <div className="bg-white rounded-xl border-2 border-blue-200 p-4">
-                                          <h4 className="font-bold text-slate-800 mb-4 text-sm uppercase tracking-wider">Bidding History</h4>
-                                          {reportLoading && biddingHistory[player.id] === undefined ? (
-                                            <div className="text-center py-4">
-                                              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
-                                              <p className="text-xs text-slate-500 mt-2">Loading history...</p>
-                                            </div>
-                                          ) : !biddingHistory[player.id] || biddingHistory[player.id].length === 0 ? (
-                                            <div className="text-center py-6">
-                                              <p className="text-sm text-slate-500 font-bold">No bidding history found</p>
-                                              <p className="text-xs text-slate-400 mt-1">This player may not have received any bids</p>
-                                            </div>
-                                          ) : (
-                                            <div className="space-y-2">
-                                              {biddingHistory[player.id].map((bid, bidIdx) => (
-                                                <div key={bidIdx} className="flex items-center justify-between p-3 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border-l-4 border-blue-500">
-                                                  <div className="flex-1">
-                                                    <p className="font-bold text-slate-800 text-sm">Bid #{bidIdx + 1}</p>
-                                                    <p className="text-xs text-slate-600">{bid.teamName || bid.teamId || 'Unknown Team'}</p>
-                                                  </div>
-                                                  <div className="text-right">
-                                                    <p className="font-black text-lg text-purple-600">₹{(bid.amount / 100000).toFixed(1)}L</p>
-                                                    <p className="text-xs text-slate-500">{bid.timestamp ? new Date(bid.timestamp).toLocaleTimeString() : 'N/A'}</p>
-                                                  </div>
-                                                </div>
-                                              ))}
-                                              <div className="flex items-center justify-between p-3 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border-l-4 border-green-500 mt-3">
-                                                <div>
-                                                  <p className="font-bold text-slate-800 text-sm">SOLD ✓</p>
-                                                  <p className="text-xs text-slate-600">Final Sale</p>
-                                                </div>
-                                                <div className="text-right">
-                                                  <p className="font-black text-lg text-green-600">₹{((player.soldAmount || 0) / 100000).toFixed(1)}L</p>
-                                                  <p className="text-xs text-slate-500">{player.soldAt ? new Date(player.soldAt).toLocaleTimeString() : 'N/A'}</p>
-                                                </div>
-                                              </div>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  )}
-                                </React.Fragment>
-                              );
-                            });
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Live Room Section */}
-            {activeSection === 'liveRoom' && (resolvedMatch || currentMatch) && (
-              <div className="animate-in fade-in duration-500">
-                <div className="fixed inset-0 z-40 bg-black">
-                  <LiveAuctionPage
-                    seasonId={(resolvedMatch || currentMatch)!.id}
-                    userId={currentUser.email}
-                    userRole={UserRole.ADMIN}
-                    onClose={() => setActiveSection('overview')}
-                  />
-                </div>
-              </div>
-            )}
+            {/* 8B: BIDDING HISTORY — BiddingHistoryPage */}
+            {activeSection === 'history' && (() => {
+              if (!historyPlayer || !(resolvedMatch || currentMatch)?.id) {
+                setActiveSection('reports');
+                return null;
+              }
+              return (
+                <BiddingHistoryPage
+                  player={historyPlayer}
+                  seasonId={(resolvedMatch || currentMatch)!.id}
+                  onBack={() => setActiveSection('reports')}
+                />
+              );
+            })()}
 
           </div>
         </div>
       </div>
 
-      {/* CONFIRMATION MODAL */}
+      {/* Full-Screen Live Room — No Sidebar, No Topbar */}
+      {activeSection === 'liveRoom' && (resolvedMatch || currentMatch) && (
+        <div className="fixed inset-0 z-[60] bg-black animate-in fade-in duration-500">
+          <LiveAuctionPage
+            seasonId={(resolvedMatch || currentMatch)!.id}
+            userId={currentUser.email}
+            userRole={UserRole.ADMIN}
+            onClose={() => setActiveSection('overview')}
+          />
+          <button
+            onClick={() => setActiveSection('overview')}
+            className="absolute top-4 left-4 z-10 flex items-center gap-2.5 px-6 py-3 rounded-xl text-white font-black text-sm transition-all hover:scale-105"
+            style={{
+              background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.7), rgba(249, 115, 22, 0.6))',
+              border: '1px solid rgba(255, 0, 102, 0.4)',
+              backdropFilter: 'blur(8px)',
+              boxShadow: '0 4px 20px rgba(255, 0, 102, 0.3)',
+            }}
+          >
+            <ArrowLeft size={20} />
+            Back to Dashboard
+          </button>
+        </div>
+      )}
+
+      {/* CONFIRMATION MODAL \u2014 HUD Popup */}
       {showConfirmation && confirmAction && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 animate-in zoom-in duration-200">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-12 h-12 rounded-full bg-yellow-100 flex items-center justify-center">
-                <AlertTriangle size={24} className="text-yellow-600" />
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="hud-card rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in zoom-in duration-200 cyber-glow gradient-border">
+            <div className="flex items-center gap-4 mb-5">
+              <div className="w-12 h-12 rounded-xl bg-yellow-500/20 flex items-center justify-center neon-pulse border border-yellow-500/30">
+                <AlertTriangle size={24} className="text-yellow-400" />
               </div>
-              <h3 className="text-2xl font-black text-slate-800">Confirm Action</h3>
+              <div>
+                <h3 className="text-xl font-black text-pink-100">Confirm Action</h3>
+                <p className="text-[10px] text-pink-400/40 uppercase tracking-widest font-bold">Critical Operation</p>
+              </div>
             </div>
             
-            <p className="text-slate-600 font-semibold mb-8 leading-relaxed">
+            <p className="text-pink-200/80 font-semibold mb-6 leading-relaxed">
               {confirmAction.message}
             </p>
             
-            <div className="flex gap-4">
+            <div className="flex gap-3">
               <button
                 onClick={() => {
                   setShowConfirmation(false);
                   setConfirmAction(null);
                 }}
-                className="flex-1 px-6 py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm transition-all"
+                className="flex-1 px-5 py-2.5 rounded-xl hud-card text-pink-300/70 font-bold text-sm transition-all hover:bg-pink-500/10 hover:text-pink-300"
               >
                 Cancel
               </button>
               <button
                 onClick={executeConfirmedAction}
-                className="flex-1 px-6 py-3 rounded-xl bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700 text-white font-bold text-sm shadow-lg transition-all"
+                className="flex-1 px-5 py-2.5 rounded-xl bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700 text-white font-bold text-sm shadow-lg transition-all neon-pulse"
               >
                 Confirm
               </button>

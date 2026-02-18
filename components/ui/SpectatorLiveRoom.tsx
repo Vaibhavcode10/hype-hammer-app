@@ -100,23 +100,27 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
     return `₹${amount.toLocaleString()}`;
   };
 
-  // Get players bought by each team (players with status SOLD and a teamId)
+  // Get players bought by each team (players with status SOLD and soldTo or leadingTeamId matching team)
+  // Same logic as AdminDashboardPage.tsx getTeamStats
   const getTeamPlayers = (teamId: string): Player[] => {
-    return allPlayers.filter(p => p.teamId === teamId && p.status === 'SOLD');
+    return allPlayers.filter(p => 
+      p.status === 'SOLD' && (p.soldTo === teamId || p.leadingTeamId === teamId || p.teamId === teamId)
+    );
   };
 
   // Build extended team data with live updates
   const teamsWithPlayers = useMemo(() => {
     return teams.map(team => {
       const boughtPlayers = getTeamPlayers(team.id);
-      // Use team.players or team.playerIds for total squad size
-      const totalSquadSize = team.players?.length || team.playerIds?.length || team.squadSize || 0;
-      const remainingSlots = Math.max(0, (team.squadSize || 15) - (team.players?.length || 0));
+      // totalSquadSize should be the MAX squad size (capacity), not current count
+      // Use team.maxSquadSize, or squadSize as max capacity, or default to 15
+      const maxSquadSize = team.maxSquadSize || team.squadSize || 15;
+      const remainingSlots = Math.max(0, maxSquadSize - boughtPlayers.length);
       
       return {
         ...team,
         boughtPlayers,
-        totalSquadSize,
+        totalSquadSize: maxSquadSize,
         remainingSlots,
         remainingBudget: team.remainingBudget || 0
       };
@@ -152,7 +156,7 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
   return (
     <div className="w-full h-full flex flex-col bg-black overflow-hidden">
       {/* TOPBAR - Status and Counts */}
-      <div className="h-16 bg-gray-900/80 border-b border-amber-400/50 flex items-center justify-between px-6 z-40" style={{
+      <div className="h-20 bg-gray-900/80 border-b border-amber-400/50 flex items-center justify-between px-6 z-40" style={{
         background: 'linear-gradient(to right, rgba(20, 15, 5, 0.95), rgba(30, 20, 5, 0.95))',
         boxShadow: '0 4px 20px rgba(245, 158, 11, 0.1)'
       }}>
@@ -165,39 +169,99 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
           <span className="text-sm font-semibold">Back to Dashboard</span>
         </button>
         
-        {/* Right Side - Players and Teams Count */}
+        {/* CENTER: Diagonal Separating Line */}
+        <div className="relative mx-6 h-16 flex items-center">
+          <div 
+            className="absolute"
+            style={{
+              width: '2px',
+              height: '64px',
+              background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.3) 0%, rgba(245, 158, 11, 0.6) 50%, rgba(245, 158, 11, 0.3) 100%)',
+              transform: 'skewX(-20deg)',
+              boxShadow: '0 0 12px rgba(245, 158, 11, 0.5)',
+            }}
+          />
+        </div>
+        
+        {/* Right Side - Auction Statistics */}
         <div className="flex items-center gap-8">
-          {/* Players Count */}
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-amber-500/20 border border-amber-400/40">
-              <Users size={20} className="text-amber-400" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-400 uppercase tracking-wider">Players</p>
-              <p className="text-xl font-black text-amber-300">{allPlayers.length}</p>
-            </div>
+          {/* Total Players */}
+          <div className="flex flex-col items-center gap-1">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Total Players</p>
+            <p className="text-lg font-black text-amber-400">{allPlayers.length}</p>
           </div>
           
-          {/* Teams Count */}
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-amber-500/20 border border-amber-400/40">
-              <Award size={20} className="text-amber-400" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-400 uppercase tracking-wider">Teams</p>
-              <p className="text-xl font-black text-amber-300">{teams.length}</p>
-            </div>
+          {/* Sold Players */}
+          <div className="flex flex-col items-center gap-1">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Sold Players</p>
+            <p className="text-lg font-black text-amber-400">{allPlayers.filter(p => p.status === 'SOLD').length}</p>
+          </div>
+          
+          {/* Available Players */}
+          <div className="flex flex-col items-center gap-1">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Available Players</p>
+            <p className="text-lg font-black text-amber-400">{allPlayers.filter(p => p.status === 'AVAILABLE').length}</p>
+          </div>
+          
+          {/* Unsold Players */}
+          <div className="flex flex-col items-center gap-1">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Unsold Players</p>
+            <p className="text-lg font-black text-amber-400">{allPlayers.filter(p => p.status === 'UNSOLD').length}</p>
+          </div>
+          
+          {/* Filled Teams */}
+          <div className="flex flex-col items-center gap-1">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Filled Teams</p>
+            <p className="text-lg font-black text-amber-400">{teams.filter(t => (t.players?.length || t.playerIds?.length || 0) >= (t.squadSize || 11)).length}</p>
           </div>
           
           {/* Live Status Indicator */}
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-amber-400 animate-pulse" style={{
-              boxShadow: '0 0 10px rgba(245, 158, 11, 0.8)'
-            }} />
-            <span className="text-sm font-bold text-amber-300">LIVE</span>
+          <div className="flex items-center gap-2 ml-4 pl-4 border-l border-amber-400/40">
+            {auctionState?.status === LiveAuctionStatus.ENDED ? (
+              <>
+                <div className="w-3 h-3 rounded-full bg-green-400" style={{
+                  boxShadow: '0 0 10px rgba(74, 222, 128, 0.8)'
+                }} />
+                <span className="text-sm font-bold text-green-400">ENDED</span>
+              </>
+            ) : (
+              <>
+                <div className="w-3 h-3 rounded-full bg-amber-400 animate-pulse" style={{
+                  boxShadow: '0 0 10px rgba(245, 158, 11, 0.8)'
+                }} />
+                <span className="text-sm font-bold text-amber-300">LIVE</span>
+              </>
+            )}
           </div>
         </div>
       </div>
+
+      {/* AUCTION ENDED OVERLAY */}
+      {auctionState?.status === LiveAuctionStatus.ENDED && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="text-center p-12 rounded-3xl border border-amber-400/30" style={{
+            background: 'linear-gradient(135deg, rgba(20, 15, 5, 0.95), rgba(30, 20, 5, 0.95))',
+            boxShadow: '0 0 60px rgba(245, 158, 11, 0.3)'
+          }}>
+            <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-amber-500/30 to-amber-600/30 flex items-center justify-center">
+              <CheckCircle size={40} className="text-amber-400" />
+            </div>
+            <h2 className="text-4xl font-black text-white mb-3">The auction has ended.</h2>
+            <p className="text-amber-300/60 text-lg mb-8">Thank you for participating in the auction.</p>
+            <button
+              onClick={handleBackToDashboard}
+              className="px-8 py-4 rounded-full text-white font-bold tracking-wider flex items-center gap-3 mx-auto transition-all hover:scale-105"
+              style={{
+                background: 'linear-gradient(135deg, #F59E0B, #D97706)',
+                boxShadow: '0 4px 20px rgba(245, 158, 11, 0.4)'
+              }}
+            >
+              <ArrowLeft size={20} />
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* LEFT SIDE CARDS - BIDDING HISTORY & UNSOLD PLAYERS */}
       <div className="absolute top-24 left-2 bottom-48 z-50 w-80 flex flex-col gap-8">

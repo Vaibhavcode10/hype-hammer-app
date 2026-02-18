@@ -12,8 +12,8 @@ import {
 import { INITIAL_CONFIG, SPORT_DEFAULTS } from './constants';
 import { getAuctionInsights } from './services/geminiService';
 import { loadAppState, saveAppState, loadSportsData, saveSportsData, loadAllSportsFromDB } from './services/storageService';
-import { registerAuctioneer, registerTeam, registerPlayer, registerGuest } from './services/apiService';
-import { uploadPlayerPhoto, uploadTeamLogo, uploadDocument } from './services/firebaseStorageService';
+import { registerAuctioneer, registerTeam, registerPlayer } from './services/apiService';
+import { uploadPlayerPhoto, uploadTeamLogo, uploadDocument, uploadProfilePicture } from './services/firebaseStorageService';
 
 // Import Components
 import {
@@ -27,29 +27,42 @@ import {
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
 
-  // Map status to route paths (one-way navigation to avoid loops)
-  const statusToPath: Record<AuctionStatus, string> = {
-    [AuctionStatus.HOME]: '/',
-    [AuctionStatus.MARKETPLACE]: '/marketplace',
-    [AuctionStatus.AUTH]: '/login',
-    [AuctionStatus.ADMIN_REGISTRATION]: '/admin/register',
-    [AuctionStatus.ROLE_SELECTION]: '/role/select',
-    [AuctionStatus.ROLE_REGISTRATION]: '/role/register',
-    [AuctionStatus.PROFILE_COMPLETION]: '/profile/complete',
-    [AuctionStatus.HOW_IT_WORKS]: '/how-it-works',
-    [AuctionStatus.SETUP]: '/auction',
-    [AuctionStatus.MATCHES]: '/marketplace',
-    [AuctionStatus.READY]: '/auction',
-    [AuctionStatus.LIVE]: '/auction',
-    [AuctionStatus.PAUSED]: '/auction',
-    [AuctionStatus.ENDED]: '/auction',
-    [AuctionStatus.SETTINGS]: '/settings',
-    [AuctionStatus.PLAYER_REGISTRATION]: '/player/register',
-    [AuctionStatus.PLAYER_DASHBOARD]: '/player/dashboard',
-    [AuctionStatus.ADMIN_DASHBOARD]: '/admin/dashboard',
-    [AuctionStatus.AUCTIONEER_DASHBOARD]: '/auctioneer/dashboard',
-    [AuctionStatus.TEAM_REP_DASHBOARD]: '/team-rep/dashboard',
-    [AuctionStatus.GUEST_DASHBOARD]: '/guest/dashboard'
+  // Dynamic status-to-path helper (supports matchId and role in URL)
+  const getStatusPath = (s: AuctionStatus): string => {
+    if (s === AuctionStatus.ROLE_SELECTION && currentMatchId) return `/role/select/${currentMatchId}`;
+    if (s === AuctionStatus.ROLE_REGISTRATION && selectedRoleForRegistration && currentMatchId) {
+      const rolePathMap: Record<string, string> = {
+        [UserRole.AUCTIONEER]: 'auctioneer',
+        [UserRole.TEAM_REP]: 'team',
+        [UserRole.PLAYER]: 'player'
+      };
+      const rp = rolePathMap[selectedRoleForRegistration];
+      if (rp) return `/register/${rp}/${currentMatchId}`;
+    }
+    const map: Record<string, string> = {
+      [AuctionStatus.HOME]: '/',
+      [AuctionStatus.MARKETPLACE]: '/marketplace',
+      [AuctionStatus.AUTH]: '/login',
+      [AuctionStatus.ADMIN_REGISTRATION]: '/admin/register',
+      [AuctionStatus.ROLE_SELECTION]: '/role/select',
+      [AuctionStatus.ROLE_REGISTRATION]: '/role/register',
+      [AuctionStatus.PROFILE_COMPLETION]: '/profile/complete',
+      [AuctionStatus.HOW_IT_WORKS]: '/how-it-works',
+      [AuctionStatus.SETUP]: '/auction',
+      [AuctionStatus.MATCHES]: '/marketplace',
+      [AuctionStatus.READY]: '/auction',
+      [AuctionStatus.LIVE]: '/auction',
+      [AuctionStatus.PAUSED]: '/auction',
+      [AuctionStatus.ENDED]: '/auction',
+      [AuctionStatus.SETTINGS]: '/settings',
+      [AuctionStatus.PLAYER_REGISTRATION]: '/player/register',
+      [AuctionStatus.PLAYER_DASHBOARD]: '/player/dashboard',
+      [AuctionStatus.ADMIN_DASHBOARD]: '/admin/dashboard',
+      [AuctionStatus.AUCTIONEER_DASHBOARD]: '/auctioneer/dashboard',
+      [AuctionStatus.TEAM_REP_DASHBOARD]: '/team-rep/dashboard',
+      [AuctionStatus.GUEST_DASHBOARD]: '/guest/dashboard'
+    };
+    return map[s] || '/';
   };
 
   // Reverse mapping: path to status (for refreshes and back button)
@@ -70,6 +83,20 @@ const AppContent: React.FC = () => {
     '/auctioneer/dashboard': AuctionStatus.AUCTIONEER_DASHBOARD,
     '/team-rep/dashboard': AuctionStatus.TEAM_REP_DASHBOARD,
     '/guest/dashboard': AuctionStatus.GUEST_DASHBOARD
+  };
+
+  // Parse dynamic registration routes from URL
+  const parseRouteFromPath = (path: string): { status: AuctionStatus; role?: UserRole; matchId?: string } | null => {
+    // /role/select/:matchId
+    const roleSelectMatch = path.match(/^\/role\/select\/([^/]+)$/);
+    if (roleSelectMatch) return { status: AuctionStatus.ROLE_SELECTION, matchId: roleSelectMatch[1] };
+    // /register/:role/:matchId
+    const registerMatch = path.match(/^\/register\/(auctioneer|team|player)\/([^/]+)$/);
+    if (registerMatch) {
+      const roleMap: Record<string, UserRole> = { auctioneer: UserRole.AUCTIONEER, team: UserRole.TEAM_REP, player: UserRole.PLAYER };
+      return { status: AuctionStatus.ROLE_REGISTRATION, role: roleMap[registerMatch[1]], matchId: registerMatch[2] };
+    }
+    return null;
   };
   // Load initial state from backend
   const loadInitialState = async () => {
@@ -99,6 +126,9 @@ const AppContent: React.FC = () => {
     }
     // Otherwise, derive from current URL path
     const currentPath = window.location.pathname;
+    // Check dynamic routes first
+    const dynamicRoute = parseRouteFromPath(currentPath);
+    if (dynamicRoute) return dynamicRoute.status;
     return pathToStatus[currentPath] || AuctionStatus.HOME;
   });
   const [pendingDashboardStatus, setPendingDashboardStatus] = useState<AuctionStatus | null>(null);
@@ -117,7 +147,7 @@ const AppContent: React.FC = () => {
       name: 'Guest User',
       email: 'guest@hypehammer.com',
       avatar: undefined,
-      role: UserRole.AUCTIONEER,
+      role: UserRole.GUEST,
       playerId: undefined as string | undefined
     };
   });
@@ -125,8 +155,12 @@ const AppContent: React.FC = () => {
   // OAuth user pending profile completion
   const [pendingOAuthUser, setPendingOAuthUser] = useState<any>(null);
   
-  // Role selection state for registration flow
-  const [selectedRoleForRegistration, setSelectedRoleForRegistration] = useState<UserRole | null>(null);
+  // Role selection state for registration flow - restore from URL on refresh
+  const [selectedRoleForRegistration, setSelectedRoleForRegistration] = useState<UserRole | null>(() => {
+    const currentPath = window.location.pathname;
+    const parsed = parseRouteFromPath(currentPath);
+    return parsed?.role || null;
+  });
   
   // Settings sidebar state
   const [isSettingsSidebarOpen, setIsSettingsSidebarOpen] = useState(false);
@@ -137,6 +171,10 @@ const AppContent: React.FC = () => {
     return sessionStorage.getItem('hypehammer_current_sport') || null;
   });
   const [currentMatchId, setCurrentMatchId] = useState<string | null>(() => {
+    // Check URL first for matchId in dynamic routes
+    const currentPath = window.location.pathname;
+    const parsed = parseRouteFromPath(currentPath);
+    if (parsed?.matchId) return parsed.matchId;
     return sessionStorage.getItem('hypehammer_current_match_id') || null;
   });
   
@@ -166,6 +204,25 @@ const AppContent: React.FC = () => {
   const [teams, setTeams] = useState<Team[]>([]);
   const [history, setHistory] = useState<Bid[]>([]);
   
+  // Sync config from currentMatch data so SettingsLayoutPage gets real values
+  useEffect(() => {
+    if (currentMatch) {
+      const matchConfig = currentMatch.config;
+      setConfig(prev => ({
+        ...prev,
+        sport: (matchConfig?.sport || currentMatch.sportType || prev.sport) as SportType,
+        type: matchConfig?.type || prev.type,
+        totalBudget: currentMatch.baseBudgetPerTeam || matchConfig?.totalBudget || prev.totalBudget,
+        squadSize: {
+          min: matchConfig?.squadSize?.min ?? prev.squadSize?.min ?? 11,
+          max: currentMatch.maxPlayersPerTeam || matchConfig?.squadSize?.max || prev.squadSize?.max || 15,
+        },
+        roles: matchConfig?.roles || prev.roles || [],
+        rules: matchConfig?.rules || prev.rules || {},
+      }));
+    }
+  }, [currentMatch?.id, currentMatch?.baseBudgetPerTeam, currentMatch?.maxPlayersPerTeam]);
+
   const [activeTab, setActiveTab] = useState<'dashboard' | 'players' | 'teams' | 'room' | 'history'>('dashboard');
   const [isNavExpanded, setIsNavExpanded] = useState(false);
 
@@ -297,6 +354,14 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     // Only trigger when status is HOME and we have a logged-in user
     if (status === AuctionStatus.HOME) {
+      // Guard: skip auto-navigation if user explicitly exited or logged out
+      const explicitExit = sessionStorage.getItem('hypehammer_explicit_exit');
+      if (explicitExit) {
+        sessionStorage.removeItem('hypehammer_explicit_exit');
+        console.log('🛑 Skipping auto-navigation: user explicitly exited');
+        return;
+      }
+
       // Check if this is a real logged-in user
       const savedUser = sessionStorage.getItem('hypehammer_current_user');
       if (savedUser) {
@@ -330,17 +395,93 @@ const AppContent: React.FC = () => {
                 return;
             }
             
-            // For ADMIN, go directly to dashboard (admins don't need a match)
+            // For ADMIN: Check if match ID is already in session, otherwise fetch admin's match
             if (parsedUser.role === UserRole.ADMIN || parsedUser.role === 'ADMIN') {
-              console.log('✅ Navigating admin directly to dashboard');
-              setStatus(targetDashboard);
+              const savedMatchId = sessionStorage.getItem('hypehammer_current_match_id');
+              
+              if (savedMatchId) {
+                console.log('✅ Admin has match ID in session:', savedMatchId);
+                // Ensure allSports is populated before navigating
+                if (allSports.length === 0) {
+                  console.log('⚠️ allSports is empty, fetching sports data first...');
+                  fetch(`https://us-central1-axilam.cloudfunctions.net/auction/sports`)
+                    .then(res => res.json())
+                    .then(data => {
+                      if (data.success && data.data) {
+                        setAllSports(data.data);
+                        console.log('✅ allSports populated, now navigating');
+                      }
+                      setStatus(targetDashboard);
+                    })
+                    .catch(err => {
+                      console.error('❌ Error fetching sports:', err);
+                      setStatus(targetDashboard); // Navigate anyway
+                    });
+                } else {
+                  setStatus(targetDashboard);
+                }
+              } else {
+                console.log('🔍 Admin has no match ID - fetching match by email:', parsedUser.email);
+                
+                // Fetch admin's match and set it before navigating
+                fetch(`https://us-central1-axilam.cloudfunctions.net/auction/matches`)
+                  .then(res => res.json())
+                  .then(data => {
+                    if (data.success && data.data && data.data.length > 0) {
+                      const adminMatch = data.data.find((match: any) => 
+                        match.adminEmail === parsedUser.email || 
+                        match.organizerEmail === parsedUser.email
+                      );
+                      
+                      if (adminMatch) {
+                        const matchId = adminMatch.id;
+                        const sport = adminMatch.sport || 'Cricket';
+                        console.log('✅ Found admin match:', matchId, 'Sport:', sport);
+                        
+                        setCurrentSport(sport);
+                        sessionStorage.setItem('hypehammer_current_sport', sport);
+                        setCurrentMatchId(matchId);
+                        sessionStorage.setItem('hypehammer_current_match_id', matchId);
+                        
+                        // Also populate allSports to ensure currentMatch is available
+                        fetch(`https://us-central1-axilam.cloudfunctions.net/auction/sports`)
+                          .then(res2 => res2.json())
+                          .then(data2 => {
+                            if (data2.success && data2.data) {
+                              setAllSports(data2.data);
+                              console.log('✅ allSports populated after match fetch');
+                            }
+                          })
+                          .catch(err => console.error('❌ Error fetching sports after match:', err));
+                      } else {
+                        console.warn('⚠️ No match found for admin:', parsedUser.email);
+                      }
+                    }
+                    setStatus(targetDashboard);
+                  })
+                  .catch(err => {
+                    console.error('❌ Error fetching admin match:', err);
+                    setStatus(targetDashboard); // Navigate anyway
+                  });
+              }
             } else if (allSports.length > 0 && allSports[0].matches?.length > 0) {
-              // For other roles, select first match and navigate
-              const firstSport = allSports[0];
-              const firstMatch = firstSport.matches[0];
-              console.log('✅ Selecting first match and navigating:', firstMatch.name);
-              setCurrentSport(firstSport.sportType || firstSport.customSportName || 'Cricket');
-              setCurrentMatchId(firstMatch.id);
+              // Preserve existing match selection if still valid, otherwise pick first match
+              const savedMatchId = sessionStorage.getItem('hypehammer_current_match_id');
+              const allMatches = allSports.flatMap(s => s.matches || []);
+              const existingMatch = savedMatchId ? allMatches.find(m => m.id === savedMatchId) : null;
+              const existingSport = existingMatch ? allSports.find(s => s.matches.some(m => m.id === savedMatchId)) : null;
+
+              if (existingMatch && existingSport) {
+                console.log('✅ Preserving existing match selection:', existingMatch.name);
+                setCurrentSport(existingSport.sportType || existingSport.customSportName || 'Cricket');
+                setCurrentMatchId(existingMatch.id);
+              } else {
+                const firstSport = allSports[0];
+                const firstMatch = firstSport.matches[0];
+                console.log('✅ Selecting first match and navigating:', firstMatch.name);
+                setCurrentSport(firstSport.sportType || firstSport.customSportName || 'Cricket');
+                setCurrentMatchId(firstMatch.id);
+              }
               setPendingDashboardStatus(targetDashboard);
             } else {
               console.warn('⚠️ No matches available for', parsedUser.role);
@@ -355,7 +496,7 @@ const AppContent: React.FC = () => {
 
   // One-way sync status to URL (prevents view loops)
   useEffect(() => {
-    const path = statusToPath[status] || '/';
+    const path = getStatusPath(status);
     // Use push for history support, but only if URL actually changed
     const currentPath = window.location.pathname;
     if (currentPath !== path) {
@@ -363,12 +504,23 @@ const AppContent: React.FC = () => {
     }
     // Save current status to sessionStorage for refresh persistence
     sessionStorage.setItem('hypehammer_current_status', status);
-  }, [status, navigate]);
+  }, [status, navigate, currentMatchId, selectedRoleForRegistration]);
 
   // Handle browser back/forward buttons
   useEffect(() => {
     const handlePopState = () => {
       const currentPath = window.location.pathname;
+      // Check dynamic routes first
+      const dynamicRoute = parseRouteFromPath(currentPath);
+      if (dynamicRoute) {
+        if (dynamicRoute.matchId) setCurrentMatchId(dynamicRoute.matchId);
+        if (dynamicRoute.role) setSelectedRoleForRegistration(dynamicRoute.role);
+        if (dynamicRoute.status !== status) {
+          console.log('🔙 Browser nav to dynamic route:', currentPath);
+          setStatus(dynamicRoute.status);
+        }
+        return;
+      }
       const newStatus = pathToStatus[currentPath];
       if (newStatus && newStatus !== status) {
         console.log('🔙 Browser back/forward detected. Changing status from', status, 'to', newStatus);
@@ -915,9 +1067,42 @@ const AppContent: React.FC = () => {
         return;
     }
 
-    // For admin, go directly to admin dashboard (they can create matches)
+    // For admin: fetch their match by adminEmail or organizerEmail
     if (user.role === UserRole.ADMIN) {
-      console.log('📍 Admin login - going directly to ADMIN_DASHBOARD');
+      console.log('🔍 Admin login - fetching match by admin email:', user.email);
+      
+      try {
+        // Fetch all matches and find the one that belongs to this admin
+        const response = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/matches`);
+        const data = await response.json();
+        
+        if (data.success && data.data && data.data.length > 0) {
+          // Find match where adminEmail or organizerEmail matches the logged-in user
+          const adminMatch = data.data.find((match: any) => 
+            match.adminEmail === user.email || 
+            match.organizerEmail === user.email
+          );
+          
+          if (adminMatch) {
+            const matchId = adminMatch.id;
+            const sport = adminMatch.sport || 'Cricket';
+            console.log('✅ Found admin match:', matchId, 'Sport:', sport);
+            
+            // Set sport and match ID so the admin dashboard loads correctly
+            setCurrentSport(sport);
+            sessionStorage.setItem('hypehammer_current_sport', sport);
+            setCurrentMatchId(matchId);
+            sessionStorage.setItem('hypehammer_current_match_id', matchId);
+          } else {
+            console.warn('⚠️ No match found for admin:', user.email);
+            console.warn('   Available matches:', data.data.map((m: any) => ({ id: m.id, adminEmail: m.adminEmail, organizerEmail: m.organizerEmail })));
+          }
+        }
+      } catch (err) {
+        console.error('❌ Error fetching admin match:', err);
+      }
+      
+      console.log('📍 Admin login - going to ADMIN_DASHBOARD');
       setStatus(AuctionStatus.ADMIN_DASHBOARD);
       return;
     }
@@ -1054,7 +1239,7 @@ const AppContent: React.FC = () => {
   if (status === AuctionStatus.ROLE_REGISTRATION) {
     return <RoleBasedRegistrationPage 
       setStatus={setStatus}
-      selectedRole={selectedRoleForRegistration || UserRole.GUEST}
+      selectedRole={selectedRoleForRegistration || UserRole.PLAYER}
       selectedMatch={currentMatch}
       selectedSport={currentSportData}
       onRegister={async (registrationData) => {
@@ -1093,6 +1278,14 @@ const AppContent: React.FC = () => {
               processedData.imageUrl = photoUrl;  // Map to imageUrl field for backend
               delete processedData.playerPhoto;
               console.log('✅ Player photo uploaded:', photoUrl);
+            }
+
+            // Upload auctioneer photo to Firebase Storage
+            if (registrationData.auctioneerPhoto && registrationData.auctioneerPhoto instanceof File) {
+              console.log('📤 Uploading auctioneer photo to Firebase Storage...');
+              const auctioneerPhotoUrl = await uploadProfilePicture(registrationData.auctioneerPhoto, `auctioneer_${Date.now()}`);
+              processedData.auctioneerPhoto = auctioneerPhotoUrl;  // Map to auctioneerPhoto field for backend
+              console.log('✅ Auctioneer photo uploaded:', auctioneerPhotoUrl);
             }
             
             // Upload documents
@@ -1187,21 +1380,6 @@ const AppContent: React.FC = () => {
               }
               break;
               
-            case UserRole.GUEST:
-              result = await registerGuest(processedData);
-              if (result) {
-                setCurrentUser({
-                  name: processedData.fullName,
-                  email: processedData.email,
-                  avatar: undefined,
-                  role: UserRole.GUEST
-                });
-                setCurrentMatchId(processedData.seasonId);
-                setPendingDashboardStatus(AuctionStatus.GUEST_DASHBOARD);
-                return true;
-              }
-              break;
-              
             default:
               console.error('Unknown role:', processedData.role);
               alert('Invalid role selected');
@@ -1228,20 +1406,41 @@ const AppContent: React.FC = () => {
     return <AdminRegistrationPage 
       setStatus={setStatus}
       onRegisterAdmin={async (adminData) => {
+        console.log('=' .repeat(80));
+        console.log('🚀 ADMIN REGISTRATION HANDLER STARTED');
+        console.log('=' .repeat(80));
+        
+        console.log(`\n📦 Received admin data fields (${Object.keys(adminData).length}):`);
+        Object.entries(adminData).forEach(([key, value]) => {
+          if (typeof value === 'object' && value instanceof File) {
+            console.log(`   ${key}: File object (${value.name})`);
+          } else if (typeof value === 'object' && value !== null) {
+            console.log(`   ${key}: ${JSON.stringify(value)}`);
+          } else {
+            console.log(`   ${key}: ${value}`);
+          }
+        });
+        
         // Register admin to Cloud Function first
         let adminRegistrationSuccess = false;
         try {
+          const adminPayload = {
+            fullName: adminData.fullName,
+            email: adminData.email,
+            password: adminData.password,
+            phone: adminData.phone || '',
+            organizationName: adminData.organizationName || '',
+            organizationType: adminData.organizerType || ''
+          };
+          
+          console.log('\n1️⃣ Sending admin registration to /register/admin endpoint...');
+          console.log(`   Fields: ${Object.keys(adminPayload).length}`);
+          console.log(`   Payload: ${JSON.stringify(adminPayload, null, 2)}`);
+          
           const response = await fetch('https://us-central1-axilam.cloudfunctions.net/auction/register/admin', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fullName: adminData.fullName,
-              email: adminData.email,
-              password: adminData.password,
-              phone: adminData.phone || '',
-              organizationName: adminData.organizationName || '',
-              organizationType: adminData.organizerType || ''
-            })
+            body: JSON.stringify(adminPayload)
           });
           
           if (!response.ok) {
@@ -1291,12 +1490,30 @@ const AppContent: React.FC = () => {
           teams: [],
           history: [],
           status: 'SETUP',
+          // Organizer fields
           organizerEmail: adminData.email,
           adminEmail: adminData.email,
           organizerPassword: adminData.password,
           organizerName: adminData.fullName,
           organizationType: adminData.organizerType,
-          organizationName: adminData.organizationName
+          organizationName: adminData.organizationName,
+          // Additional season fields
+          seasonName: adminData.seasonName,
+          sportType: adminData.sportType,
+          auctionDateTime: adminData.auctionDateTime,
+          venueMode: adminData.venueMode,
+          venueLocation: adminData.venueLocation,
+          // Configuration fields
+          maxTeams: adminData.maxTeams,
+          maxPlayersPerTeam: adminData.maxPlayersPerTeam,
+          baseBudgetPerTeam: adminData.baseBudgetPerTeam,
+          // Organizer details
+          organizerPhone: adminData.phone,
+          designation: adminData.designation,
+          profilePhotoURL: adminData.profilePhotoURL,
+          governmentId: adminData.governmentId,
+          governmentIdURL: adminData.governmentIdURL,
+          organizerProofURL: adminData.organizerProofURL
         };
         
         // Update state immediately - don't wait for Firebase save
@@ -1331,18 +1548,34 @@ const AppContent: React.FC = () => {
         });
         
         // Save match to Firebase in background
+        console.log('\n2️⃣ Preparing match data for /matches endpoint...');
+        console.log(`   Total fields in newMatch: ${Object.keys(newMatch).length}`);
+        console.log(`   Fields: ${Object.keys(newMatch).join(', ')}`);
+        console.log(`   Match ID: ${newMatch.id}`);
+        console.log(`   Match Name: ${newMatch.name}`);
+        console.log(`   Organizer Email: ${newMatch.organizerEmail}`);
+        console.log(`   Sport Type: ${newMatch.sportType}`);
+        console.log(`   Venue Mode: ${newMatch.venueMode}`);
+        console.log(`   Personal Fields: fullName=${newMatch.organizerName}, phone=${newMatch.organizerPhone}, designation=${newMatch.designation}`);
+        console.log(`   Document URLs: govId=${newMatch.governmentIdURL ? '✅' : '❌'}, proof=${newMatch.organizerProofURL ? '✅' : '❌'}`);
+        
         fetch('https://us-central1-axilam.cloudfunctions.net/auction/matches', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newMatch)
-        }).then(res => {
+        }).then(async res => {
           if (res.ok) {
-            console.log('✅ Match saved to Firebase');
+            const result = await res.json();
+            console.log('✅ Match saved to Firebase successfully');
+            console.log(`   Fields stored: ${result.data && Object.keys(result.data).length || 'N/A'}`);
           } else {
-            console.warn('⚠️ Failed to save match to Firebase');
+            const error = await res.json().catch(() => ({ error: 'Unknown error' }));
+            console.error('❌ Failed to save match to Firebase');
+            console.error(`   Status: ${res.status}`);
+            console.error(`   Error: ${JSON.stringify(error)}`);
           }
         }).catch(err => {
-          console.warn('⚠️ Failed to save match to Firebase:', err);
+          console.error('❌ Failed to save match to Firebase:', err);
         });
         
         // Show success and redirect after a brief delay to allow state updates
@@ -1396,8 +1629,8 @@ const AppContent: React.FC = () => {
   }
 
   if (status === AuctionStatus.ADMIN_DASHBOARD) {
-    // Admins don't need currentMatch to access their dashboard
-    console.log('🎨 Rendering ADMIN_DASHBOARD');
+    // Admin dashboard — role is validated at login, not during render
+    console.log('🎨 Rendering ADMIN_DASHBOARD | Role:', currentUser.role, '| Match:', currentMatch?.id || 'null');
     return <AdminDashboardPage 
       setStatus={setStatus}
       currentMatch={currentMatch}
@@ -1408,10 +1641,10 @@ const AppContent: React.FC = () => {
   if (status === AuctionStatus.AUCTIONEER_DASHBOARD) {
     if (!currentMatch) {
       return (
-        <div className="w-full h-screen flex items-center justify-center bg-gradient-to-br from-blue-500 to-purple-600">
+        <div className="w-full h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 50%, #0a0505 100%)' }}>
           <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-white mx-auto mb-4"></div>
-            <p className="text-white text-lg">Loading match data...</p>
+            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-amber-500 mx-auto mb-4" style={{ boxShadow: '0 0 30px rgba(245, 158, 11, 0.3)' }}></div>
+            <p className="text-amber-300 text-lg font-medium">Loading match data...</p>
           </div>
         </div>
       );
@@ -1428,10 +1661,10 @@ const AppContent: React.FC = () => {
   if (status === AuctionStatus.TEAM_REP_DASHBOARD) {
     if (!currentMatch) {
       return (
-        <div className="w-full h-screen flex items-center justify-center bg-gradient-to-br from-blue-500 to-purple-600">
+        <div className="w-full h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 50%, #0a0505 100%)' }}>
           <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-white mx-auto mb-4"></div>
-            <p className="text-white text-lg">Loading match data...</p>
+            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-amber-500 mx-auto mb-4" style={{ boxShadow: '0 0 30px rgba(245, 158, 11, 0.3)' }}></div>
+            <p className="text-amber-300 text-lg font-medium">Loading match data...</p>
           </div>
         </div>
       );
@@ -1456,10 +1689,10 @@ const AppContent: React.FC = () => {
   if (status === AuctionStatus.GUEST_DASHBOARD) {
     if (!currentMatch) {
       return (
-        <div className="w-full h-screen flex items-center justify-center bg-gradient-to-br from-blue-500 to-purple-600">
+        <div className="w-full h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 50%, #0a0505 100%)' }}>
           <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-white mx-auto mb-4"></div>
-            <p className="text-white text-lg">Loading match data...</p>
+            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-amber-500 mx-auto mb-4" style={{ boxShadow: '0 0 30px rgba(245, 158, 11, 0.3)' }}></div>
+            <p className="text-amber-300 text-lg font-medium">Loading match data...</p>
           </div>
         </div>
       );
@@ -1486,15 +1719,23 @@ const AppContent: React.FC = () => {
       setTeams={setTeams}
       currentUser={currentUser}
       setCurrentUser={setCurrentUser}
-      setStatus={setStatus} 
+      setStatus={setStatus}
+      currentMatch={currentMatch}
     />;
   }
 
   // Fallback/default view - auction room for READY/LIVE/PAUSED/ENDED statuses
   console.log('🎨 Rendering fallback auction room view, status:', status);
+  
+  // Determine confetti size based on user role
+  const getConfettiSize = (): 'none' | 'small' | 'normal' => {
+    if (currentUser.role === UserRole.AUCTIONEER) return 'none'; // No confetti for auctioneers
+    return 'small'; // Small confetti for all spectators (guests, players, team reps)
+  };
+  
   return (
     <div className="h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50 flex flex-col items-center p-4 lg:p-8 overflow-hidden relative">
-      {soldAnimationData && <SoldCelebration player={soldAnimationData.player} team={soldAnimationData.team} price={soldAnimationData.price} onComplete={() => { setSoldAnimationData(null); setTimeout(() => handleNextPlayer(), 100); }} />}
+      {soldAnimationData && currentUser.role !== UserRole.AUCTIONEER && <SoldCelebration player={soldAnimationData.player} team={soldAnimationData.team} price={soldAnimationData.price} onComplete={() => { setSoldAnimationData(null); setTimeout(() => handleNextPlayer(), 100); }} confettiSize={getConfettiSize()} compact={true} />}
 
       <div className="fixed top-8 left-10 z-[60] flex items-center gap-6">
         <div className="flex items-center gap-4">

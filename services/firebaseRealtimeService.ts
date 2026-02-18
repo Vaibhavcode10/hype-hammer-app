@@ -221,6 +221,32 @@ class FirebaseRealtimeService {
   }
 
   /**
+   * Listen to player switched events (when auctioneer manually switches players)
+   */
+  onPlayerSwitched(callback: (data: any) => void): Unsubscribe {
+    if (!this.currentSeasonId) return () => {};
+
+    // Listen to the latestEvent document in the events subcollection
+    const latestEventRef = doc(firestore, 'liveAuctions', this.currentSeasonId, 'events', 'latestEvent');
+    const unsubscribe = onSnapshot(latestEventRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const eventData = snapshot.data();
+        console.log('🔥 Latest event detected:', eventData);
+        // Only process player_switched events
+        if (eventData.type === 'player_switched') {
+          console.log('🔄 Player switched event received:', eventData);
+          callback(eventData);
+        }
+      }
+    }, (error) => {
+      console.error('Player switched listener error:', error);
+    });
+
+    this.listeners.set('PLAYER_SWITCHED', unsubscribe);
+    return unsubscribe;
+  }
+
+  /**
    * Listen to live player changes (currentBid, leadingTeam updates)
    */
   onLivePlayerUpdate(playerId: string, callback: (playerData: any) => void): Unsubscribe {
