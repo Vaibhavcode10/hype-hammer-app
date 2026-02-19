@@ -159,6 +159,9 @@ export interface AuctionConfig {
   };
 }
 
+// Approval status for moderation system
+export type ApprovalStatus = 'pending' | 'accepted' | 'declined';
+
 export interface Player {
   id: string;
   name: string;
@@ -166,6 +169,7 @@ export interface Player {
   basePrice: number;
   isOverseas: boolean;
   status: 'UNSOLD' | 'SOLD' | 'PENDING' | 'AVAILABLE';
+  approvalStatus?: ApprovalStatus; // Moderation status: pending | accepted | declined
   teamId?: string;
   soldPrice?: number;
   soldAmount?: number; // Backend field for sold price
@@ -202,6 +206,7 @@ export interface Team {
   playerIds?: string[]; // Backend field for player IDs
   squadSize?: number; // Calculated field for display
   maxSquadSize?: number; // Maximum squad size (capacity)
+  approvalStatus?: ApprovalStatus; // Moderation status: pending | accepted | declined
   // Real-world extensions
   owner?: string;
   homeCity?: string;
@@ -260,6 +265,22 @@ export interface MatchData {
   governmentId?: string;
   governmentIdURL?: string;
   organizerProofURL?: string;
+  
+  // ─── MATCH SETTINGS (Purse Intelligence) ───────────────────────────────
+  // Computed on backend during match creation
+  // Becomes IMMUTABLE after first team registers
+  matchSettings?: {
+    pursePerTeam: number;
+    playersPerTeam: number;
+    numberOfTeams: number;
+    avgPlayerValue: number;
+    maxBasePrice: number;
+    recommendedMinBase: number;
+    isLocked: boolean;
+    lockedAt?: string;
+    lockedReason?: string;
+    createdAt?: string;
+  };
   
   // System tracking
   updatedAt?: string;

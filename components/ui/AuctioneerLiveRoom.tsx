@@ -131,6 +131,19 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
     setCustomBidAmounts(prev => ({ ...prev, [teamId]: '' }));
   };
 
+  /**
+   * CRITICAL GUARD: Filter to only APPROVED players for auction display
+   * A declined player must NEVER appear in the Live Room.
+   * This is defense-in-depth - LiveAuctionPage should already pass only approved players.
+   */
+  const approvedPlayersOnly = useMemo(() => {
+    return allPlayers.filter(p => 
+      p.approvalStatus === 'accepted' || 
+      p.approvalStatus === undefined || 
+      p.approvalStatus === null
+    );
+  }, [allPlayers]);
+
   const handlePlayerCardClick = (player: Player) => {
     // Don't allow switching to the same player
     if (currentPlayer && player.id === currentPlayer.id) {
@@ -168,9 +181,9 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
     return `₹${amount.toLocaleString()}`;
   };
 
-  // Calculate stats
-  const remainingPlayers = allPlayers.filter(p => p.status !== 'SOLD').length;
-  const soldPlayers = allPlayers.filter(p => p.status === 'SOLD').length;
+  // Calculate stats - CRITICAL: Use approvedPlayersOnly to exclude declined players
+  const remainingPlayers = approvedPlayersOnly.filter(p => p.status !== 'SOLD').length;
+  const soldPlayers = approvedPlayersOnly.filter(p => p.status === 'SOLD').length;
   const currentBid = auctionState?.currentBid || auctionState?.currentBidAmount || currentPlayer?.basePrice || 0;
   
   // Calculate actual remaining budget for each team - memoized for performance
@@ -183,7 +196,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
       
       // Otherwise calculate from initial budget minus player costs
       const initialBudget = team.budget || 0;
-      const soldPlayersForTeam = allPlayers.filter(p => p.status === 'SOLD' && p.buyingTeamId === team.id);
+      const soldPlayersForTeam = approvedPlayersOnly.filter(p => p.status === 'SOLD' && p.buyingTeamId === team.id);
       const totalSpent = soldPlayersForTeam.reduce((sum, p) => sum + (p.soldPrice || 0), 0);
       const calculatedRemaining = initialBudget - totalSpent;
       
@@ -194,7 +207,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
         remainingBudget: Math.max(0, calculatedRemaining)
       };
     });
-  }, [teams, allPlayers]);
+  }, [teams, approvedPlayersOnly]);
   
   const leadingTeam = auctionState?.leadingTeamId 
     ? teamsWithRemainingBudget.find(t => t.id === auctionState.leadingTeamId)
@@ -250,7 +263,8 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
   };
 
   // Calculate dynamic card width based on total players to fit in screen
-  const totalBottomPlayers = allPlayers.filter(p => p.status === 'UNSOLD' || p.status === 'AVAILABLE').length;
+  // CRITICAL: Use approvedPlayersOnly
+  const totalBottomPlayers = approvedPlayersOnly.filter(p => p.status === 'UNSOLD' || p.status === 'AVAILABLE').length;
   const calculateCardWidth = () => {
     if (totalBottomPlayers === 0) return 140;
     // Return fixed size for visibility
@@ -274,7 +288,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
     <div className="w-full h-screen overflow-hidden relative bg-black">
       {/* Premium Dark Background */}
       <div className="absolute inset-0 bg-gradient-to-br from-gray-950 via-black to-gray-900">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-amber-900/5 via-transparent to-transparent"></div>
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-pink-900/5 via-transparent to-transparent"></div>
         <div className="absolute inset-0 opacity-[0.02]" style={{
           backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.1) 2px, rgba(255,255,255,0.1) 4px)',
         }}></div>
@@ -334,14 +348,14 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
             />
           </div>
 
-          {/* Right: Auction Statistics */}
+          {/* Right: Auction Statistics - CRITICAL: Use approvedPlayersOnly */}
           <div className="flex items-center gap-8">
             <div className="text-center">
               <div className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-1">
                 Total Players
               </div>
               <div className="text-red-400 font-black text-xl tabular-nums">
-                {allPlayers.length}
+                {approvedPlayersOnly.length}
               </div>
             </div>
             
@@ -350,7 +364,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 Sold Players
               </div>
               <div className="text-red-400 font-black text-xl tabular-nums">
-                {allPlayers.filter(p => p.status === 'SOLD').length}
+                {approvedPlayersOnly.filter(p => p.status === 'SOLD').length}
               </div>
             </div>
             
@@ -359,7 +373,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 Available Players
               </div>
               <div className="text-red-400 font-black text-xl tabular-nums">
-                {allPlayers.filter(p => p.status === 'AVAILABLE').length}
+                {approvedPlayersOnly.filter(p => p.status === 'AVAILABLE').length}
               </div>
             </div>
             
@@ -368,7 +382,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 Unsold Players
               </div>
               <div className="text-red-400 font-black text-xl tabular-nums">
-                {allPlayers.filter(p => p.status === 'UNSOLD').length}
+                {approvedPlayersOnly.filter(p => p.status === 'UNSOLD').length}
               </div>
             </div>
             
@@ -740,8 +754,8 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                       {/* Header */}
                       <div className="flex items-center justify-between mb-3 pb-2" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
                         <div className="flex items-center gap-2">
-                          <Wallet size={14} className="text-amber-400" />
-                          <span style={{ fontSize: '10px', color: 'rgba(245, 158, 11, 0.9)', fontWeight: '700', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
+                          <Wallet size={14} className="text-pink-400" />
+                          <span style={{ fontSize: '10px', color: 'rgba(236, 72, 153, 0.9)', fontWeight: '700', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
                             PURSE INTELLIGENCE
                           </span>
                         </div>
@@ -1241,8 +1255,8 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                   justifyContent: 'flex-start'
                 }}
               >
-                {/* UNSOLD PLAYERS (Left) - Static */}
-                {allPlayers.filter(p => p.status === 'UNSOLD').map((player, idx) => (
+                {/* UNSOLD PLAYERS (Left) - Static - CRITICAL: Use approvedPlayersOnly */}
+                {approvedPlayersOnly.filter(p => p.status === 'UNSOLD').map((player, idx) => (
                   <div 
                     key={`unsold-${player.id}-${idx}`}
                     onClick={() => handlePlayerCardClick(player)}
@@ -1296,8 +1310,8 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                     </div>
                 ))}
 
-                {/* AVAILABLE PLAYERS (Right) - Static */}
-                {allPlayers.filter(p => p.status === 'AVAILABLE').map((player, idx) => (
+                {/* AVAILABLE PLAYERS (Right) - Static - CRITICAL: Use approvedPlayersOnly */}
+                {approvedPlayersOnly.filter(p => p.status === 'AVAILABLE').map((player, idx) => (
                   <div 
                     key={`available-${player.id}-${idx}`}
                     onClick={() => handlePlayerCardClick(player)}
@@ -1378,8 +1392,8 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <div className="relative inline-block mb-6">
-                <div className="absolute inset-0 bg-amber-500/10 blur-2xl"></div>
-                <Gavel size={80} className="relative text-amber-600/40" />
+                <div className="absolute inset-0 bg-pink-500/10 blur-2xl"></div>
+                <Gavel size={80} className="relative text-pink-600/40" />
               </div>
               <h2 className="text-3xl font-black text-gray-500 tracking-wide mb-3">
                 Ready to Start Auction
@@ -1392,12 +1406,12 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 <button
                   onClick={onStartAuction}
                   className="flex items-center gap-3 px-10 py-4 mx-auto
-                             bg-gradient-to-r from-amber-600 to-amber-500
-                             border border-amber-400/60 rounded-lg
-                             text-black font-black uppercase tracking-wider text-lg
+                             bg-gradient-to-r from-pink-600 to-pink-500
+                             border border-pink-400/60 rounded-lg
+                             text-white font-black uppercase tracking-wider text-lg
                              hover:scale-105 active:scale-95
                              transition-all duration-200
-                             shadow-[0_0_30px_rgba(251,191,36,0.4)]"
+                             shadow-[0_0_30px_rgba(236,72,153,0.4)]"
                 >
                   <Play size={24} />
                   <span>Start Auction</span>

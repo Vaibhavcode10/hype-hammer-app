@@ -14,7 +14,7 @@ interface SoldCelebrationProps {
 // 3D Confetti Particle Component
 const Confetti3D: React.FC<{ size?: 'small' | 'normal' }> = ({ size = 'normal' }) => {
   const confettiCount = size === 'small' ? 50 : 20; // More confetti particles
-  const colors = ['#FFD700', '#FF6B9D', '#00E6FF', '#FF2D75', '#10B981', '#8B5CF6', '#F59E0B', '#EC4899'];
+  const colors = ['#FF0066', '#FF6B9D', '#00E6FF', '#FF2D75', '#10B981', '#8B5CF6', '#EC4899', '#FF1493'];
   
   console.log('🎊 Confetti3D rendering with size:', size, 'count:', confettiCount);
   
@@ -202,19 +202,19 @@ export const SoldCelebration: React.FC<SoldCelebrationProps> = ({ player, team, 
             {/* SOLD! Header with Trophy */}
             <div className={`relative ${compact ? 'mb-4' : 'mb-8'}`} style={{ animation: 'slideUpFade 0.5s ease-out' }}>
               <div className={`flex items-center justify-center ${compact ? 'gap-2 mb-2' : 'gap-6 mb-4'}`}>
-                <Trophy size={compact ? 24 : 64} className="text-yellow-400" style={{
-                  filter: 'drop-shadow(0 0 20px rgba(255, 215, 0, 1))',
+                <Trophy size={compact ? 24 : 64} className="text-pink-400" style={{
+                  filter: 'drop-shadow(0 0 20px rgba(255, 0, 102, 1))',
                   animation: 'soldPulse 1.5s ease-in-out infinite'
                 }} />
-                <h1 className={`font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-yellow-200 to-yellow-400 uppercase ${compact ? 'text-4xl' : 'text-9xl'}`} style={{
-                  textShadow: '0 0 40px rgba(255, 215, 0, 0.8), 0 0 80px rgba(255, 215, 0, 0.5)',
-                  WebkitTextStroke: `${compact ? '1px' : '2px'} rgba(255, 215, 0, 0.3)`,
+                <h1 className={`font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-pink-200 to-pink-400 uppercase ${compact ? 'text-4xl' : 'text-9xl'}`} style={{
+                  textShadow: '0 0 40px rgba(255, 0, 102, 0.8), 0 0 80px rgba(255, 0, 102, 0.5)',
+                  WebkitTextStroke: `${compact ? '1px' : '2px'} rgba(255, 0, 102, 0.3)`,
                   animation: 'soldPulse 1.5s ease-in-out infinite'
                 }}>
                   SOLD!
                 </h1>
-                <Trophy size={compact ? 24 : 64} className="text-yellow-400" style={{
-                  filter: 'drop-shadow(0 0 20px rgba(255, 215, 0, 1))',
+                <Trophy size={compact ? 24 : 64} className="text-pink-400" style={{
+                  filter: 'drop-shadow(0 0 20px rgba(255, 0, 102, 1))',
                   animation: 'soldPulse 1.5s ease-in-out infinite'
                 }} />
               </div>
@@ -275,11 +275,11 @@ export const SoldCelebration: React.FC<SoldCelebrationProps> = ({ player, team, 
                 </p>
               </div>
               
-              <div className={`border-t-4 border-yellow-400/30 ${compact ? 'mt-3 pt-3' : 'mt-8 pt-8'}`}>
-                <p className={`text-yellow-400 uppercase tracking-widest font-bold ${compact ? 'text-xs mb-1' : 'text-2xl mb-2'}`}>Final Bid</p>
-                <p className={`font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-yellow-200 to-yellow-400 ${compact ? 'text-3xl' : 'text-7xl'}`} style={{
-                  textShadow: '0 0 40px rgba(255, 215, 0, 0.8)',
-                  WebkitTextStroke: `${compact ? '0.5px' : '1px'} rgba(255, 215, 0, 0.3)`
+              <div className={`border-t-4 border-pink-400/30 ${compact ? 'mt-3 pt-3' : 'mt-8 pt-8'}`}>
+                <p className={`text-pink-400 uppercase tracking-widest font-bold ${compact ? 'text-xs mb-1' : 'text-2xl mb-2'}`}>Final Bid</p>
+                <p className={`font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-pink-200 to-pink-400 ${compact ? 'text-3xl' : 'text-7xl'}`} style={{
+                  textShadow: '0 0 40px rgba(255, 0, 102, 0.8)',
+                  WebkitTextStroke: `${compact ? '0.5px' : '1px'} rgba(255, 0, 102, 0.3)`
                 }}>
                   {formatCurrency(price)}
                 </p>

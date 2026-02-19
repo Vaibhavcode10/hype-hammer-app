@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
-import { Gavel, Users, User, Upload, ArrowLeft, CheckCircle, X } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Gavel, Users, User, Upload, ArrowLeft, CheckCircle, X, Info, AlertTriangle } from 'lucide-react';
 import { AuctionStatus, UserRole, SportType, MatchData, SportData } from '../../types';
+import { useMatchSettings } from '../../hooks/useMatchSettings';
+import { formatIndianCurrency } from '../../services/currencyUtils';
 
 interface RoleBasedRegistrationPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -23,7 +25,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
+
 
   // Auctioneer fields
   const [experienceLevel, setExperienceLevel] = useState('');
@@ -63,6 +65,39 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const [governmentId, setGovernmentId] = useState('');
   const [governmentIdFile, setGovernmentIdFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+
+  // ─── PURSE INTELLIGENCE HOOK ───────────────────────────────────────────
+  const matchId = selectedMatch?.id || null;
+  
+  const {
+    matchSettings,
+    loading: settingsLoading,
+    formattedPurse,
+    formattedAvgValue,
+    formattedMaxBasePrice,
+    formattedRecommendedMin,
+    shortMaxBasePrice,
+    shortAvgValue,
+    validatePlayerBasePrice,
+    isLocked
+  } = useMatchSettings(matchId);
+
+  // DEBUG: Log matchSettings state
+  console.log('🔍 [PURSE INTELLIGENCE DEBUG]');
+  console.log('   matchId:', matchId);
+  console.log('   matchSettings:', matchSettings);
+  console.log('   settingsLoading:', settingsLoading);
+
+  // Base price validation - runs on every basePrice change
+  const basePriceValidation = useMemo(() => {
+    const price = Number(basePrice) || 0;
+    const result = validatePlayerBasePrice(price);
+    console.log('   basePriceValidation:', { price, result });
+    return result;
+  }, [basePrice, validatePlayerBasePrice]);
+
+  // Computed validation message for display
+  const validationMessage = basePriceValidation.errorMessage || basePriceValidation.warningMessage || null;
 
   // Handle drag and drop
   const handleDragOver = (e: React.DragEvent) => {
@@ -192,6 +227,13 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
     console.log('1️⃣ Form submit initiated for role:', selectedRole);
     console.log('   - governmentId state:', governmentId);
     console.log('   - governmentIdFile state:', governmentIdFile);
+
+    // HARD BLOCK: Validate base price for players
+    if (selectedRole === UserRole.PLAYER && basePriceValidation.hasError) {
+      console.log('❌ Base price validation FAILED:', basePriceValidation.errorMessage);
+      alert(`Invalid Base Price: ${basePriceValidation.errorMessage}`);
+      return;
+    }
     
     // Validate government ID fields for non-guest users
     if (selectedRole !== UserRole.GUEST) {
@@ -218,7 +260,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
       fullName,
       email,
       phone,
-      password,
       role: selectedRole,
       seasonId: selectedMatch?.id,
       governmentId: finalGovernmentId,
@@ -428,16 +469,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         required
                       />
                     </div>
-                    <div className="md:col-span-3">
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Password <span className="text-red-500">*</span></label>
-                      <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
-                        required
-                      />
-                    </div>
                   </div>
                 </div>
               </div>
@@ -514,6 +545,64 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
           {selectedRole === UserRole.TEAM_REP && (
             <div>
+              {/* Purse Intelligence Info for Team Reps */}
+              {settingsLoading && (
+                <div className="bg-slate-50 border-2 border-slate-200 rounded-lg p-4 mb-4 animate-pulse">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-5 h-5 bg-slate-300 rounded"></div>
+                    <span className="text-sm font-bold text-slate-500">Loading purse information...</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div key={i} className="bg-white rounded-lg p-3 border border-slate-200">
+                        <div className="h-3 bg-slate-200 rounded w-20 mb-2"></div>
+                        <div className="h-6 bg-slate-200 rounded w-16"></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!settingsLoading && !matchSettings && (
+                <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-600" />
+                    <span className="text-sm font-medium text-amber-800">Purse settings not available for this match</span>
+                  </div>
+                  <p className="text-xs text-amber-700 mt-1">Match ID: {matchId || 'Not selected'}</p>
+                </div>
+              )}
+              {!settingsLoading && matchSettings && (
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Info className="w-5 h-5 text-blue-600" />
+                    <span className="text-sm font-bold text-blue-800">Purse Information</span>
+                    {isLocked && (
+                      <span className="ml-auto text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium">
+                        Settings Locked
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-white rounded-lg p-3 border border-blue-100">
+                      <p className="text-xs text-slate-600 uppercase font-medium">Total Purse</p>
+                      <p className="text-lg font-bold text-blue-700">{formattedPurse}</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 border border-blue-100">
+                      <p className="text-xs text-slate-600 uppercase font-medium">Players to Buy</p>
+                      <p className="text-lg font-bold text-slate-800">{matchSettings.playersPerTeam}</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 border border-blue-100">
+                      <p className="text-xs text-slate-600 uppercase font-medium">Avg Value/Player</p>
+                      <p className="text-lg font-bold text-green-700">{formattedAvgValue}</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 border border-blue-100">
+                      <p className="text-xs text-slate-600 uppercase font-medium">Max Base Price</p>
+                      <p className="text-lg font-bold text-indigo-700">{formattedMaxBasePrice}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Row 1: Team Logo (Left) + Personal Information (Right) */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 {/* Left: Team Logo Upload (1 col) */}
@@ -562,10 +651,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-red-500">*</span></label>
                       <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
-                    </div>
-                    <div className="md:col-span-3">
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Password <span className="text-red-500">*</span></label>
-                      <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
                     </div>
                   </div>
                 </div>
@@ -616,6 +701,58 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
           {selectedRole === UserRole.PLAYER && (
             <div>
+              {/* Purse Intelligence Info for Players */}
+              {settingsLoading && (
+                <div className="bg-slate-50 border-2 border-slate-200 rounded-lg p-4 mb-4 animate-pulse">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-5 h-5 bg-slate-300 rounded"></div>
+                    <span className="text-sm font-bold text-slate-500">Loading base price guidelines...</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="bg-white rounded-lg p-3 border border-slate-200">
+                        <div className="h-3 bg-slate-200 rounded w-20 mb-2"></div>
+                        <div className="h-6 bg-slate-200 rounded w-16"></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!settingsLoading && !matchSettings && (
+                <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-600" />
+                    <span className="text-sm font-medium text-amber-800">Base price guidelines not available</span>
+                  </div>
+                  <p className="text-xs text-amber-700 mt-1">Match ID: {matchId || 'Not selected'}</p>
+                </div>
+              )}
+              {!settingsLoading && matchSettings && (
+                <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Info className="w-5 h-5 text-green-600" />
+                    <span className="text-sm font-bold text-green-800">Base Price Guidelines</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div className="bg-white rounded-lg p-3 border border-green-100">
+                      <p className="text-xs text-slate-600 uppercase font-medium">Recommended Min</p>
+                      <p className="text-lg font-bold text-green-700">{formattedRecommendedMin}</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 border border-green-100">
+                      <p className="text-xs text-slate-600 uppercase font-medium">Avg Value</p>
+                      <p className="text-lg font-bold text-blue-700">{formattedAvgValue}</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 border border-green-100">
+                      <p className="text-xs text-slate-600 uppercase font-medium">Max Allowed</p>
+                      <p className="text-lg font-bold text-indigo-700">{formattedMaxBasePrice}</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-2">
+                    Set your base price between the recommended minimum and maximum allowed values.
+                  </p>
+                </div>
+              )}
+
               {/* Row 1: Player Photo (Left) + Personal Information (Right) */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 {/* Left: Player Photo Upload (1 col) */}
@@ -664,10 +801,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-red-500">*</span></label>
                       <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
-                    </div>
-                    <div className="md:col-span-3">
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Password <span className="text-red-500">*</span></label>
-                      <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
                     </div>
                   </div>
                 </div>
@@ -773,9 +906,49 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       type="number"
                       value={basePrice}
                       onChange={(e) => setBasePrice(e.target.value)}
-                      className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                      className={`w-full px-3 py-2.5 border-2 rounded-lg focus:outline-none text-sm ${
+                        basePriceValidation.hasError
+                          ? 'border-red-300 focus:border-red-500 bg-red-50'
+                          : basePriceValidation.hasWarning 
+                            ? 'border-amber-300 focus:border-amber-500 bg-amber-50'
+                            : basePriceValidation.isValid && matchSettings && Number(basePrice) > 0
+                              ? 'border-green-300 focus:border-green-500 bg-green-50'
+                              : 'border-slate-200 focus:border-blue-500'
+                      }`}
                       required
                     />
+                    {/* Base Price Validation Feedback */}
+                    {validationMessage && (
+                      <div className={`flex items-center gap-1 mt-1 text-xs ${
+                        basePriceValidation.hasError
+                          ? 'text-red-600'
+                          : basePriceValidation.hasWarning 
+                            ? 'text-amber-600' 
+                            : 'text-green-600'
+                      }`}>
+                        {basePriceValidation.hasError ? (
+                          <AlertTriangle className="w-3 h-3" />
+                        ) : basePriceValidation.hasWarning ? (
+                          <AlertTriangle className="w-3 h-3" />
+                        ) : (
+                          <CheckCircle className="w-3 h-3" />
+                        )}
+                        <span>{validationMessage}</span>
+                      </div>
+                    )}
+                    {/* Show valid message when all good */}
+                    {!validationMessage && matchSettings && Number(basePrice) > 0 && basePriceValidation.isValid && (
+                      <div className="flex items-center gap-1 mt-1 text-xs text-green-600">
+                        <CheckCircle className="w-3 h-3" />
+                        <span>Base price is within allowed range</span>
+                      </div>
+                    )}
+                    {/* Formatted display of entered amount */}
+                    {basePrice && parseInt(basePrice) > 0 && (
+                      <p className="text-xs text-slate-500 mt-1">
+                        = {formatIndianCurrency(parseInt(basePrice))}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
@@ -919,28 +1092,13 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                 Registration Successful! 🎉
               </h2>
               <p className="text-slate-600 mb-6 leading-relaxed">
-                You have successfully registered as <strong>{getRoleTitle()}</strong> for <strong>{selectedMatch?.matchName}</strong>. Redirecting to your dashboard...
+                You have successfully registered as <strong>{getRoleTitle()}</strong> for <strong>{selectedMatch?.name}</strong>. Your application is under review.
               </p>
               <button
-                onClick={() => {
-                  // Redirect to appropriate dashboard based on role
-                  switch (selectedRole) {
-                    case UserRole.AUCTIONEER:
-                      setStatus(AuctionStatus.AUCTIONEER_DASHBOARD);
-                      break;
-                    case UserRole.TEAM_REP:
-                      setStatus(AuctionStatus.TEAM_REP_DASHBOARD);
-                      break;
-                    case UserRole.PLAYER:
-                      setStatus(AuctionStatus.PLAYER_DASHBOARD);
-                      break;
-                    default:
-                      setStatus(AuctionStatus.MARKETPLACE);
-                  }
-                }}
+                onClick={() => setShowSuccessModal(false)}
                 className="w-full px-8 py-4 gold-gradient text-white rounded-lg font-bold uppercase tracking-wider hover:brightness-110 transition-all shadow-lg"
               >
-                Go to My Dashboard
+                Close
               </button>
             </div>
           </div>

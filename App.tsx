@@ -19,7 +19,7 @@ import { uploadPlayerPhoto, uploadTeamLogo, uploadDocument, uploadProfilePicture
 import {
   HUDPill, OrbitalItem, SoldCelebration, SettingsSidebar,
   HomePage, MarketplacePage, AuthPage, AdminRegistrationPage, RoleSelectionPage, RoleBasedRegistrationPage, ProfileCompletionPage, HowItWorksPage, SettingsPage, SettingsLayoutPage, PlayersPage, TeamsPage, AuctionRoomPage, HistoryPage,
-  PlayerModal, TeamModal, SquadModal, PlayerDashboardPage, PlayerRegistrationPage, AdminDashboardPage, AuctioneerDashboardPage, TeamRepDashboardPage, GuestDashboardPage
+  PlayerModal, TeamModal, SquadModal, PlayerRegistrationPage, AdminDashboardPage, AuctioneerDashboardPage, GuestDashboardPage
 } from './components';
 
 // --- Core Application ---
@@ -1003,8 +1003,24 @@ const AppContent: React.FC = () => {
     return () => clearInterval(interval);
   }, [timer, isTimerRunning, currentBidderId, finalizePlayer]);
 
-  const filteredPlayers = useMemo(() => players.filter(p => p.name.toLowerCase().includes(playerSearch.toLowerCase()) || (p.nationality?.toLowerCase() || '').includes(playerSearch.toLowerCase())), [players, playerSearch]);
-  const filteredTeams = useMemo(() => teams.filter(t => t.name.toLowerCase().includes(teamSearch.toLowerCase()) || (t.homeCity?.toLowerCase() || '').includes(teamSearch.toLowerCase())), [teams, teamSearch]);
+  /**
+   * CRITICAL: Filter out declined players for all auction-related displays and stats
+   * Declined players should ONLY appear in admin review sections
+   */
+  const eligiblePlayers = useMemo(() => {
+    return players.filter(p => p.approvalStatus !== 'declined');
+  }, [players]);
+
+  /**
+   * CRITICAL: Filter out declined teams for all auction-related displays and stats
+   * Declined teams should ONLY appear in admin review sections
+   */
+  const eligibleTeams = useMemo(() => {
+    return teams.filter(t => t.approvalStatus !== 'declined');
+  }, [teams]);
+
+  const filteredPlayers = useMemo(() => eligiblePlayers.filter(p => p.name.toLowerCase().includes(playerSearch.toLowerCase()) || (p.nationality?.toLowerCase() || '').includes(playerSearch.toLowerCase())), [eligiblePlayers, playerSearch]);
+  const filteredTeams = useMemo(() => eligibleTeams.filter(t => t.name.toLowerCase().includes(teamSearch.toLowerCase()) || (t.homeCity?.toLowerCase() || '').includes(teamSearch.toLowerCase())), [eligibleTeams, teamSearch]);
 
   const totalValueSold = history.reduce((acc, b) => acc + b.amount, 0);
   const totalAvailableBudget = teams.reduce((acc, t) => acc + t.budget, 0);
@@ -1071,35 +1087,91 @@ const AppContent: React.FC = () => {
     if (user.role === UserRole.ADMIN) {
       console.log('🔍 Admin login - fetching match by admin email:', user.email);
       
-      try {
-        // Fetch all matches and find the one that belongs to this admin
-        const response = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/matches`);
-        const data = await response.json();
-        
-        if (data.success && data.data && data.data.length > 0) {
-          // Find match where adminEmail or organizerEmail matches the logged-in user
-          const adminMatch = data.data.find((match: any) => 
-            match.adminEmail === user.email || 
-            match.organizerEmail === user.email
-          );
-          
-          if (adminMatch) {
-            const matchId = adminMatch.id;
-            const sport = adminMatch.sport || 'Cricket';
-            console.log('✅ Found admin match:', matchId, 'Sport:', sport);
-            
-            // Set sport and match ID so the admin dashboard loads correctly
-            setCurrentSport(sport);
-            sessionStorage.setItem('hypehammer_current_sport', sport);
-            setCurrentMatchId(matchId);
-            sessionStorage.setItem('hypehammer_current_match_id', matchId);
-          } else {
-            console.warn('⚠️ No match found for admin:', user.email);
-            console.warn('   Available matches:', data.data.map((m: any) => ({ id: m.id, adminEmail: m.adminEmail, organizerEmail: m.organizerEmail })));
-          }
+      // Normalize email for case-insensitive comparison
+      const normalizedUserEmail = user.email.toLowerCase();
+      
+      // First, try to find match in local allSports data (immediate after registration)
+      let adminMatch = null;
+      for (const sport of allSports) {
+        const foundMatch = sport.matches.find((m: any) => 
+          (m.adminEmail && m.adminEmail.toLowerCase() === normalizedUserEmail) || 
+          (m.organizerEmail && m.organizerEmail.toLowerCase() === normalizedUserEmail)
+        );
+        if (foundMatch) {
+          adminMatch = foundMatch;
+          console.log('✅ Found admin match in local cache:', foundMatch.id, 'Sport:', sport.sportType);
+          setCurrentSport(sport.sportType);
+          sessionStorage.setItem('hypehammer_current_sport', sport.sportType);
+          setCurrentMatchId(foundMatch.id);
+          sessionStorage.setItem('hypehammer_current_match_id', foundMatch.id);
+          break;
         }
-      } catch (err) {
-        console.error('❌ Error fetching admin match:', err);
+      }
+      
+      // If not found in local cache, fetch from API
+      if (!adminMatch) {
+        try {
+          // Fetch all matches and find the one that belongs to this admin
+          const response = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/matches`);
+          const data = await response.json();
+          
+          console.log('📊 API Response:', { success: data.success, dataType: typeof data.data, isArray: Array.isArray(data.data) });
+          
+          let matchesArray = [];
+          
+          // Handle different possible API response formats
+          if (data.success && data.data) {
+            if (Array.isArray(data.data)) {
+              matchesArray = data.data;
+            } else if (typeof data.data === 'object' && data.data.matches && Array.isArray(data.data.matches)) {
+              matchesArray = data.data.matches;
+            }
+          } else if (Array.isArray(data)) {
+            matchesArray = data;
+          }
+          
+          if (matchesArray && matchesArray.length > 0) {
+            console.log('📊 Fetched matches count:', matchesArray.length);
+            // Log all matches to see their structure
+            matchesArray.forEach((m: any, idx: number) => {
+              const orgEmail = m.adminEmail || m.organizerEmail || m.email;
+              console.log(`   Match ${idx}: id=${m.id}, adminEmail=${m.adminEmail}, organizerEmail=${m.organizerEmail}, email=${m.email}, sport=${m.sport || m.sportType}`);
+            });
+            
+            // Find match where adminEmail or organizerEmail matches the logged-in user (case-insensitive)
+            adminMatch = matchesArray.find((match: any) => 
+              (match.adminEmail && match.adminEmail.toLowerCase() === normalizedUserEmail) || 
+              (match.organizerEmail && match.organizerEmail.toLowerCase() === normalizedUserEmail) ||
+              (match.email && match.email.toLowerCase() === normalizedUserEmail)
+            );
+            
+            if (adminMatch) {
+              const matchId = adminMatch.id;
+              const sport = adminMatch.sport || adminMatch.sportType || 'Cricket';
+              console.log('✅ Found admin match from API:', matchId, 'Sport:', sport);
+              
+              // Set sport and match ID so the admin dashboard loads correctly
+              setCurrentSport(sport);
+              sessionStorage.setItem('hypehammer_current_sport', sport);
+              setCurrentMatchId(matchId);
+              sessionStorage.setItem('hypehammer_current_match_id', matchId);
+            } else {
+              console.warn('⚠️ No match found for admin:', user.email);
+              console.warn('   Admin is searching for email (normalized):', normalizedUserEmail);
+              console.warn('   Available match emails:', matchesArray.map((m: any) => ({ 
+                id: m.id, 
+                adminEmail: m.adminEmail, 
+                organizerEmail: m.organizerEmail,
+                email: m.email,
+                allFields: Object.keys(m)
+              })));
+            }
+          } else {
+            console.warn('⚠️ No matches returned from API');
+          }
+        } catch (err) {
+          console.error('❌ Error fetching admin match:', err);
+        }
       }
       
       console.log('📍 Admin login - going to ADMIN_DASHBOARD');
@@ -1536,7 +1608,12 @@ const AppContent: React.FC = () => {
         }
         
         // Update currentMatchId IMMEDIATELY - this triggers dashboard to load with correct match
+        setCurrentSport(adminData.sportType as string);
         setCurrentMatchId(newMatchId);
+        // CRITICAL: Save matchId to sessionStorage IMMEDIATELY so AdminDashboardPage can find it
+        sessionStorage.setItem('hypehammer_current_match_id', newMatchId);
+        // CRITICAL: Save sportType to sessionStorage too for consistency
+        sessionStorage.setItem('hypehammer_current_sport', adminData.sportType as string);
         console.log('✅ Admin match created and set as current:', newMatchId);
         
         // Save to localStorage for persistence
@@ -1547,41 +1624,45 @@ const AppContent: React.FC = () => {
           console.warn('⚠️ Failed to save sports data to backend:', err);
         });
         
-        // Save match to Firebase in background
+        // Save match to Firebase - AWAIT to ensure it's saved before dashboard loads
         console.log('\n2️⃣ Preparing match data for /matches endpoint...');
         console.log(`   Total fields in newMatch: ${Object.keys(newMatch).length}`);
         console.log(`   Fields: ${Object.keys(newMatch).join(', ')}`);
         console.log(`   Match ID: ${newMatch.id}`);
         console.log(`   Match Name: ${newMatch.name}`);
         console.log(`   Organizer Email: ${newMatch.organizerEmail}`);
+        console.log(`   Admin Email: ${newMatch.adminEmail}`);
         console.log(`   Sport Type: ${newMatch.sportType}`);
         console.log(`   Venue Mode: ${newMatch.venueMode}`);
         console.log(`   Personal Fields: fullName=${newMatch.organizerName}, phone=${newMatch.organizerPhone}, designation=${newMatch.designation}`);
         console.log(`   Document URLs: govId=${newMatch.governmentIdURL ? '✅' : '❌'}, proof=${newMatch.organizerProofURL ? '✅' : '❌'}`);
+        console.log('\n   📦 Full match payload being sent:');
+        console.log(JSON.stringify(newMatch, null, 2));
         
-        fetch('https://us-central1-axilam.cloudfunctions.net/auction/matches', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newMatch)
-        }).then(async res => {
-          if (res.ok) {
-            const result = await res.json();
+        try {
+          const matchSaveResponse = await fetch('https://us-central1-axilam.cloudfunctions.net/auction/matches', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newMatch)
+          });
+          
+          if (matchSaveResponse.ok) {
+            const result = await matchSaveResponse.json();
             console.log('✅ Match saved to Firebase successfully');
-            console.log(`   Fields stored: ${result.data && Object.keys(result.data).length || 'N/A'}`);
+            console.log(`   Response data keys: ${result.data && Object.keys(result.data).join(', ') || 'N/A'}`);
+            console.log(`   organizerEmail in response: ${result.data?.organizerEmail || 'MISSING'}`);
+            console.log(`   adminEmail in response: ${result.data?.adminEmail || 'MISSING'}`);
           } else {
-            const error = await res.json().catch(() => ({ error: 'Unknown error' }));
+            const error = await matchSaveResponse.json().catch(() => ({ error: 'Unknown error' }));
             console.error('❌ Failed to save match to Firebase');
-            console.error(`   Status: ${res.status}`);
+            console.error(`   Status: ${matchSaveResponse.status}`);
             console.error(`   Error: ${JSON.stringify(error)}`);
           }
-        }).catch(err => {
+        } catch (err) {
           console.error('❌ Failed to save match to Firebase:', err);
-        });
+        }
         
-        // Show success and redirect after a brief delay to allow state updates
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
-        // Redirect to admin dashboard - the currentMatchId will be available
+        // Redirect to admin dashboard - the match data is now saved and available
         setStatus(AuctionStatus.ADMIN_DASHBOARD);
       }}
     />;
@@ -1643,8 +1724,8 @@ const AppContent: React.FC = () => {
       return (
         <div className="w-full h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 50%, #0a0505 100%)' }}>
           <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-amber-500 mx-auto mb-4" style={{ boxShadow: '0 0 30px rgba(245, 158, 11, 0.3)' }}></div>
-            <p className="text-amber-300 text-lg font-medium">Loading match data...</p>
+            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-pink-500 mx-auto mb-4" style={{ boxShadow: '0 0 30px rgba(255, 0, 102, 0.3)' }}></div>
+            <p className="text-pink-300 text-lg font-medium">Loading match data...</p>
           </div>
         </div>
       );
@@ -1658,32 +1739,11 @@ const AppContent: React.FC = () => {
     />;
   }
 
-  if (status === AuctionStatus.TEAM_REP_DASHBOARD) {
-    if (!currentMatch) {
-      return (
-        <div className="w-full h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 50%, #0a0505 100%)' }}>
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-amber-500 mx-auto mb-4" style={{ boxShadow: '0 0 30px rgba(245, 158, 11, 0.3)' }}></div>
-            <p className="text-amber-300 text-lg font-medium">Loading match data...</p>
-          </div>
-        </div>
-      );
-    }
-    console.log('🎨 Rendering TEAM_REP_DASHBOARD, currentMatch:', currentMatch?.id);
-    return <TeamRepDashboardPage 
-      setStatus={setStatus}
-      currentMatch={currentMatch}
-      currentUser={currentUser}
-    />;
-  }
-
-  if (status === AuctionStatus.PLAYER_DASHBOARD) {
-    console.log('🎨 Rendering PLAYER_DASHBOARD, currentMatch:', currentMatch?.id);
-    return <PlayerDashboardPage 
-      setStatus={setStatus}
-      currentMatch={currentMatch}
-      currentUser={currentUser}
-    />;
+  // Team Rep Dashboard and Player Dashboard have been removed.
+  // These statuses redirect back to the home page.
+  if (status === AuctionStatus.TEAM_REP_DASHBOARD || status === AuctionStatus.PLAYER_DASHBOARD) {
+    setStatus(AuctionStatus.HOME);
+    return null;
   }
 
   if (status === AuctionStatus.GUEST_DASHBOARD) {
@@ -1691,8 +1751,8 @@ const AppContent: React.FC = () => {
       return (
         <div className="w-full h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 50%, #0a0505 100%)' }}>
           <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-amber-500 mx-auto mb-4" style={{ boxShadow: '0 0 30px rgba(245, 158, 11, 0.3)' }}></div>
-            <p className="text-amber-300 text-lg font-medium">Loading match data...</p>
+            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-pink-500 mx-auto mb-4" style={{ boxShadow: '0 0 30px rgba(255, 0, 102, 0.3)' }}></div>
+            <p className="text-pink-300 text-lg font-medium">Loading match data...</p>
           </div>
         </div>
       );

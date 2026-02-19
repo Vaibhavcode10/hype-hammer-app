@@ -502,12 +502,12 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
 
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Auction Date & Time <span className="text-red-500">*</span>
+                      Auction Date <span className="text-red-500">*</span>
                     </label>
                     <div className="relative">
                       <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                       <input
-                        type="datetime-local"
+                        type="date"
                         value={formData.auctionDateTime}
                         onChange={(e) => handleInputChange('auctionDateTime', e.target.value)}
                         className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"

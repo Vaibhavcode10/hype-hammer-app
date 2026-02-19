@@ -387,6 +387,11 @@ def auction(req: https_fn.Request) -> https_fn.Response:
             elif method == 'PUT' and resource_id:
                 if action == 'budget':
                     return update_team_budget(resource_id, data)
+                # Check if this is an approval action: /teams/{id}/approve or /teams/{id}/decline
+                elif action == 'approve':
+                    return update_team_approval(resource_id, 'accepted')
+                elif action == 'decline':
+                    return update_team_approval(resource_id, 'declined')
                 else:
                     return update_team(resource_id, data)
             elif method == 'DELETE' and resource_id:
@@ -432,7 +437,13 @@ def auction(req: https_fn.Request) -> https_fn.Response:
             elif method == 'POST':
                 return create_player(data)
             elif method == 'PUT' and resource_id:
-                return update_player(resource_id, data)
+                # Check if this is an approval action: /players/{id}/approve or /players/{id}/decline
+                if action == 'approve':
+                    return update_player_approval(resource_id, 'accepted')
+                elif action == 'decline':
+                    return update_player_approval(resource_id, 'declined')
+                else:
+                    return update_player(resource_id, data)
             elif method == 'DELETE' and resource_id:
                 return delete_player(resource_id)
         
@@ -461,6 +472,9 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                 # Check if this is a validation request: /matches/{id}/validate
                 elif action == 'validate':
                     return validate_match_config(resource_id)
+                # Check if this is a pre-auction validation request: /matches/{id}/pre-auction-validation
+                elif action == 'pre-auction-validation':
+                    return get_pre_auction_validation(resource_id)
                 else:
                     return get_match(resource_id)
             elif method == 'POST':
@@ -1084,11 +1098,30 @@ def get_players(data):
     # Accept both 'matchId' and 'seasonId' for backward compatibility
     match_id = data.get('matchId') or data.get('seasonId')
     email = data.get('email')
+    approval_status = data.get('approvalStatus')
+    
     query = get_db().collection('players')
     if match_id:
         query = query.where('matchId', '==', match_id)
     if email:
         query = query.where('email', '==', email)
+    if approval_status:
+        # Filter by approval status: 'accepted', 'pending', 'declined'
+        # 'pending' includes both explicit 'pending' AND missing approvalStatus field
+        if approval_status == 'pending':
+            # For pending, we need to get all and filter in Python
+            # because Firestore can't query for null OR value
+            docs = list(query.stream())
+            filtered_docs = []
+            for doc in docs:
+                doc_data = doc.to_dict()
+                status = doc_data.get('approvalStatus')
+                if status is None or status == 'pending':
+                    filtered_docs.append(serialize_firestore_doc(doc))
+            return create_response(success_response(filtered_docs))
+        else:
+            query = query.where('approvalStatus', '==', approval_status)
+    
     docs = query.stream()
     return create_response(success_response(serialize_firestore_docs(docs)))
 
@@ -1116,6 +1149,148 @@ def update_player(player_id, data):
 def delete_player(player_id):
     get_db().collection('players').document(player_id).delete()
     return create_response(success_response(None, "Deleted"))
+
+# ====================
+# MODERATION FUNCTIONS
+# ====================
+
+def update_player_approval(player_id, status):
+    """Update player approval status (pending | accepted | declined)"""
+    try:
+        doc_ref = get_db().collection('players').document(player_id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return create_response(error_response("Player not found", 404), 404)
+        
+        doc_ref.update({
+            'approvalStatus': status,
+            'approvalUpdatedAt': datetime.now().isoformat()
+        })
+        
+        updated_doc = doc_ref.get()
+        player_data = serialize_firestore_doc(updated_doc)
+        
+        print(f"✓ Player {player_id} approval status updated to: {status}")
+        return create_response(success_response(player_data, f"Player {status} successfully"))
+    except Exception as e:
+        print(f"✗ Error updating player approval: {e}")
+        return create_response(error_response(str(e), 500), 500)
+
+def update_team_approval(team_id, status):
+    """Update team approval status (pending | accepted | declined)"""
+    try:
+        doc_ref = get_db().collection('teams').document(team_id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return create_response(error_response("Team not found", 404), 404)
+        
+        doc_ref.update({
+            'approvalStatus': status,
+            'approvalUpdatedAt': datetime.now().isoformat()
+        })
+        
+        updated_doc = doc_ref.get()
+        team_data = serialize_firestore_doc(updated_doc)
+        
+        print(f"✓ Team {team_id} approval status updated to: {status}")
+        return create_response(success_response(team_data, f"Team {status} successfully"))
+    except Exception as e:
+        print(f"✗ Error updating team approval: {e}")
+        return create_response(error_response(str(e), 500), 500)
+
+def get_pre_auction_validation(match_id):
+    """
+    Get pre-auction validation data for a match:
+    - Count accepted teams and players
+    - Compare against maxTeams and maxPlayersPerTeam
+    - Return validation status (canStart, hasError, hasWarning)
+    """
+    try:
+        # Get match config
+        match_doc = get_db().collection('matches').document(match_id).get()
+        if not match_doc.exists:
+            return create_response(error_response("Match not found", 404), 404)
+        
+        match_data = match_doc.to_dict() or {}
+        max_teams = match_data.get('maxTeams', 8)
+        max_players_per_team = match_data.get('maxPlayersPerTeam', 15)
+        
+        # Get accepted teams count
+        teams_docs = list(get_db().collection('teams').where('matchId', '==', match_id).stream())
+        all_teams = [serialize_firestore_doc(doc) for doc in teams_docs]
+        accepted_teams = [t for t in all_teams if t.get('approvalStatus') == 'accepted']
+        pending_teams = [t for t in all_teams if t.get('approvalStatus', 'pending') == 'pending']
+        declined_teams = [t for t in all_teams if t.get('approvalStatus') == 'declined']
+        
+        # Get accepted players count
+        players_docs = list(get_db().collection('players').where('matchId', '==', match_id).stream())
+        all_players = [serialize_firestore_doc(doc) for doc in players_docs]
+        accepted_players = [p for p in all_players if p.get('approvalStatus') == 'accepted']
+        pending_players = [p for p in all_players if p.get('approvalStatus', 'pending') == 'pending']
+        declined_players = [p for p in all_players if p.get('approvalStatus') == 'declined']
+        
+        # Calculate required players
+        required_players = max_teams * max_players_per_team
+        
+        # Validation logic
+        accepted_teams_count = len(accepted_teams)
+        accepted_players_count = len(accepted_players)
+        
+        has_error = False
+        has_warning = False
+        can_start = True
+        error_message = None
+        warning_message = None
+        
+        # RULE: If acceptedTeams > maxTeams → BLOCK auction
+        if accepted_teams_count > max_teams:
+            has_error = True
+            can_start = False
+            error_message = f"Too many accepted teams ({accepted_teams_count}) exceeds maximum allowed ({max_teams}). Please decline some teams before starting the auction."
+        
+        # RULE: If acceptedTeams < maxTeams → show warning but allow start
+        elif accepted_teams_count < max_teams:
+            has_warning = True
+            warning_message = f"Less accepted teams ({accepted_teams_count}) than maximum ({max_teams}). Auction can still start with fewer teams."
+        
+        # Additional warning if not enough accepted players
+        if accepted_players_count < required_players and not has_error:
+            player_warning = f"Less accepted players ({accepted_players_count}) than required ({required_players})."
+            if has_warning:
+                warning_message += f" {player_warning}"
+            else:
+                has_warning = True
+                warning_message = player_warning
+        
+        validation_result = {
+            'canStart': can_start,
+            'hasError': has_error,
+            'hasWarning': has_warning,
+            'errorMessage': error_message,
+            'warningMessage': warning_message,
+            'stats': {
+                'maxTeams': max_teams,
+                'maxPlayersPerTeam': max_players_per_team,
+                'requiredPlayers': required_players,
+                'acceptedTeams': accepted_teams_count,
+                'pendingTeams': len(pending_teams),
+                'declinedTeams': len(declined_teams),
+                'totalTeams': len(all_teams),
+                'acceptedPlayers': accepted_players_count,
+                'pendingPlayers': len(pending_players),
+                'declinedPlayers': len(declined_players),
+                'totalPlayers': len(all_players)
+            },
+            'acceptedTeamsList': [{'id': t['id'], 'name': t.get('name', 'Unknown')} for t in accepted_teams],
+            'acceptedPlayersList': [{'id': p['id'], 'name': p.get('name', 'Unknown')} for p in accepted_players]
+        }
+        
+        print(f"✓ Pre-auction validation for match {match_id}: canStart={can_start}, teams={accepted_teams_count}/{max_teams}, players={accepted_players_count}/{required_players}")
+        return create_response(success_response(validation_result))
+    except Exception as e:
+        print(f"✗ Error in pre-auction validation: {e}")
+        traceback.print_exc()
+        return create_response(error_response(str(e), 500), 500)
 
 def get_matches(data):
     """Get all match documents (excluding admin user documents)"""
@@ -1261,6 +1436,31 @@ def create_match(data):
         max_players = config.get('maxSquad') or data.get('maxPlayersPerTeam', 25)
         min_players = config.get('minSquad', 11)
         
+        # ===== VALIDATION: Match Creation Parameters =====
+        # Do NOT allow match creation if parameters are invalid
+        if base_budget <= 0:
+            return create_response(error_response("Purse per team must be greater than 0", 400), 400)
+        if min_players < 1:
+            return create_response(error_response("Players per team must be at least 1", 400), 400)
+        if max_teams < 2:
+            return create_response(error_response("Number of teams must be at least 2", 400), 400)
+        
+        # ===== COMPUTE MATCH SETTINGS (Purse Intelligence) =====
+        # These are the SINGLE SOURCE OF TRUTH for all purse-related calculations
+        # avgPlayerValue = pursePerTeam / playersPerTeam
+        avg_player_value = int(round(base_budget / min_players))
+        # maxBasePrice = avgPlayerValue * 0.40 (40% of average)
+        max_base_price = int(round(avg_player_value * 0.40))
+        # recommendedMinBase = avgPlayerValue * 0.25 (25% of average)
+        recommended_min_base = int(round(avg_player_value * 0.25))
+        
+        print(f"\n💰 PURSE INTELLIGENCE COMPUTED:")
+        print(f"   pursePerTeam: ₹{base_budget:,}")
+        print(f"   playersPerTeam: {min_players}")
+        print(f"   avgPlayerValue: ₹{avg_player_value:,}")
+        print(f"   maxBasePrice: ₹{max_base_price:,}")
+        print(f"   recommendedMinBase: ₹{recommended_min_base:,}")
+        
         # Update config with standardized fields
         config.update({
             'baseTeamBudget': base_budget,
@@ -1276,7 +1476,20 @@ def create_match(data):
             }
         })
         
+        # ===== CREATE MATCH SETTINGS (Immutable after first team registration) =====
+        match_settings = {
+            'pursePerTeam': base_budget,
+            'playersPerTeam': min_players,
+            'numberOfTeams': max_teams,
+            'avgPlayerValue': avg_player_value,
+            'maxBasePrice': max_base_price,
+            'recommendedMinBase': recommended_min_base,
+            'isLocked': False,  # Will be set to True after first team registers
+            'createdAt': datetime.now().isoformat()
+        }
+        
         match_doc['config'] = config
+        match_doc['matchSettings'] = match_settings
         
         # Also set top-level fields for easy access
         match_doc['baseBudgetPerTeam'] = base_budget
@@ -1429,6 +1642,23 @@ def update_match_config(match_id, data):
             return create_response(error_response("Match not found", 404), 404)
         
         match_data = doc.to_dict()
+        
+        # ===== CHECK MATCH SETTINGS LOCK =====
+        # After first team registers, matchSettings become read-only
+        match_settings = match_data.get('matchSettings', {})
+        if match_settings.get('isLocked', False):
+            # Check if trying to update purse-related settings
+            purse_related_fields = ['baseTeamBudget', 'minSquad', 'maxSquad', 'maxTeams']
+            attempting_purse_update = any(field in data for field in purse_related_fields)
+            
+            if attempting_purse_update:
+                locked_at = match_settings.get('lockedAt', 'unknown')
+                return create_response(error_response(
+                    f"Cannot modify purse-related settings after team registration has started. "
+                    f"Match settings were locked at {locked_at}. "
+                    f"These values must remain consistent for all teams.",
+                    403
+                ), 403)
         
         # Validate config values
         base_team_budget = data.get('baseTeamBudget')
@@ -2180,14 +2410,26 @@ def handle_register_team(data):
             print(f"⚠️ Warning: Could not validate team limit: {e}")
         
         team_id = generate_id('team')
+        
+        # Get purse from matchSettings (if available) or use default
+        match_purse = 10000000  # Default purse
+        try:
+            match_doc = get_db().collection('matches').document(season_id).get()
+            if match_doc.exists:
+                match_data = match_doc.to_dict()
+                match_settings = match_data.get('matchSettings', {})
+                match_purse = match_settings.get('pursePerTeam', match_data.get('config', {}).get('baseTeamBudget', 10000000))
+        except Exception as e:
+            print(f"⚠️ Warning: Could not fetch match purse: {e}")
+        
         team_data = {
             'id': team_id,
             'name': data['teamName'],
             'shortCode': data.get('teamShortCode', data['teamName'][:3].upper()),
             'logo': data.get('teamLogo', ''),
             'homeCity': data.get('homeCity', ''),
-            'budget': 10000000,
-            'remainingBudget': 10000000,
+            'budget': match_purse,
+            'remainingBudget': match_purse,
             'matchId': data['seasonId'],
             'players': [],
             'ownerName': data['fullName'],
@@ -2202,6 +2444,26 @@ def handle_register_team(data):
         }
         
         get_db().collection('teams').document(team_id).set(team_data)
+        
+        # ===== LOCK MATCH SETTINGS AFTER FIRST TEAM REGISTERS =====
+        # This ensures matchSettings become read-only and cannot be changed
+        try:
+            match_ref = get_db().collection('matches').document(season_id)
+            match_doc = match_ref.get()
+            if match_doc.exists:
+                match_data = match_doc.to_dict()
+                match_settings = match_data.get('matchSettings', {})
+                
+                # Only lock if not already locked
+                if not match_settings.get('isLocked', False):
+                    match_ref.update({
+                        'matchSettings.isLocked': True,
+                        'matchSettings.lockedAt': datetime.now().isoformat(),
+                        'matchSettings.lockedReason': 'First team registered'
+                    })
+                    print(f"🔒 MATCH SETTINGS LOCKED: First team ({data['teamName']}) registered for match {season_id}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not lock matchSettings: {e}")
         
         return create_response(success_response({'teamId': team_id}, "Team registered successfully"), 201)
     except Exception as e:
@@ -2267,6 +2529,35 @@ def handle_register_player(data):
         
         print(f"✅ Email {email} is unique - no conflicts found in any match")
         
+        # ===== VALIDATE BASE PRICE AGAINST MATCH SETTINGS =====
+        # HARD BLOCK: Base price must not exceed maxBasePrice
+        base_price = int(data['basePrice'])
+        max_base_price = None
+        avg_player_value = None
+        
+        try:
+            match_doc = get_db().collection('matches').document(season_id).get()
+            if match_doc.exists:
+                match_data = match_doc.to_dict()
+                match_settings = match_data.get('matchSettings', {})
+                max_base_price = match_settings.get('maxBasePrice')
+                avg_player_value = match_settings.get('avgPlayerValue')
+                purse_per_team = match_settings.get('pursePerTeam')
+                players_per_team = match_settings.get('playersPerTeam')
+                
+                # HARD BLOCK: Reject if base price exceeds maxBasePrice
+                if max_base_price and base_price > max_base_price:
+                    return create_response(error_response(
+                        f"Base price is too high for the given team purse and squad size. "
+                        f"Maximum allowed: ₹{max_base_price:,}. Your base price: ₹{base_price:,}. "
+                        f"(Team purse: ₹{purse_per_team:,} | Squad size: {players_per_team})",
+                        400
+                    ), 400)
+                
+                print(f"✅ Base price validation passed: ₹{base_price:,} <= ₹{max_base_price:,}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not validate base price against matchSettings: {e}")
+        
         player_id = generate_id('player')
         player_data = {
             'id': player_id,
@@ -2276,7 +2567,7 @@ def handle_register_player(data):
             'phone': data.get('phone', ''),
             'role': 'PLAYER',
             'roleId': data.get('playingRole', ''),
-            'basePrice': data['basePrice'],
+            'basePrice': base_price,
             'isOverseas': data.get('isOverseas', False),
             'status': 'PENDING',
             'matchId': data['seasonId'],

@@ -9,6 +9,7 @@ export { HowItWorksPage } from './HowItWorksPage';
 export { SettingsPage } from './SettingsPage';
 export { SettingsLayoutPage } from './SettingsLayoutPage';
 export { PlayersPage } from './PlayersPage';
+export { PlayerApplicationsPage } from './PlayerApplicationsPage';
 export { TeamsPage } from './TeamsPage';
 export { AuctionRoomPage } from './AuctionRoomPage';
 export { HistoryPage } from './HistoryPage';

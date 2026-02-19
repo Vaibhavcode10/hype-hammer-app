@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { LogOut, Radio, ArrowLeft, Zap, Users, Trophy, Activity, Settings, Home, Play, ChevronRight, ChevronDown, ChevronUp, User, Wallet, Star, TrendingUp, FileText, BarChart3, Clock, CheckCircle, XCircle, AlertCircle, Square, Shield, Search, Download, Filter, X, IndianRupee, Target, History, Plus, Upload, Loader2, FileText as FileIcon, Image } from 'lucide-react';
-import { AuctionStatus, MatchData, UserRole, Team, Player } from '../../types';
+import { LogOut, Radio, ArrowLeft, Zap, Users, Trophy, Activity, Settings, Home, Play, ChevronRight, ChevronDown, ChevronUp, User, UserCheck, Wallet, Star, TrendingUp, FileText, BarChart3, Clock, CheckCircle, XCircle, AlertCircle, Square, Shield, Search, Download, Filter, X, IndianRupee, Target, History, Plus, Upload, Loader2, FileText as FileIcon, Image, Ban, Check } from 'lucide-react';
+import { AuctionStatus, MatchData, UserRole, Team, Player, ApprovalStatus } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
 import { PlayersPage } from './PlayersPage';
+import { PlayerApplicationsPage } from './PlayerApplicationsPage';
 import { TeamSquadPage } from './TeamSquadPage';
 import { TeamHUDCard } from '../ui/TeamHUDCard';
 import { socketService } from '../../services/socketService';
@@ -743,7 +744,7 @@ interface AuctioneerDashboardPageProps {
 }
 
 export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
-  const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom' | 'teams' | 'players' | 'settings' | 'report' | 'teamDetail' | 'history' | 'addTeam' | 'addPlayer'>('dashboard');
+  const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom' | 'teams' | 'players' | 'playerApplications' | 'settings' | 'report' | 'teamDetail' | 'history' | 'addTeam' | 'addPlayer'>('dashboard');
   const [activeNav, setActiveNav] = useState(0);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [teamSearchQuery, setTeamSearchQuery] = useState('');
@@ -810,8 +811,16 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   const [liveAuctionStatus, setLiveAuctionStatus] = useState<'READY' | 'LIVE' | 'PAUSED' | 'ENDED'>('READY');
   const [startingAuction, setStartingAuction] = useState(false);
   
+  // Team moderation state
+  type TeamModerationFilter = 'all' | 'accepted' | 'pending' | 'declined';
+  const [teamModerationFilter, setTeamModerationFilter] = useState<TeamModerationFilter>('all');
+  const [updatingTeamApproval, setUpdatingTeamApproval] = useState<string | null>(null);
+  
   // Current bidding player state
   const [currentBiddingPlayer, setCurrentBiddingPlayer] = useState<Player | null>(null);
+  // Whether the first real-time snapshot has arrived and been filtered.
+  // Prevents the card from rendering any player until socket data is resolved.
+  const [livePlayerResolved, setLivePlayerResolved] = useState(false);
   
   // Auctioneer profile state
   const [auctioneerProfile, setAuctioneerProfile] = useState<{
@@ -961,15 +970,19 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     unsubscribers.push(socketService.onPlayersUpdate(seasonId, (updatedPlayers) => {
       console.log('[Auctioneer] Players updated:', updatedPlayers.length);
       
-      // Find the LIVE player
-      const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE' || p.status === 'PENDING');
+      // ONLY consider players that are accepted — never show declined players in live card
+      const acceptedPlayers = updatedPlayers.filter((p: any) => p.approvalStatus === 'accepted');
+      // Find the LIVE player among accepted players only
+      const livePlayer = acceptedPlayers.find((p: any) => p.status === 'LIVE' || p.status === 'PENDING');
       if (livePlayer) {
         console.log('[Auctioneer] Found live player:', livePlayer.name);
         setCurrentBiddingPlayer(livePlayer);
       } else {
-        console.log('[Auctioneer] No LIVE/PENDING player found');
+        console.log('[Auctioneer] No LIVE/PENDING accepted player found');
         setCurrentBiddingPlayer(null);
       }
+      // Mark that we have received at least one snapshot — safe to render
+      setLivePlayerResolved(true);
     }));
 
     // Listen for auction state updates (PRIMARY SOURCE - gets current status on mount)
@@ -1033,6 +1046,24 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       unsubscribers.forEach(unsub => unsub());
     };
   }, [currentMatch?.id]);
+
+  /**
+   * CRITICAL: Filter out declined players for all auction-related displays and stats
+   * Declined players should ONLY appear in admin review sections
+   * This is the SINGLE SOURCE OF TRUTH for auction-eligible players in Auctioneer Dashboard
+   */
+  const eligiblePlayers = useMemo(() => {
+    return players.filter(p => p.approvalStatus !== 'declined');
+  }, [players]);
+
+  /**
+   * CRITICAL: Filter out declined teams for all auction-related displays and stats
+   * Declined teams should ONLY appear in admin review sections
+   * This is the SINGLE SOURCE OF TRUTH for auction-eligible teams in Auctioneer Dashboard
+   */
+  const eligibleTeams = useMemo(() => {
+    return teams.filter(t => t.approvalStatus !== 'declined');
+  }, [teams]);
 
   // Handle Add Team submission
   const handleAddTeam = async () => {
@@ -1455,6 +1486,50 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     return (teamId: string) => playerCountMap[teamId] || 0;
   }, [players]);
 
+  // ============================================
+  // TEAM MODERATION FUNCTIONS
+  // ============================================
+  
+  const getTeamApprovalStatus = (team: Team): ApprovalStatus => {
+    return team.approvalStatus || 'pending';
+  };
+
+  const handleUpdateTeamApproval = async (teamId: string, status: 'accepted' | 'declined') => {
+    setUpdatingTeamApproval(teamId);
+    try {
+      const response = await fetch(`${API_BASE}/teams/${teamId}/${status === 'accepted' ? 'approve' : 'decline'}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (response.ok) {
+        // Update local state
+        setTeams(prev => prev.map(t => 
+          t.id === teamId ? { ...t, approvalStatus: status } : t
+        ));
+      } else {
+        console.error('Failed to update team approval status');
+      }
+    } catch (error) {
+      console.error('Error updating team approval:', error);
+    } finally {
+      setUpdatingTeamApproval(null);
+    }
+  };
+
+  // Sort teams by approval status: accepted first, then pending, then declined
+  const sortTeamsByApprovalStatus = (a: Team, b: Team): number => {
+    const order: Record<ApprovalStatus, number> = { accepted: 0, pending: 1, declined: 2 };
+    const statusA = getTeamApprovalStatus(a);
+    const statusB = getTeamApprovalStatus(b);
+    return order[statusA] - order[statusB];
+  };
+
+  // Approval status counts for teams
+  const acceptedTeamsCount = useMemo(() => teams.filter(t => getTeamApprovalStatus(t) === 'accepted').length, [teams]);
+  const pendingTeamsCount = useMemo(() => teams.filter(t => getTeamApprovalStatus(t) === 'pending').length, [teams]);
+  const declinedTeamsCount = useMemo(() => teams.filter(t => getTeamApprovalStatus(t) === 'declined').length, [teams]);
+
   // Handle logout with confirmation
   const handleLogout = () => {
     if (window.confirm('Are you sure you want to logout? You will be redirected to the Explore Auctions page.')) {
@@ -1500,10 +1575,14 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         console.log('[Auctioneer] Auction started:', data);
         setLiveAuctionStatus('LIVE');
         
-        // Get first player in queue and start bidding
-        const availablePlayers = players.filter(p => p.status === 'AVAILABLE');
-        if (availablePlayers.length > 0) {
-          const firstPlayer = availablePlayers[0];
+        // Get first APPROVED player in queue and start bidding
+        // CRITICAL: Only select from players with approvalStatus === 'accepted' (or undefined for backwards compat)
+        const availableApprovedPlayers = eligiblePlayers.filter(p => 
+          p.status === 'AVAILABLE' && 
+          (p.approvalStatus === 'accepted' || p.approvalStatus === undefined || p.approvalStatus === null)
+        );
+        if (availableApprovedPlayers.length > 0) {
+          const firstPlayer = availableApprovedPlayers[0];
           // Start bidding for first player
           await fetch(`${API_BASE}/api/auction/player/start`, {
             method: 'POST',
@@ -1540,16 +1619,22 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     setActiveNav(3);
   };
 
+  // Handle go to player applications page
+  const handleGoToPlayerApplications = () => {
+    setActiveSection('playerApplications');
+    setActiveNav(4);
+  };
+
   // Handle go to report page
   const handleGoToReport = () => {
     setActiveSection('report');
-    setActiveNav(4);
+    setActiveNav(5);
   };
 
   // Handle go to settings page
   const handleGoToSettings = () => {
     setActiveSection('settings');
-    setActiveNav(5);
+    setActiveNav(6);
   };
 
   // Switch to Live Room view
@@ -1572,6 +1657,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     { icon: Radio, label: 'Live Room' },
     { icon: Users, label: 'Teams' },
     { icon: User, label: 'Players' },
+    { icon: UserCheck, label: 'Applications' },
     { icon: FileText, label: 'Report' },
     { icon: Settings, label: 'Settings' },
   ];
@@ -1589,8 +1675,9 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     { label: 'Live Room', section: 'liveRoom' as const, navIdx: 1, icon: Radio },
     { label: 'Teams', section: 'teams' as const, navIdx: 2, icon: Users },
     { label: 'Players', section: 'players' as const, navIdx: 3, icon: User },
-    { label: 'Report', section: 'report' as const, navIdx: 4, icon: FileText },
-    { label: 'Settings', section: 'settings' as const, navIdx: 5, icon: Settings },
+    { label: 'Applications', section: 'playerApplications' as const, navIdx: 4, icon: UserCheck },
+    { label: 'Report', section: 'report' as const, navIdx: 5, icon: FileText },
+    { label: 'Settings', section: 'settings' as const, navIdx: 6, icon: Settings },
   ];
 
   const filteredNavPages = navSearchQuery.trim()
@@ -1609,10 +1696,10 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   };
 
   // Calculate report statistics
-  const soldPlayersCount = players.filter(p => p.status === 'SOLD').length;
-  const unsoldPlayersCount = players.filter(p => p.status === 'UNSOLD').length;
-  const pendingPlayersCount = players.filter(p => p.status === 'PENDING' || p.status === 'AVAILABLE').length;
-  const totalAmountSpent = players.filter(p => p.status === 'SOLD').reduce((sum, p) => {
+  const soldPlayersCount = eligiblePlayers.filter(p => p.status === 'SOLD').length;
+  const unsoldPlayersCount = eligiblePlayers.filter(p => p.status === 'UNSOLD').length;
+  const pendingPlayersCount = eligiblePlayers.filter(p => p.status === 'PENDING' || p.status === 'AVAILABLE').length;
+  const totalAmountSpent = eligiblePlayers.filter(p => p.status === 'SOLD').reduce((sum, p) => {
     return sum + ((p as any).soldAmount || p.soldPrice || p.currentBid || 0);
   }, 0);
 
@@ -1628,18 +1715,35 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
           />
         );
 
+      case 'playerApplications':
+        return (
+          <PlayerApplicationsPage
+            onClose={() => setActiveSection('dashboard')}
+            currentMatch={currentMatch}
+          />
+        );
+
       case 'teams':
-        // Filter teams by search query
-        const filteredTeams = teams.filter(team => {
+        // Filter teams by search query and moderation filter, then sort by approval status
+        const searchFilteredTeams = teams.filter(team => {
           if (!teamSearchQuery.trim()) return true;
           const query = teamSearchQuery.toLowerCase();
           return team.name.toLowerCase().includes(query) || 
                  (team.homeCity && team.homeCity.toLowerCase().includes(query));
         });
+        
+        // Apply moderation filter
+        const moderationFilteredTeams = teamModerationFilter === 'all' 
+          ? searchFilteredTeams 
+          : searchFilteredTeams.filter(t => getTeamApprovalStatus(t) === teamModerationFilter);
+        
+        // Sort by approval status: accepted first, then pending, then declined
+        const processedTeams = [...moderationFilteredTeams].sort(sortTeamsByApprovalStatus);
+        
         return (
           <div className="flex-1 p-6 pr-8 pb-16">
             {/* Header - Game HUD Style */}
-            <div className="flex items-center justify-between mb-10">
+            <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-4">
                 {/* Teams Icon */}
                 <div 
@@ -1654,7 +1758,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                 </div>
                 <div>
                   <h1 className="text-3xl font-black text-white tracking-tight">Team Command Center</h1>
-                  <p className="text-pink-400/50 text-sm mt-1">{currentMatch?.name || 'All Teams'} &mdash; {filteredTeams.length} franchise{filteredTeams.length !== 1 ? 's' : ''} registered</p>
+                  <p className="text-pink-400/50 text-sm mt-1">{currentMatch?.name || 'All Teams'} &mdash; {processedTeams.length} franchise{processedTeams.length !== 1 ? 's' : ''} registered</p>
                 </div>
               </div>
               
@@ -1708,6 +1812,77 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
               </div>
             </div>
 
+            {/* Moderation Filter Tabs */}
+            <div className="mb-6">
+              <div 
+                className="rounded-xl p-1 inline-flex"
+                style={{
+                  background: 'rgba(0, 0, 0, 0.3)',
+                  border: '1px solid rgba(236, 72, 153, 0.15)'
+                }}
+              >
+                <button
+                  onClick={() => setTeamModerationFilter('all')}
+                  className={`px-4 py-2 rounded-lg font-bold text-xs transition-all ${
+                    teamModerationFilter === 'all'
+                      ? 'text-white'
+                      : 'text-pink-300/60 hover:bg-pink-500/10'
+                  }`}
+                  style={teamModerationFilter === 'all' ? {
+                    background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.3), rgba(220, 38, 38, 0.2))',
+                    border: '1px solid rgba(236, 72, 153, 0.4)',
+                  } : {}}
+                >
+                  All ({teams.length})
+                </button>
+                <button
+                  onClick={() => setTeamModerationFilter('accepted')}
+                  className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-1.5 ${
+                    teamModerationFilter === 'accepted'
+                      ? 'text-white'
+                      : 'text-green-300/60 hover:bg-green-500/10'
+                  }`}
+                  style={teamModerationFilter === 'accepted' ? {
+                    background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.3), rgba(22, 163, 74, 0.2))',
+                    border: '1px solid rgba(34, 197, 94, 0.4)',
+                  } : {}}
+                >
+                  <Check size={12} />
+                  Accepted ({acceptedTeamsCount})
+                </button>
+                <button
+                  onClick={() => setTeamModerationFilter('pending')}
+                  className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-1.5 ${
+                    teamModerationFilter === 'pending'
+                      ? 'text-white'
+                      : 'text-amber-300/60 hover:bg-amber-500/10'
+                  }`}
+                  style={teamModerationFilter === 'pending' ? {
+                    background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(217, 119, 6, 0.2))',
+                    border: '1px solid rgba(245, 158, 11, 0.4)',
+                  } : {}}
+                >
+                  <Clock size={12} />
+                  Pending ({pendingTeamsCount})
+                </button>
+                <button
+                  onClick={() => setTeamModerationFilter('declined')}
+                  className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-1.5 ${
+                    teamModerationFilter === 'declined'
+                      ? 'text-white'
+                      : 'text-red-300/60 hover:bg-red-500/10'
+                  }`}
+                  style={teamModerationFilter === 'declined' ? {
+                    background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.3), rgba(220, 38, 38, 0.2))',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                  } : {}}
+                >
+                  <Ban size={12} />
+                  Declined ({declinedTeamsCount})
+                </button>
+              </div>
+            </div>
+
             {/* Teams Grid - Using TeamHUDCard */}
             {loadingTeams ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -1718,6 +1893,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                       <div className="flex-1">
                         <div className="animate-pulse bg-pink-500/15 w-3/4 h-4 rounded mb-2"></div>
                         <div className="animate-pulse bg-pink-500/10 w-1/2 h-3 rounded"></div>
+
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-3 mb-3">
@@ -1728,9 +1904,9 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                   </div>
                 ))}
               </div>
-            ) : filteredTeams.length > 0 ? (
+            ) : processedTeams.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {filteredTeams.map((team) => (
+                {processedTeams.map((team) => (
                   <TeamHUDCard
                     key={team.id}
                     team={team}
@@ -1740,6 +1916,10 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                       setSelectedTeamId(team.id);
                       setActiveSection('teamDetail');
                     }}
+                    showModeration={true}
+                    onApprove={(teamId) => handleUpdateTeamApproval(teamId, 'accepted')}
+                    onDecline={(teamId) => handleUpdateTeamApproval(teamId, 'declined')}
+                    isUpdating={updatingTeamApproval === team.id}
                   />
                 ))}
               </div>
@@ -2556,7 +2736,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-black/20 rounded-xl p-4 border border-pink-500/10">
                     <p className="text-pink-400/60 text-xs uppercase mb-1">Players</p>
-                    <p className="text-2xl font-bold text-white">{players.length}</p>
+                    <p className="text-2xl font-bold text-white">{eligiblePlayers.length}</p>
                   </div>
                   <div className="bg-black/20 rounded-xl p-4 border border-pink-500/10">
                     <p className="text-pink-400/60 text-xs uppercase mb-1">Teams</p>
@@ -2625,7 +2805,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         return (
           <TeamSquadPage
             team={selectedTeam}
-            players={players}
+            players={eligiblePlayers}
             onBack={() => setActiveSection('teams')}
           />
         );
@@ -2633,7 +2813,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       case 'report':
         // Build team→player mapping for report
         const reportTeams = teams.map(team => {
-          const teamPlayers = players.filter(p => 
+          const teamPlayers = eligiblePlayers.filter(p => 
             (p as any).soldTo === team.id || (p as any).teamId === team.id || (p as any).buyingTeamId === team.id
           );
           const spent = teamPlayers.reduce((sum, p) => sum + ((p as any).soldAmount || (p as any).soldPrice || (p as any).currentBid || 0), 0);
@@ -2641,7 +2821,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         });
 
         // Unsold/available players (no team)
-        const unassignedPlayers = players.filter(p => {
+        const unassignedPlayers = eligiblePlayers.filter(p => {
           const hasTeam = (p as any).soldTo || (p as any).teamId || (p as any).buyingTeamId;
           return !hasTeam && (p.status === 'UNSOLD' || p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status);
         });
@@ -2650,7 +2830,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
           <ReportSection
             teams={reportTeams}
             unassignedPlayers={unassignedPlayers}
-            players={players}
+            players={eligiblePlayers}
             currentMatch={currentMatch}
             soldPlayersCount={soldPlayersCount}
             unsoldPlayersCount={unsoldPlayersCount}
@@ -2899,7 +3079,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                         </div>
                         <div className="text-right">
                           <p className="text-pink-400/60 text-xs uppercase tracking-wider">Players</p>
-                          <p className="text-2xl font-black text-white">{loadingPlayers ? '...' : players.length}</p>
+                          <p className="text-2xl font-black text-white">{loadingPlayers ? '...' : eligiblePlayers.length}</p>
                         </div>
                       </div>
                     </div>
@@ -2910,7 +3090,14 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
               {/* LIVE BIDDING PLAYER CARD - Right side of Row 1 */}
               <div className="col-span-4">
                 <div className="rounded-3xl overflow-hidden relative h-full" style={{ minHeight: '320px' }}>
-                  {currentBiddingPlayer && liveAuctionStatus === 'LIVE' ? (
+                  {!livePlayerResolved ? (
+                    /* Skeleton: waiting for first socket snapshot — prevents flicker of stale/declined player */
+                    <div className="h-full glass-card rounded-3xl flex flex-col items-center justify-center p-6 border border-pink-500/20" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.08), rgba(219, 39, 119, 0.05))' }}>
+                      <div className="w-20 h-20 rounded-full skeleton-pulse mb-4" style={{ background: 'rgba(255,0,102,0.12)' }} />
+                      <div className="h-4 w-32 rounded skeleton-pulse mb-2" style={{ background: 'rgba(255,0,102,0.1)' }} />
+                      <div className="h-3 w-24 rounded skeleton-pulse" style={{ background: 'rgba(255,0,102,0.07)' }} />
+                    </div>
+                  ) : currentBiddingPlayer && liveAuctionStatus === 'LIVE' ? (
                     /* Live Player Card with Image Background */
                     <>
                       {/* Full Card Background Image */}
@@ -2938,7 +3125,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                         
                         {/* Bottom: Player Info */}
                         <div>
-                          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/80 border border-amber-400/50 mb-2">
+                          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-pink-500/80 border border-pink-400/50 mb-2">
                             <span className="text-white text-[10px] font-bold tracking-wider uppercase">
                               {currentBiddingPlayer.role || currentBiddingPlayer.roleId || 'PLAYER'}
                             </span>
@@ -2946,7 +3133,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                           <h2 className="text-xl font-black text-white mb-1" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>
                             {currentBiddingPlayer.name}
                           </h2>
-                          <p className="text-amber-300 text-xs font-medium">
+                          <p className="text-pink-300 text-xs font-medium">
                             Base Price: ₹{((currentBiddingPlayer.basePrice || 0) / 100000).toFixed(1)}L
                           </p>
                         </div>
@@ -2954,14 +3141,14 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                     </>
                   ) : (
                     /* Placeholder: Auction Not Started or No Active Player */
-                    <div className="h-full glass-card rounded-3xl flex flex-col items-center justify-center p-6 border border-amber-500/20" style={{ background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(217, 119, 6, 0.05))' }}>
-                      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-amber-500/20 to-amber-600/10 flex items-center justify-center mb-4 border border-amber-500/30">
-                        <Activity size={36} className="text-amber-400/60" />
+                    <div className="h-full glass-card rounded-3xl flex flex-col items-center justify-center p-6 border border-pink-500/20" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.08), rgba(219, 39, 119, 0.05))' }}>
+                      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-pink-500/20 to-pink-600/10 flex items-center justify-center mb-4 border border-pink-500/30">
+                        <Activity size={36} className="text-pink-400/60" />
                       </div>
                       <h3 className="text-lg font-bold text-white mb-2">
                         {liveAuctionStatus === 'ENDED' ? 'Auction Ended' : 'Waiting for Bidding'}
                       </h3>
-                      <p className="text-amber-400/60 text-sm text-center">
+                      <p className="text-pink-400/60 text-sm text-center">
                         {liveAuctionStatus === 'ENDED' 
                           ? 'All players have been auctioned' 
                           : liveAuctionStatus === 'LIVE' 
@@ -3101,7 +3288,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                     </div>
                     Registered Players
                     <span className="text-pink-400/60 text-sm font-normal ml-2">
-                      ({players.length} total)
+                      ({eligiblePlayers.length} total)
                     </span>
                   </h3>
                   <button 
@@ -3116,14 +3303,14 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                 {loadingPlayers ? (
                   <div className="grid grid-cols-6 gap-4">
                     {[1, 2, 3, 4, 5, 6].map((i) => (
-                      <div key={i} className="glass-card rounded-2xl p-4 h-48 border border-amber-500/20" style={{ background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.05), rgba(217, 119, 6, 0.05))' }}>
-                        <div className="animate-pulse bg-gradient-to-r from-amber-500/30 to-amber-600/20 w-20 h-20 rounded-full mx-auto mb-3" style={{ boxShadow: '0 0 20px rgba(245, 158, 11, 0.2)' }}></div>
-                        <div className="animate-pulse bg-gradient-to-r from-amber-500/25 to-amber-600/15 w-3/4 h-4 rounded mx-auto mb-2"></div>
-                        <div className="animate-pulse bg-gradient-to-r from-amber-500/20 to-amber-600/10 w-1/2 h-3 rounded mx-auto"></div>
+                      <div key={i} className="glass-card rounded-2xl p-4 h-48 border border-pink-500/20" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.05), rgba(219, 39, 119, 0.05))' }}>
+                        <div className="animate-pulse bg-gradient-to-r from-pink-500/30 to-pink-600/20 w-20 h-20 rounded-full mx-auto mb-3" style={{ boxShadow: '0 0 20px rgba(255, 0, 102, 0.2)' }}></div>
+                        <div className="animate-pulse bg-gradient-to-r from-pink-500/25 to-pink-600/15 w-3/4 h-4 rounded mx-auto mb-2"></div>
+                        <div className="animate-pulse bg-gradient-to-r from-pink-500/20 to-pink-600/10 w-1/2 h-3 rounded mx-auto"></div>
                       </div>
                     ))}
                   </div>
-                ) : players.length > 0 ? (
+                ) : eligiblePlayers.length > 0 ? (
                   <div className="grid grid-cols-6 gap-4">
                     {displayedPlayers.map((player, idx) => (
                       <div key={player.id || idx} className="player-card glass-card rounded-2xl p-4 transition-all duration-300 cursor-pointer group text-center">
@@ -3421,8 +3608,9 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                   else if (idx === 1) handleGoToLiveRoom();
                   else if (idx === 2) handleGoToTeams();
                   else if (idx === 3) handleGoToPlayers();
-                  else if (idx === 4) handleGoToReport();
-                  else if (idx === 5) handleGoToSettings();
+                  else if (idx === 4) handleGoToPlayerApplications();
+                  else if (idx === 5) handleGoToReport();
+                  else if (idx === 6) handleGoToSettings();
                 }}
                 className={`nav-icon w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
                   activeNav === idx 

@@ -9,11 +9,12 @@ import {
   Home, Radio, Lock, Unlock, RotateCcw, Plus, Save, RefreshCw,
   AlertTriangle, CheckCircle, XCircle, Info, History,
   Layers, Gauge, BarChart, TrendingDown, Star, ChevronDown, ChevronUp,
-  Wallet, Square, IndianRupee, Upload, Loader2, FileText as FileIcon, Image
+  Wallet, Square, IndianRupee, Upload, Loader2, FileText as FileIcon, Image, Ban
 } from 'lucide-react';
-import { AuctionStatus, MatchData, UserRole, Player, Team } from '../../types';
+import { AuctionStatus, MatchData, UserRole, Player, Team, ApprovalStatus } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
 import { PlayersPage } from './PlayersPage';
+import { PlayerApplicationsPage } from './PlayerApplicationsPage';
 import { TeamSquadPage } from './TeamSquadPage';
 import { TeamHUDCard } from '../ui/TeamHUDCard';
 import { socketService } from '../../services/socketService';
@@ -21,6 +22,8 @@ import { registerTeam, registerPlayer } from '../../services/apiService';
 import { uploadTeamLogo, uploadDocument, uploadPlayerPhoto, uploadProfilePicture } from '../../services/firebaseStorageService';
 import { firestore } from '../../services/firebaseConfig';
 import { doc, getDoc } from 'firebase/firestore';
+import { useMatchSettings } from '../../hooks/useMatchSettings';
+import { formatIndianCurrency, formatIndianCurrencyShort } from '../../services/currencyUtils';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
@@ -764,10 +767,26 @@ interface SystemLog {
 
 export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   // Main navigation state
-  const [activeSection, setActiveSection] = useState<'overview' | 'settings' | 'players' | 'teams' | 'auctioneers' | 'liveMonitor' | 'liveRoom' | 'reports' | 'addTeam' | 'addPlayer' | 'teamDetail' | 'report' | 'history'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'settings' | 'players' | 'playerApplications' | 'teams' | 'auctioneers' | 'liveMonitor' | 'liveRoom' | 'reports' | 'addTeam' | 'addPlayer' | 'teamDetail' | 'report' | 'history'>('overview');
   
   // Resolved match state - if currentMatch is undefined, we'll fetch the first available match
   const [resolvedMatch, setResolvedMatch] = useState<MatchData | null>(currentMatch);
+  
+  // ─── PURSE INTELLIGENCE: Real-time match settings subscription ─────────────
+  const matchId = resolvedMatch?.id || currentMatch?.id || null;
+  const {
+    matchSettings,
+    formattedPurse,
+    formattedAvgValue,
+    formattedMaxBasePrice,
+    formattedRecommendedMin,
+    shortPurse,
+    shortMaxBasePrice,
+    shortRecommendedMin,
+    validatePlayerBasePrice,
+    isLocked: isMatchSettingsLocked,
+    loading: matchSettingsLoading,
+  } = useMatchSettings(matchId);
   
   // Data states
   const [teams, setTeams] = useState<Team[]>([]);
@@ -852,6 +871,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   // ─── Team/Player Registration State (copied from Auctioneer) ──────────────
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [teamSearchQuery, setTeamSearchQuery] = useState('');
+  
+  // Team moderation state
+  type TeamModerationFilter = 'all' | 'accepted' | 'pending' | 'declined';
+  const [teamModerationFilter, setTeamModerationFilter] = useState<TeamModerationFilter>('all');
+  const [updatingTeamApproval, setUpdatingTeamApproval] = useState<string | null>(null);
   const [historyPlayer, setHistoryPlayer] = useState<Player | null>(null);
   const [addTeamLoading, setAddTeamLoading] = useState(false);
   const [addTeamError, setAddTeamError] = useState('');
@@ -901,6 +925,15 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   const [isDraggingPlayerGovId, setIsDraggingPlayerGovId] = useState(false);
   const [addPlayerLoading, setAddPlayerLoading] = useState(false);
   const [addPlayerError, setAddPlayerError] = useState('');
+  
+  // ─── BASE PRICE VALIDATION STATE (Purse Intelligence) ─────────────
+  const [basePriceWarning, setBasePriceWarning] = useState<string | null>(null);
+  const [basePriceError, setBasePriceError] = useState<string | null>(null);
+
+  // Tracks whether match resolution has fully completed (success or failure).
+  // The data-fetch effect must NOT run until this is true, preventing the
+  // premature "Match Data Not Found" error state on refresh.
+  const [matchResolved, setMatchResolved] = useState(false);
 
   // LOCKED MATCH CONTEXT — Only use the match passed from App.tsx (derived from sessionStorage matchId)
   // Never auto-fetch or switch to a different match by email scanning
@@ -908,6 +941,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     if (currentMatch) {
       console.log('🔒 LOCKED: Using provided currentMatch:', currentMatch.id, currentMatch.name);
       setResolvedMatch(currentMatch);
+      setMatchResolved(true);
       setLoading(false);
       return;
     }
@@ -948,6 +982,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
           });
           setResolvedMatch(null);
         } finally {
+          setMatchResolved(true);
           setLoading(false);
         }
       };
@@ -955,12 +990,31 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     } else {
       console.warn('🔒 ⚠️ No match provided and no matchId in sessionStorage. Admin must select a match.');
       setResolvedMatch(null);
+      setMatchResolved(true);
       setLoading(false);
     }
   }, [currentMatch]);
 
   // Use resolvedMatch for all operations
   const activeMatch = resolvedMatch;
+
+  /**
+   * CRITICAL: Filter out declined players for all auction-related displays and stats
+   * Declined players should ONLY appear in the Applied Players / Review section
+   * This is the SINGLE SOURCE OF TRUTH for auction-eligible players in Admin Dashboard
+   */
+  const eligiblePlayers = useMemo(() => {
+    return players.filter(p => p.approvalStatus !== 'declined');
+  }, [players]);
+
+  /**
+   * CRITICAL: Filter out declined teams for all auction-related displays and stats
+   * Declined teams should ONLY appear in the Applied Teams / Review section
+   * This is the SINGLE SOURCE OF TRUTH for auction-eligible teams in Admin Dashboard
+   */
+  const eligibleTeams = useMemo(() => {
+    return teams.filter(t => t.approvalStatus !== 'declined');
+  }, [teams]);
 
   // Scroll to top when section changes
   useEffect(() => {
@@ -969,6 +1023,35 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       contentDiv.scrollTop = 0;
     }
   }, [activeSection]);
+
+  // ─── BASE PRICE VALIDATION: Real-time validation against matchSettings ─────
+  useEffect(() => {
+    if (!playerBasePrice || !matchSettings) {
+      setBasePriceWarning(null);
+      setBasePriceError(null);
+      return;
+    }
+    
+    const basePriceNum = parseInt(playerBasePrice, 10);
+    if (isNaN(basePriceNum)) {
+      setBasePriceWarning(null);
+      setBasePriceError(null);
+      return;
+    }
+    
+    const validation = validatePlayerBasePrice(basePriceNum);
+    
+    if (validation.hasError) {
+      setBasePriceError(validation.errorMessage);
+      setBasePriceWarning(null);
+    } else if (validation.hasWarning) {
+      setBasePriceWarning(validation.warningMessage);
+      setBasePriceError(null);
+    } else {
+      setBasePriceWarning(null);
+      setBasePriceError(null);
+    }
+  }, [playerBasePrice, matchSettings, validatePlayerBasePrice]);
 
   // Filtered data based on search and filters
   const filteredTeams = teams.filter(team => {
@@ -980,7 +1063,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     return matchesSearch && matchesFilter;
   });
   
-  const filteredPlayers = players.filter(player => {
+  const filteredPlayers = eligiblePlayers.filter(player => {
     const matchesSearch = player.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       player.role?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFilter = playerFilter === 'all' ||
@@ -992,7 +1075,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
   // Helper function to calculate team stats based on sold players
   const getTeamStats = (team: Team) => {
-    const soldPlayersForTeam = players.filter(p => 
+    const soldPlayersForTeam = eligiblePlayers.filter(p => 
       p.status === 'SOLD' && (p.soldTo === team.id || p.leadingTeamId === team.id)
     );
     
@@ -1351,12 +1434,18 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
   // Fetch season-specific data from API
   useEffect(() => {
+    // Do not run until match resolution is fully complete.
+    // Without this guard, the effect would call setLoading(false) immediately
+    // (because activeMatch is still null during resolution), which would
+    // prematurely render the "Match Data Not Found" error state.
+    if (!matchResolved) return;
+
     const fetchData = async () => {
       try {
         // Only fetch if we have an active match
         if (!activeMatch?.id) {
-          console.log('⏸️ Skipping data fetch - no activeMatch yet');
-          setLoading(false);
+          console.log('⏸️ Skipping data fetch - no activeMatch (resolution finished with no match)');
+          // loading was already set to false by the match resolution effect
           return;
         }
         
@@ -1422,7 +1511,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     };
 
     fetchData();
-  }, [activeMatch?.id]);
+  }, [activeMatch?.id, matchResolved]);
 
   // Initialize season settings from active match
   useEffect(() => {
@@ -1739,13 +1828,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     };
   }, [currentUser?.email, activeMatch?.id]);
 
-  // Calculate season-specific KPIs
+  // Calculate season-specific KPIs - USE eligiblePlayers (not raw players) for auction stats
   const totalTeams = teams.length;
   const approvedTeams = teams.filter(t => t.squadSize !== undefined && t.squadSize > 0).length;
-  const totalPlayers = players.length;
-  const soldPlayers = players.filter(p => p.status === 'SOLD').length;
-  const unsoldPlayers = players.filter(p => p.status === 'UNSOLD').length;
-  const pendingPlayers = players.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING').length;
+  const totalPlayers = eligiblePlayers.length;
+  const soldPlayers = eligiblePlayers.filter(p => p.status === 'SOLD').length;
+  const unsoldPlayers = eligiblePlayers.filter(p => p.status === 'UNSOLD').length;
+  const pendingPlayers = eligiblePlayers.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING').length;
   const totalBudget = teams.reduce((acc, team) => acc + (team.budget || team.initialBudget || 0), 0);
   const remainingBudget = teams.reduce((acc, team) => acc + (team.remainingBudget || team.budget || team.initialBudget || 0), 0);
   const spentBudget = totalBudget - remainingBudget;
@@ -1890,7 +1979,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     let csvContent = 'Team,Player,Email,Base Price,Sold Price,Profit/Loss,Bid Count\n';
     
     teams.forEach(team => {
-      const teamPlayers = players.filter(p => p.soldTo === team.id);
+      const teamPlayers = eligiblePlayers.filter(p => p.soldTo === team.id);
       
       if (teamPlayers.length === 0) {
         csvContent += `"${team.name}","No players assigned","","","","",""\n`;
@@ -2043,6 +2132,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     if (playerPhotoPreviewUrl) URL.revokeObjectURL(playerPhotoPreviewUrl);
     setPlayerPhotoFile(null); setPlayerPhotoPreviewUrl(null);
     setPlayerGovIdFile(null); setAddPlayerError('');
+    // Reset base price validation states
+    setBasePriceWarning(null); setBasePriceError(null);
   };
 
   const handlePlayerPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2106,6 +2197,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     if (!playerNationality.trim()) { setAddPlayerError('Nationality is required'); return; }
     if (!playerRoleId) { setAddPlayerError('Playing Role is required'); return; }
     if (!playerBasePrice || parseInt(playerBasePrice) < 50000) { setAddPlayerError('Base Price must be at least ₹50,000'); return; }
+    
+    // ─── PURSE INTELLIGENCE: Hard block if base price exceeds maxBasePrice ─────
+    if (basePriceError) {
+      setAddPlayerError(basePriceError);
+      return;
+    }
+    
     if (!playerPhotoFile) { setAddPlayerError('Player Photo is required'); return; }
     if (!playerGovId.trim()) { setAddPlayerError('Government ID Number is required'); return; }
     if (!playerGovIdFile) { setAddPlayerError('Government ID Proof is required'); return; }
@@ -2165,11 +2263,55 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     return (teamId: string) => playerCountMap[teamId] || 0;
   }, [players]);
 
+  // ============================================
+  // TEAM MODERATION FUNCTIONS
+  // ============================================
+  
+  const getTeamApprovalStatus = (team: Team): ApprovalStatus => {
+    return team.approvalStatus || 'pending';
+  };
+
+  const handleUpdateTeamApproval = async (teamId: string, status: 'accepted' | 'declined') => {
+    setUpdatingTeamApproval(teamId);
+    try {
+      const response = await fetch(`${API_BASE}/teams/${teamId}/${status === 'accepted' ? 'approve' : 'decline'}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (response.ok) {
+        // Update local state
+        setTeams(prev => prev.map(t => 
+          t.id === teamId ? { ...t, approvalStatus: status } : t
+        ));
+      } else {
+        console.error('Failed to update team approval status');
+      }
+    } catch (error) {
+      console.error('Error updating team approval:', error);
+    } finally {
+      setUpdatingTeamApproval(null);
+    }
+  };
+
+  // Sort teams by approval status: accepted first, then pending, then declined
+  const sortTeamsByApprovalStatus = (a: Team, b: Team): number => {
+    const order: Record<ApprovalStatus, number> = { accepted: 0, pending: 1, declined: 2 };
+    const statusA = getTeamApprovalStatus(a);
+    const statusB = getTeamApprovalStatus(b);
+    return order[statusA] - order[statusB];
+  };
+
+  // Approval status counts for teams
+  const acceptedTeamsCount = useMemo(() => teams.filter(t => getTeamApprovalStatus(t) === 'accepted').length, [teams]);
+  const pendingTeamsCount = useMemo(() => teams.filter(t => getTeamApprovalStatus(t) === 'pending').length, [teams]);
+  const declinedTeamsCount = useMemo(() => teams.filter(t => getTeamApprovalStatus(t) === 'declined').length, [teams]);
+
   // Report computed values
-  const soldPlayersCount = players.filter(p => p.status === 'SOLD').length;
-  const unsoldPlayersCount = players.filter(p => p.status === 'UNSOLD').length;
-  const pendingPlayersCount = players.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING').length;
-  const totalAmountSpent = players.filter(p => p.status === 'SOLD').reduce((sum, p) => sum + ((p as any).soldAmount || (p as any).soldPrice || (p as any).currentBid || 0), 0);
+  const soldPlayersCount = eligiblePlayers.filter(p => p.status === 'SOLD').length;
+  const unsoldPlayersCount = eligiblePlayers.filter(p => p.status === 'UNSOLD').length;
+  const pendingPlayersCount = eligiblePlayers.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING').length;
+  const totalAmountSpent = eligiblePlayers.filter(p => p.status === 'SOLD').reduce((sum, p) => sum + ((p as any).soldAmount || (p as any).soldPrice || (p as any).currentBid || 0), 0);
 
   return (
     <>
@@ -2624,6 +2766,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                   { id: 'overview', icon: <Home size={20} />, label: 'Overview' },
                   { id: 'reports', icon: <FileText size={20} />, label: 'Reports' },
                   { id: 'players', icon: <Users size={20} />, label: 'Players' },
+                  { id: 'playerApplications', icon: <UserCheck size={20} />, label: 'Applications' },
                   { id: 'teams', icon: <Trophy size={20} />, label: 'Teams' },
                   { id: 'auctioneers', icon: <Gavel size={20} />, label: 'Auctioneers', badge: pendingAuctioneers },
                   { id: 'liveRoom', icon: <Radio size={20} />, label: 'Live Room' },
@@ -2886,21 +3029,21 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                               </div>
                             </div>
                             <div>
-                              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/80 border border-amber-400/50 mb-2">
+                              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-pink-500/80 border border-pink-400/50 mb-2">
                                 <span className="text-white text-[10px] font-bold tracking-wider uppercase">{currentBiddingPlayer.role || 'PLAYER'}</span>
                               </div>
                               <h2 className="text-xl font-black text-white mb-1" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>{currentBiddingPlayer.name}</h2>
-                              <p className="text-amber-300 text-xs font-medium">Base Price: ₹{((currentBiddingPlayer.basePrice || 0) / 100000).toFixed(1)}L</p>
+                              <p className="text-pink-300 text-xs font-medium">Base Price: ₹{((currentBiddingPlayer.basePrice || 0) / 100000).toFixed(1)}L</p>
                             </div>
                           </div>
                         </>
                       ) : (
-                        <div className="h-full glass-card rounded-3xl flex flex-col items-center justify-center p-6 border border-amber-500/20" style={{ background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(217, 119, 6, 0.05))' }}>
-                          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-amber-500/20 to-amber-600/10 flex items-center justify-center mb-4 border border-amber-500/30">
-                            <Activity size={36} className="text-amber-400/60" />
+                        <div className="h-full glass-card rounded-3xl flex flex-col items-center justify-center p-6 border border-pink-500/20" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.08), rgba(219, 39, 119, 0.05))' }}>
+                          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-pink-500/20 to-pink-600/10 flex items-center justify-center mb-4 border border-pink-500/30">
+                            <Activity size={36} className="text-pink-400/60" />
                           </div>
                           <h3 className="text-lg font-bold text-white mb-2">{liveAuctionStatus === 'ENDED' ? 'Auction Ended' : 'Waiting for Bidding'}</h3>
-                          <p className="text-amber-400/60 text-sm text-center">{liveAuctionStatus === 'ENDED' ? 'All players have been auctioned' : liveAuctionStatus === 'LIVE' ? 'Next player loading...' : 'Start the auction to see live bidding'}</p>
+                          <p className="text-pink-400/60 text-sm text-center">{liveAuctionStatus === 'ENDED' ? 'All players have been auctioned' : liveAuctionStatus === 'LIVE' ? 'Next player loading...' : 'Start the auction to see live bidding'}</p>
                         </div>
                       )}
                     </div>
@@ -2926,12 +3069,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                       {loading ? (
                         <div className="grid grid-cols-2 gap-4">
                           {[1, 2, 3, 4].map((i) => (
-                            <div key={i} className="glass-card rounded-2xl p-3 border border-amber-500/20" style={{ background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.05), rgba(217, 119, 6, 0.05))' }}>
+                            <div key={i} className="glass-card rounded-2xl p-3 border border-pink-500/20" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.05), rgba(219, 39, 119, 0.05))' }}>
                               <div className="flex items-center gap-3">
-                                <div className="animate-pulse bg-gradient-to-r from-amber-500/30 to-amber-600/20 w-10 h-10 rounded-lg" style={{ boxShadow: '0 0 15px rgba(245, 158, 11, 0.15)' }}></div>
+                                <div className="animate-pulse bg-gradient-to-r from-pink-500/30 to-pink-600/20 w-10 h-10 rounded-lg" style={{ boxShadow: '0 0 15px rgba(255, 0, 102, 0.15)' }}></div>
                                 <div className="flex-1">
-                                  <div className="animate-pulse bg-gradient-to-r from-amber-500/25 to-amber-600/15 w-3/4 h-3 rounded mb-1"></div>
-                                  <div className="animate-pulse bg-gradient-to-r from-amber-500/20 to-amber-600/10 w-1/2 h-2 rounded"></div>
+                                  <div className="animate-pulse bg-gradient-to-r from-pink-500/25 to-pink-600/15 w-3/4 h-3 rounded mb-1"></div>
+                                  <div className="animate-pulse bg-gradient-to-r from-pink-500/20 to-pink-600/10 w-1/2 h-2 rounded"></div>
                                 </div>
                               </div>
                             </div>
@@ -3045,10 +3188,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                     {loading ? (
                       <div className="grid grid-cols-6 gap-4">
                         {[1, 2, 3, 4, 5, 6].map((i) => (
-                          <div key={i} className="glass-card rounded-2xl p-4 h-48 border border-amber-500/20" style={{ background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.05), rgba(217, 119, 6, 0.05))' }}>
-                            <div className="animate-pulse bg-gradient-to-r from-amber-500/30 to-amber-600/20 w-20 h-20 rounded-full mx-auto mb-3" style={{ boxShadow: '0 0 20px rgba(245, 158, 11, 0.2)' }}></div>
-                            <div className="animate-pulse bg-gradient-to-r from-amber-500/25 to-amber-600/15 w-3/4 h-4 rounded mx-auto mb-2"></div>
-                            <div className="animate-pulse bg-gradient-to-r from-amber-500/20 to-amber-600/10 w-1/2 h-3 rounded mx-auto"></div>
+                          <div key={i} className="glass-card rounded-2xl p-4 h-48 border border-pink-500/20" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.05), rgba(219, 39, 119, 0.05))' }}>
+                            <div className="animate-pulse bg-gradient-to-r from-pink-500/30 to-pink-600/20 w-20 h-20 rounded-full mx-auto mb-3" style={{ boxShadow: '0 0 20px rgba(255, 0, 102, 0.2)' }}></div>
+                            <div className="animate-pulse bg-gradient-to-r from-pink-500/25 to-pink-600/15 w-3/4 h-4 rounded mx-auto mb-2"></div>
+                            <div className="animate-pulse bg-gradient-to-r from-pink-500/20 to-pink-600/10 w-1/2 h-3 rounded mx-auto"></div>
                           </div>
                         ))}
                       </div>
@@ -3468,7 +3611,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                           </div>
                           <div className="grid grid-cols-4 gap-2">
                             <div className="text-center p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                              <p className="text-lg font-black text-blue-400">{players.length}</p>
+                              <p className="text-lg font-black text-blue-400">{eligiblePlayers.length}</p>
                               <p className="text-[8px] font-bold uppercase text-blue-400/50 tracking-wider">Players</p>
                             </div>
                             <div className="text-center p-2.5 rounded-lg bg-orange-500/10 border border-orange-500/20">
@@ -3476,11 +3619,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                               <p className="text-[8px] font-bold uppercase text-orange-400/50 tracking-wider">Teams</p>
                             </div>
                             <div className="text-center p-2.5 rounded-lg bg-green-500/10 border border-green-500/20">
-                              <p className="text-lg font-black text-green-400">{players.filter(p => p.status === 'SOLD').length}</p>
+                              <p className="text-lg font-black text-green-400">{eligiblePlayers.filter(p => p.status === 'SOLD').length}</p>
                               <p className="text-[8px] font-bold uppercase text-green-400/50 tracking-wider">Sold</p>
                             </div>
                             <div className="text-center p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                              <p className="text-lg font-black text-amber-400">{players.filter(p => p.status === 'PENDING' || p.status === 'AVAILABLE').length}</p>
+                              <p className="text-lg font-black text-amber-400">{eligiblePlayers.filter(p => p.status === 'PENDING' || p.status === 'AVAILABLE').length}</p>
                               <p className="text-[8px] font-bold uppercase text-amber-400/50 tracking-wider">Pending</p>
                             </div>
                           </div>
@@ -3580,6 +3723,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                 onClose={() => setActiveSection('overview')}
                 currentMatch={resolvedMatch || currentMatch}
                 onAddPlayer={() => { resetAddPlayerForm(); setActiveSection('addPlayer'); }}
+              />
+            )}
+
+            {/* 3A️⃣ PLAYER APPLICATIONS — Approval Workflow */}
+            {activeSection === 'playerApplications' && (
+              <PlayerApplicationsPage
+                onClose={() => setActiveSection('overview')}
+                currentMatch={resolvedMatch || currentMatch}
               />
             )}
 
@@ -3724,7 +3875,46 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                           </div>
                           <div>
                             <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Base Price (₹) <span className="text-red-400">*</span></label>
-                            <input type="number" value={playerBasePrice} onChange={e => setPlayerBasePrice(e.target.value)} placeholder="500000" min={50000} className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(236,72,153,0.2)' }} onFocus={e => { e.target.style.borderColor = 'rgba(236,72,153,0.5)'; }} onBlur={e => { e.target.style.borderColor = 'rgba(236,72,153,0.2)'; }} />
+                            <input 
+                              type="number" 
+                              value={playerBasePrice} 
+                              onChange={e => setPlayerBasePrice(e.target.value)} 
+                              placeholder="500000" 
+                              min={50000} 
+                              className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-pink-300/30 focus:outline-none transition-all" 
+                              style={{ 
+                                background: 'rgba(0,0,0,0.4)', 
+                                border: `1px solid ${basePriceError ? 'rgba(239,68,68,0.6)' : basePriceWarning ? 'rgba(234,179,8,0.6)' : 'rgba(236,72,153,0.2)'}` 
+                              }} 
+                              onFocus={e => { e.target.style.borderColor = basePriceError ? 'rgba(239,68,68,0.8)' : basePriceWarning ? 'rgba(234,179,8,0.8)' : 'rgba(236,72,153,0.5)'; }} 
+                              onBlur={e => { e.target.style.borderColor = basePriceError ? 'rgba(239,68,68,0.6)' : basePriceWarning ? 'rgba(234,179,8,0.6)' : 'rgba(236,72,153,0.2)'; }} 
+                            />
+                            {/* Max Base Price Info */}
+                            {matchSettings && (
+                              <div className="mt-2 space-y-1">
+                                <p className="text-[10px] text-pink-400/60">
+                                  Max allowed: <span className="text-pink-300 font-semibold">{formattedMaxBasePrice}</span>
+                                  <span className="text-pink-400/40 ml-2">(Team purse: {shortPurse} | Squad: {matchSettings.playersPerTeam})</span>
+                                </p>
+                                <p className="text-[10px] text-pink-400/60">
+                                  Recommended range: <span className="text-green-400 font-semibold">{formattedRecommendedMin}</span> – <span className="text-green-400 font-semibold">{formattedMaxBasePrice}</span>
+                                </p>
+                              </div>
+                            )}
+                            {/* Base Price Warning (NON-BLOCKING) */}
+                            {basePriceWarning && !basePriceError && (
+                              <div className="flex items-start gap-1.5 mt-2 text-[11px] text-yellow-400">
+                                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                                <span>{basePriceWarning}</span>
+                              </div>
+                            )}
+                            {/* Base Price Error (HARD BLOCK) */}
+                            {basePriceError && (
+                              <div className="flex items-start gap-1.5 mt-2 text-[11px] text-red-400">
+                                <XCircle size={14} className="flex-shrink-0 mt-0.5" />
+                                <span>{basePriceError}</span>
+                              </div>
+                            )}
                           </div>
                           <div>
                             <label className="block text-[11px] font-bold uppercase tracking-wider text-pink-400/70 mb-2">Age</label>
@@ -3918,16 +4108,26 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
             {/* 4️⃣ TEAMS — Grid with TeamHUDCard */}
             {activeSection === 'teams' && (() => {
-              const filteredTeamsLocal = teams.filter(team => {
+              // Filter teams by search query
+              const searchFilteredTeams = teams.filter(team => {
                 if (!teamSearchQuery.trim()) return true;
                 const query = teamSearchQuery.toLowerCase();
                 return team.name.toLowerCase().includes(query) || 
                        (team.homeCity && team.homeCity.toLowerCase().includes(query));
               });
+              
+              // Apply moderation filter
+              const moderationFilteredTeams = teamModerationFilter === 'all' 
+                ? searchFilteredTeams 
+                : searchFilteredTeams.filter(t => getTeamApprovalStatus(t) === teamModerationFilter);
+              
+              // Sort by approval status: accepted first, then pending, then declined
+              const processedTeams = [...moderationFilteredTeams].sort(sortTeamsByApprovalStatus);
+              
               return (
               <div className="flex-1 p-6 pr-8 pb-16">
                 {/* Header - Game HUD Style */}
-                <div className="flex items-center justify-between mb-10">
+                <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center gap-4">
                     <div 
                       className="w-12 h-12 rounded-xl flex items-center justify-center"
@@ -3941,7 +4141,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                     </div>
                     <div>
                       <h1 className="text-3xl font-black text-white tracking-tight">Team Command Center</h1>
-                      <p className="text-pink-400/50 text-sm mt-1">{(resolvedMatch || currentMatch)?.name || 'All Teams'} &mdash; {filteredTeamsLocal.length} franchise{filteredTeamsLocal.length !== 1 ? 's' : ''} registered</p>
+                      <p className="text-pink-400/50 text-sm mt-1">{(resolvedMatch || currentMatch)?.name || 'All Teams'} &mdash; {processedTeams.length} franchise{processedTeams.length !== 1 ? 's' : ''} registered</p>
                     </div>
                   </div>
                   
@@ -3993,6 +4193,77 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                   </div>
                 </div>
 
+                {/* Moderation Filter Tabs */}
+                <div className="mb-6">
+                  <div 
+                    className="rounded-xl p-1 inline-flex"
+                    style={{
+                      background: 'rgba(0, 0, 0, 0.3)',
+                      border: '1px solid rgba(236, 72, 153, 0.15)'
+                    }}
+                  >
+                    <button
+                      onClick={() => setTeamModerationFilter('all')}
+                      className={`px-4 py-2 rounded-lg font-bold text-xs transition-all ${
+                        teamModerationFilter === 'all'
+                          ? 'text-white'
+                          : 'text-pink-300/60 hover:bg-pink-500/10'
+                      }`}
+                      style={teamModerationFilter === 'all' ? {
+                        background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.3), rgba(220, 38, 38, 0.2))',
+                        border: '1px solid rgba(236, 72, 153, 0.4)',
+                      } : {}}
+                    >
+                      All ({teams.length})
+                    </button>
+                    <button
+                      onClick={() => setTeamModerationFilter('accepted')}
+                      className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-1.5 ${
+                        teamModerationFilter === 'accepted'
+                          ? 'text-white'
+                          : 'text-green-300/60 hover:bg-green-500/10'
+                      }`}
+                      style={teamModerationFilter === 'accepted' ? {
+                        background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.3), rgba(22, 163, 74, 0.2))',
+                        border: '1px solid rgba(34, 197, 94, 0.4)',
+                      } : {}}
+                    >
+                      <Check size={12} />
+                      Accepted ({acceptedTeamsCount})
+                    </button>
+                    <button
+                      onClick={() => setTeamModerationFilter('pending')}
+                      className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-1.5 ${
+                        teamModerationFilter === 'pending'
+                          ? 'text-white'
+                          : 'text-amber-300/60 hover:bg-amber-500/10'
+                      }`}
+                      style={teamModerationFilter === 'pending' ? {
+                        background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(217, 119, 6, 0.2))',
+                        border: '1px solid rgba(245, 158, 11, 0.4)',
+                      } : {}}
+                    >
+                      <Clock size={12} />
+                      Pending ({pendingTeamsCount})
+                    </button>
+                    <button
+                      onClick={() => setTeamModerationFilter('declined')}
+                      className={`px-4 py-2 rounded-lg font-bold text-xs transition-all flex items-center gap-1.5 ${
+                        teamModerationFilter === 'declined'
+                          ? 'text-white'
+                          : 'text-red-300/60 hover:bg-red-500/10'
+                      }`}
+                      style={teamModerationFilter === 'declined' ? {
+                        background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.3), rgba(220, 38, 38, 0.2))',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                      } : {}}
+                    >
+                      <Ban size={12} />
+                      Declined ({declinedTeamsCount})
+                    </button>
+                  </div>
+                </div>
+
                 {/* Teams Grid - Using TeamHUDCard */}
                 {loading ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -4013,9 +4284,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                       </div>
                     ))}
                   </div>
-                ) : filteredTeamsLocal.length > 0 ? (
+                ) : processedTeams.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {filteredTeamsLocal.map((team) => (
+                    {processedTeams.map((team) => (
                       <TeamHUDCard
                         key={team.id}
                         team={team}
@@ -4025,6 +4296,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                           setSelectedTeamId(team.id);
                           setActiveSection('teamDetail');
                         }}
+                        showModeration={true}
+                        onApprove={(teamId) => handleUpdateTeamApproval(teamId, 'accepted')}
+                        onDecline={(teamId) => handleUpdateTeamApproval(teamId, 'declined')}
+                        isUpdating={updatingTeamApproval === team.id}
                       />
                     ))}
                   </div>
@@ -4209,6 +4484,34 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                     </div>
                   </div>
 
+                  {/* Purse Intelligence Info Card - DISPLAY ONLY */}
+                  {matchSettings && (
+                    <div className="glass-card rounded-2xl p-5" style={{ background: 'rgba(34, 197, 94, 0.08)', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
+                      <h3 className="text-sm font-black text-green-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                        <Wallet size={16} />
+                        Team Budget Information
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="rounded-xl p-4" style={{ background: 'rgba(0,0,0,0.3)' }}>
+                          <p className="text-[10px] text-green-300/60 uppercase font-bold tracking-wider mb-1">Squad Size</p>
+                          <p className="text-2xl font-black text-white">{matchSettings.playersPerTeam} <span className="text-sm font-normal text-green-300/60">players</span></p>
+                        </div>
+                        <div className="rounded-xl p-4" style={{ background: 'rgba(0,0,0,0.3)' }}>
+                          <p className="text-[10px] text-green-300/60 uppercase font-bold tracking-wider mb-1">Team Purse</p>
+                          <p className="text-2xl font-black text-white">{shortPurse}</p>
+                        </div>
+                        <div className="rounded-xl p-4" style={{ background: 'rgba(0,0,0,0.3)' }}>
+                          <p className="text-[10px] text-green-300/60 uppercase font-bold tracking-wider mb-1">Avg Budget Per Player</p>
+                          <p className="text-2xl font-black text-white">{formattedAvgValue}</p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-green-300/50 mt-3 flex items-center gap-1">
+                        <Info size={12} />
+                        This is the budget your team will receive for building your squad during the auction.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Row 3: Required Documents & Verification */}
                   <div className="glass-card rounded-2xl p-5">
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -4354,7 +4657,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
               return (
                 <TeamSquadPage
                   team={selectedTeam}
-                  players={players}
+                  players={eligiblePlayers}
                   onBack={() => setActiveSection('teams')}
                 />
               );
@@ -4778,13 +5081,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
             {/* 8️⃣ REPORTS — ReportSection + BiddingHistoryPage */}
             {(activeSection === 'reports' || activeSection === 'report') && (() => {
               const reportTeams = teams.map(team => {
-                const teamPlayers = players.filter(p => 
+                const teamPlayers = eligiblePlayers.filter(p => 
                   (p as any).soldTo === team.id || (p as any).teamId === team.id || (p as any).buyingTeamId === team.id
                 );
                 const spent = teamPlayers.reduce((sum, p) => sum + ((p as any).soldAmount || (p as any).soldPrice || (p as any).currentBid || 0), 0);
                 return { ...team, acquiredPlayers: teamPlayers, totalSpent: spent };
               });
-              const unassignedPlayers = players.filter(p => {
+              const unassignedPlayers = eligiblePlayers.filter(p => {
                 const hasTeam = (p as any).soldTo || (p as any).teamId || (p as any).buyingTeamId;
                 return !hasTeam && (p.status === 'UNSOLD' || p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status);
               });
@@ -4792,7 +5095,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                 <ReportSection
                   teams={reportTeams}
                   unassignedPlayers={unassignedPlayers}
-                  players={players}
+                  players={eligiblePlayers}
                   currentMatch={resolvedMatch || currentMatch}
                   soldPlayersCount={soldPlayersCount}
                   unsoldPlayersCount={unsoldPlayersCount}

@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { User, DollarSign, Upload, ArrowLeft, AlertCircle, CheckCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { User, DollarSign, Upload, ArrowLeft, AlertCircle, CheckCircle, AlertTriangle, XCircle, Info, Wallet } from 'lucide-react';
 import { SportData, Player, SportType } from '../../types';
 import { uploadPlayerPhotoViaAPI, uploadDocumentViaAPI } from '../../services/cloudFunctionUploadService';
+import { useMatchSettings } from '../../hooks/useMatchSettings';
+import { formatIndianCurrency, formatIndianCurrencyShort } from '../../services/currencyUtils';
 
 interface PlayerRegistrationPageProps {
   allSports: SportData[];
@@ -35,12 +37,49 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
   const [uploadProgress, setUploadProgress] = useState<{ photo?: number; document?: number }>({});
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+  
+  // Base price validation states
+  const [basePriceWarning, setBasePriceWarning] = useState<string | null>(null);
+  const [basePriceError, setBasePriceError] = useState<string | null>(null);
 
   const selectedSportData = allSports.find(s => 
     `${s.sportType}-${s.customSportName || ''}` === selectedSport
   );
   
   const selectedMatchData = selectedSportData?.matches.find(m => m.id === selectedMatch);
+  
+  // ─── PURSE INTELLIGENCE: Real-time match settings subscription ─────────────
+  const {
+    matchSettings,
+    formattedPurse,
+    formattedAvgValue,
+    formattedMaxBasePrice,
+    formattedRecommendedMin,
+    shortPurse,
+    validatePlayerBasePrice,
+  } = useMatchSettings(selectedMatch || null);
+  
+  // ─── BASE PRICE VALIDATION: Real-time validation against matchSettings ─────
+  useEffect(() => {
+    if (!playerData.basePrice || !matchSettings) {
+      setBasePriceWarning(null);
+      setBasePriceError(null);
+      return;
+    }
+    
+    const validation = validatePlayerBasePrice(playerData.basePrice);
+    
+    if (validation.hasError) {
+      setBasePriceError(validation.errorMessage);
+      setBasePriceWarning(null);
+    } else if (validation.hasWarning) {
+      setBasePriceWarning(validation.warningMessage);
+      setBasePriceError(null);
+    } else {
+      setBasePriceWarning(null);
+      setBasePriceError(null);
+    }
+  }, [playerData.basePrice, matchSettings, validatePlayerBasePrice]);
 
   // Handle photo upload
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -90,6 +129,12 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedMatch || !playerData.roleId) return;
+    
+    // ─── PURSE INTELLIGENCE: Hard block if base price exceeds maxBasePrice ─────
+    if (basePriceError) {
+      setUploadErrors([basePriceError]);
+      return;
+    }
     
     onRegister(selectedSport, selectedMatch, playerData);
   };
@@ -235,15 +280,60 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                       type="number"
                       value={playerData.basePrice}
                       onChange={(e) => setPlayerData(prev => ({ ...prev, basePrice: parseInt(e.target.value) }))}
-                      className="w-full pl-12 pr-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none"
+                      className={`w-full pl-12 pr-4 py-3 bg-white border rounded-lg text-white focus:outline-none ${
+                        basePriceError ? 'border-red-500' : basePriceWarning ? 'border-yellow-500' : 'border-slate-300 focus:border-blue-500'
+                      }`}
                       min="50000"
                       step="50000"
                       required
                     />
                   </div>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Current: ${(playerData.basePrice! / 1000000).toFixed(2)}M (Minimum starting bid)
-                  </p>
+                  
+                  {/* Purse Intelligence Info */}
+                  {matchSettings && (
+                    <div className="mt-2 space-y-1.5 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2 text-blue-700">
+                        <Wallet size={16} />
+                        <span className="text-xs font-semibold">Purse Intelligence</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <span className="text-blue-600">Max allowed:</span>
+                          <span className="text-blue-800 font-bold ml-1">{formattedMaxBasePrice}</span>
+                        </div>
+                        <div>
+                          <span className="text-blue-600">Team purse:</span>
+                          <span className="text-blue-800 font-bold ml-1">{formattedPurse}</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-blue-600">
+                        Recommended range: <span className="font-semibold text-green-600">{formattedRecommendedMin}</span> – <span className="font-semibold text-green-600">{formattedMaxBasePrice}</span>
+                      </p>
+                    </div>
+                  )}
+                  
+                  {/* Current Value Display */}
+                  {!matchSettings && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      Current: {formatIndianCurrency(playerData.basePrice || 0)} (Minimum starting bid)
+                    </p>
+                  )}
+                  
+                  {/* Base Price Warning (NON-BLOCKING) */}
+                  {basePriceWarning && !basePriceError && (
+                    <div className="flex items-start gap-2 mt-2 text-sm text-yellow-600 bg-yellow-50 border border-yellow-200 rounded-lg p-2">
+                      <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+                      <span>{basePriceWarning}</span>
+                    </div>
+                  )}
+                  
+                  {/* Base Price Error (HARD BLOCK) */}
+                  {basePriceError && (
+                    <div className="flex items-start gap-2 mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
+                      <XCircle size={16} className="flex-shrink-0 mt-0.5" />
+                      <span>{basePriceError}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div>

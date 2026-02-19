@@ -16,6 +16,24 @@ export interface MatchConfig {
   maxSquad: number;
 }
 
+/**
+ * Match Settings - SINGLE SOURCE OF TRUTH for purse intelligence
+ * Computed on backend during match creation
+ * Becomes IMMUTABLE after first team registers
+ */
+export interface MatchSettings {
+  pursePerTeam: number;
+  playersPerTeam: number;
+  numberOfTeams: number;
+  avgPlayerValue: number;
+  maxBasePrice: number;
+  recommendedMinBase: number;
+  isLocked: boolean;
+  lockedAt?: string;
+  lockedReason?: string;
+  createdAt?: string;
+}
+
 export interface ValidationResult {
   valid: boolean;
   registeredTeams: number;
@@ -78,6 +96,150 @@ export const subscribeToMatchConfig = (
     console.error('❌ Failed to subscribe to match config:', error);
     if (onError) onError(error as Error);
     return () => {};
+  }
+};
+
+/**
+ * Subscribe to real-time matchSettings updates (Purse Intelligence)
+ * These values are computed on backend and become immutable after first team registers
+ * FALLBACK: If matchSettings doesn't exist, derive from existing match fields
+ */
+export const subscribeToMatchSettings = (
+  matchId: string,
+  onSettingsUpdate: (settings: MatchSettings | null) => void,
+  onError?: (error: Error) => void
+): (() => void) => {
+  try {
+    const matchRef = doc(db, 'matches', matchId);
+    
+    const unsubscribe = onSnapshot(
+      matchRef,
+      (docSnapshot) => {
+        if (docSnapshot.exists()) {
+          const matchData = docSnapshot.data();
+          const settingsData = matchData.matchSettings;
+          
+          if (settingsData) {
+            // Use existing matchSettings from Firestore
+            const settings: MatchSettings = {
+              pursePerTeam: settingsData.pursePerTeam || 10000000,
+              playersPerTeam: settingsData.playersPerTeam || 11,
+              numberOfTeams: settingsData.numberOfTeams || 8,
+              avgPlayerValue: settingsData.avgPlayerValue || 0,
+              maxBasePrice: settingsData.maxBasePrice || 0,
+              recommendedMinBase: settingsData.recommendedMinBase || 0,
+              isLocked: settingsData.isLocked || false,
+              lockedAt: settingsData.lockedAt,
+              lockedReason: settingsData.lockedReason,
+              createdAt: settingsData.createdAt,
+            };
+            
+            console.log('🔄 Match settings updated:', settings);
+            onSettingsUpdate(settings);
+          } else {
+            // FALLBACK: Derive matchSettings from existing match fields
+            console.log('⚠️ No matchSettings found - computing from match fields...');
+            
+            const pursePerTeam = matchData.baseBudgetPerTeam || matchData.config?.totalBudget || 10000000;
+            const playersPerTeam = matchData.maxPlayersPerTeam || matchData.config?.squadSize?.max || 11;
+            const numberOfTeams = matchData.maxTeams || matchData.config?.maxTeams || 8;
+            
+            // Compute derived values (same formula as backend)
+            const avgPlayerValue = Math.floor(pursePerTeam / playersPerTeam);
+            const maxBasePrice = Math.floor(avgPlayerValue * 0.40);
+            const recommendedMinBase = Math.floor(avgPlayerValue * 0.05);
+            
+            const derivedSettings: MatchSettings = {
+              pursePerTeam,
+              playersPerTeam,
+              numberOfTeams,
+              avgPlayerValue,
+              maxBasePrice,
+              recommendedMinBase,
+              isLocked: false,
+              lockedAt: undefined,
+              lockedReason: undefined,
+              createdAt: matchData.createdAt,
+            };
+            
+            console.log('✅ Computed matchSettings from match fields:', derivedSettings);
+            onSettingsUpdate(derivedSettings);
+          }
+        }
+      },
+      (error) => {
+        console.error('❌ Error subscribing to match settings:', error);
+        if (onError) onError(error);
+      }
+    );
+    
+    return unsubscribe;
+  } catch (error) {
+    console.error('❌ Failed to subscribe to match settings:', error);
+    if (onError) onError(error as Error);
+    return () => {};
+  }
+};
+
+/**
+ * Get matchSettings (one-time fetch)
+ * FALLBACK: If matchSettings doesn't exist, derive from existing match fields
+ */
+export const getMatchSettings = async (matchId: string): Promise<MatchSettings | null> => {
+  try {
+    const matchRef = doc(db, 'matches', matchId);
+    const docSnapshot = await getDoc(matchRef);
+    
+    if (!docSnapshot.exists()) {
+      throw new Error('Match not found');
+    }
+    
+    const matchData = docSnapshot.data();
+    const settingsData = matchData.matchSettings;
+    
+    if (settingsData) {
+      // Use existing matchSettings from Firestore
+      return {
+        pursePerTeam: settingsData.pursePerTeam || 10000000,
+        playersPerTeam: settingsData.playersPerTeam || 11,
+        numberOfTeams: settingsData.numberOfTeams || 8,
+        avgPlayerValue: settingsData.avgPlayerValue || 0,
+        maxBasePrice: settingsData.maxBasePrice || 0,
+        recommendedMinBase: settingsData.recommendedMinBase || 0,
+        isLocked: settingsData.isLocked || false,
+        lockedAt: settingsData.lockedAt,
+        lockedReason: settingsData.lockedReason,
+        createdAt: settingsData.createdAt,
+      };
+    }
+    
+    // FALLBACK: Derive matchSettings from existing match fields
+    console.log('⚠️ No matchSettings found - computing from match fields...');
+    
+    const pursePerTeam = matchData.baseBudgetPerTeam || matchData.config?.totalBudget || 10000000;
+    const playersPerTeam = matchData.maxPlayersPerTeam || matchData.config?.squadSize?.max || 11;
+    const numberOfTeams = matchData.maxTeams || matchData.config?.maxTeams || 8;
+    
+    // Compute derived values (same formula as backend)
+    const avgPlayerValue = Math.floor(pursePerTeam / playersPerTeam);
+    const maxBasePrice = Math.floor(avgPlayerValue * 0.40);
+    const recommendedMinBase = Math.floor(avgPlayerValue * 0.05);
+    
+    return {
+      pursePerTeam,
+      playersPerTeam,
+      numberOfTeams,
+      avgPlayerValue,
+      maxBasePrice,
+      recommendedMinBase,
+      isLocked: false,
+      lockedAt: undefined,
+      lockedReason: undefined,
+      createdAt: matchData.createdAt,
+    };
+  } catch (error) {
+    console.error('❌ Error fetching match settings:', error);
+    throw error;
   }
 };
 

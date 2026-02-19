@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { LiveAuctionRoom } from '../ui/LiveAuctionRoom';
 import { AuctioneerLiveRoom } from '../ui/AuctioneerLiveRoom';
 import { SpectatorLiveRoom } from '../ui/SpectatorLiveRoom';
 import { CloseAuctionModal } from '../modals/CloseAuctionModal';
+import { PreAuctionValidationModal } from '../modals/PreAuctionValidationModal';
 import { SoldCelebration } from '../ui/SoldCelebration';
 import { useAuctioneerAudio } from '../../services/useAuctioneerAudio';
 import { useAudioListener } from '../../services/useAudioListener';
@@ -60,8 +61,49 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
+
+  /**
+   * CRITICAL: Filter players to only include APPROVED players
+   * This is the SINGLE SOURCE OF TRUTH for auction-eligible players.
+   * A declined player must NEVER enter the auction flow.
+   * 
+   * Approved players = approvalStatus === 'accepted' OR approvalStatus is undefined/null (backwards compatibility)
+   */
+  const approvedPlayers = useMemo(() => {
+    return players.filter(p => 
+      p.approvalStatus === 'accepted' || 
+      p.approvalStatus === undefined || 
+      p.approvalStatus === null
+    );
+  }, [players]);
+
+  /**
+   * CRITICAL: Filter teams to only include APPROVED teams
+   * This is the SINGLE SOURCE OF TRUTH for auction-eligible teams.
+   * A declined team must NEVER enter the auction flow.
+   * 
+   * Approved teams = approvalStatus === 'accepted' OR approvalStatus is undefined/null (backwards compatibility)
+   */
+  const approvedTeams = useMemo(() => {
+    return teams.filter(t => 
+      t.approvalStatus === 'accepted' || 
+      t.approvalStatus === undefined || 
+      t.approvalStatus === null
+    );
+  }, [teams]);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [soldAnimationData, setSoldAnimationData] = useState<{ player: Player; team: Team; price: number } | null>(null);
+  const [showValidationModal, setShowValidationModal] = useState(false);
+  const [validationData, setValidationData] = useState<{
+    acceptedTeams: number;
+    maxTeams: number;
+    acceptedPlayers: number;
+    requiredPlayers: number;
+    canStart: boolean;
+    errors: string[];
+    warnings: string[];
+  } | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
 
   // Refs for real-time updates
   const playersRef = useRef<Player[]>([]);
@@ -127,10 +169,11 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [seasonId]); // Re-attach if seasonId changes
 
-  // Keep playersRef in sync with players state
+  // Keep playersRef in sync with APPROVED players state
+  // CRITICAL: Use approvedPlayers (not raw players) so that declined players are NEVER in the refs
   useEffect(() => {
-    playersRef.current = players;
-  }, [players]);
+    playersRef.current = approvedPlayers;
+  }, [approvedPlayers]);
 
   // Keep teamsRef in sync with teams state
   useEffect(() => {
@@ -240,15 +283,16 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
       auctionState?.status === LiveAuctionStatus.LIVE &&
       !auctionState?.currentPlayerId &&
       !auctionState?.biddingActive &&
-      players.length > 0 &&
+      approvedPlayers.length > 0 &&
       !isAutoAdvancingRef.current;
     
     if (!isStuckState) return;
     
-    // Check if there are any available players left
-    const availablePlayers = players.filter(p => p.status === 'AVAILABLE' || p.status === 'UNSOLD');
-    if (availablePlayers.length === 0) {
-      console.log('✅ No available players left - auction complete');
+    // Check if there are any available APPROVED players left
+    // CRITICAL: Only select from approvedPlayers (never from raw players)
+    const availableApprovedPlayers = approvedPlayers.filter(p => p.status === 'AVAILABLE' || p.status === 'UNSOLD');
+    if (availableApprovedPlayers.length === 0) {
+      console.log('✅ No available approved players left - auction complete');
       return;
     }
     
@@ -286,7 +330,7 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     }, 2000); // 2 second delay to ensure initialization is complete
     
     return () => clearTimeout(autoAdvanceTimeout);
-  }, [auctionState?.status, auctionState?.currentPlayerId, auctionState?.biddingActive, players.length, userRole, seasonId]);
+  }, [auctionState?.status, auctionState?.currentPlayerId, auctionState?.biddingActive, approvedPlayers.length, userRole, seasonId]);
 
   /**
    * Normalize team data to ensure consistent structure
@@ -859,10 +903,23 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
         
         playersUpdateTimeout = setTimeout(() => {
           console.log('🔥 Players live update (debounced):', updatedPlayers.length);
+          
+          /**
+           * CRITICAL FIX: Filter out DECLINED players BEFORE any processing
+           * A declined player must NEVER be considered for LIVE status.
+           * This is the FIRST line of defense.
+           */
+          const approvedUpdatedPlayers = updatedPlayers.filter((p: any) => 
+            p.approvalStatus === 'accepted' || 
+            p.approvalStatus === undefined || 
+            p.approvalStatus === null
+          );
+          
+          // Update state with ALL players (for display purposes like total counts)
           setPlayers(updatedPlayers);
 
-          // CRITICAL: Find ALL players with LIVE status to detect conflicts
-          const allLivePlayers = updatedPlayers.filter((p: any) => p.status === 'LIVE');
+          // CRITICAL: Find ALL players with LIVE status from APPROVED players only
+          const allLivePlayers = approvedUpdatedPlayers.filter((p: any) => p.status === 'LIVE');
           
           if (allLivePlayers.length > 1) {
             console.error('🚨 CRITICAL: Multiple players with LIVE status detected!', 
@@ -872,6 +929,12 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
           
           // Find live player - if multiple exist, prefer the one matching currentPlayerId (if set)
           let livePlayer = allLivePlayers.length > 0 ? allLivePlayers[0] : null;
+          
+          // CRITICAL GUARD: Verify livePlayer is APPROVED before proceeding
+          if (livePlayer && livePlayer.approvalStatus === 'declined') {
+            console.error('🚫 BLOCKING: Live player is DECLINED - skipping:', livePlayer.name);
+            livePlayer = null;
+          }
           
           if (allLivePlayers.length > 1 && auctionStateRef.current?.currentPlayerId) {
             // Multiple LIVE players detected - prefer the current one
@@ -1076,9 +1139,37 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
    * Action Handlers
    */
 
-  // Admin: Start auction
+  // Admin: Start auction - with pre-validation
   const handleStartAuction = useCallback(async () => {
     try {
+      setIsValidating(true);
+      // Fetch validation data before starting
+      const response = await apiService.get(`/matches/${seasonId}/pre-auction-validation`);
+      const validation = response.data || response;
+      setValidationData(validation);
+      setShowValidationModal(true);
+    } catch (error) {
+      console.error('Failed to validate auction:', error);
+      // If validation fails, show error but allow override attempt
+      setValidationData({
+        acceptedTeams: 0,
+        maxTeams: matchConfig?.maxTeams || 8,
+        acceptedPlayers: 0,
+        requiredPlayers: (matchConfig?.maxTeams || 8) * (matchConfig?.maxPlayersPerTeam || 15),
+        canStart: false,
+        errors: ['Failed to fetch validation data. Please try again.'],
+        warnings: []
+      });
+      setShowValidationModal(true);
+    } finally {
+      setIsValidating(false);
+    }
+  }, [seasonId, matchConfig]);
+
+  // Admin: Confirm start auction after validation
+  const handleConfirmStartAuction = useCallback(async () => {
+    try {
+      setShowValidationModal(false);
       await apiService.post('/api/auction/start', { seasonId });
     } catch (error) {
       console.error('Failed to start auction:', error);
@@ -1300,14 +1391,41 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
         remainingPlayers={remainingPlayers}
         unsoldPlayers={unsoldCount}
       />
+
+      {/* Pre-Auction Validation Modal */}
+      {validationData && (
+        <PreAuctionValidationModal
+          isOpen={showValidationModal}
+          onClose={() => setShowValidationModal(false)}
+          onConfirm={validationData.canStart ? handleConfirmStartAuction : undefined}
+          onNavigateToPlayers={() => {
+            setShowValidationModal(false);
+            // Navigate to players page - caller should handle this
+            window.location.href = `/players?matchId=${seasonId}`;
+          }}
+          onNavigateToTeams={() => {
+            setShowValidationModal(false);
+            // Navigate to teams page - caller should handle this
+            window.location.href = `/teams?matchId=${seasonId}`;
+          }}
+          acceptedTeams={validationData.acceptedTeams}
+          maxTeams={validationData.maxTeams}
+          acceptedPlayers={validationData.acceptedPlayers}
+          requiredPlayers={validationData.requiredPlayers}
+          canStart={validationData.canStart}
+          errors={validationData.errors}
+          warnings={validationData.warnings}
+        />
+      )}
       
       {isAuctioneer ? (
         // Auctioneer Layout - Full controls
+        // CRITICAL: Pass approvedPlayers and approvedTeams (not raw arrays) to prevent declined entries from appearing
         <AuctioneerLiveRoom
           auctionState={auctionState}
           currentPlayer={currentPlayer}
-          allPlayers={players}
-          teams={teams}
+          allPlayers={approvedPlayers}
+          teams={approvedTeams}
           userId={userId}
           userRole={userRole}
           remainingSeconds={remainingSeconds}
@@ -1327,11 +1445,12 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
         />
       ) : (
         // Spectator Layout - Players, Team Reps, Guests
+        // CRITICAL: Pass approvedPlayers and approvedTeams (not raw arrays) to prevent declined entries from appearing
         <SpectatorLiveRoom
           auctionState={auctionState}
           currentPlayer={currentPlayer}
-          allPlayers={players}
-          teams={teams}
+          allPlayers={approvedPlayers}
+          teams={approvedTeams}
           userId={userId}
           userRole={userRole}
           remainingSeconds={remainingSeconds}

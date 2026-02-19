@@ -43,7 +43,13 @@ export const GuestPlayersPage: React.FC<GuestPlayersPageProps> = ({ onClose, cur
 
       if (playersRes.ok) {
         const playersData = await playersRes.json();
-        setPlayers(playersData.data || []);
+        // CRITICAL: Filter out declined players - they should NOT appear on main Players Page
+        // Declined players are only visible in Admin's Applied Players / Review section
+        const allPlayers = playersData.data || [];
+        const eligiblePlayers = allPlayers.filter((p: Player) => 
+          p.approvalStatus !== 'declined'
+        );
+        setPlayers(eligiblePlayers);
       }
 
       if (teamsRes.ok) {

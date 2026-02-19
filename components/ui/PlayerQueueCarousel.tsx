@@ -19,21 +19,21 @@ const NEON_CAROUSEL_STYLES = `
   @keyframes neonCyanGlow {
     0%, 100% { 
       box-shadow: 
-        inset 0 0 0 2px rgba(245, 158, 11, 0.7),
-        0 0 30px rgba(245, 158, 11, 0.35),
-        0 0 60px rgba(245, 158, 11, 0.18);
+        inset 0 0 0 2px rgba(255, 0, 102, 0.7),
+        0 0 30px rgba(255, 0, 102, 0.35),
+        0 0 60px rgba(255, 0, 102, 0.18);
     }
     50% { 
       box-shadow: 
-        inset 0 0 0 2.5px rgba(245, 158, 11, 1),
-        0 0 40px rgba(245, 158, 11, 0.5),
-        0 0 80px rgba(245, 158, 11, 0.25);
+        inset 0 0 0 2.5px rgba(255, 0, 102, 1),
+        0 0 40px rgba(255, 0, 102, 0.5),
+        0 0 80px rgba(255, 0, 102, 0.25);
     }
   }
 
   @keyframes neonSideEdge {
-    0%, 100% { box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.35); }
-    50% { box-shadow: inset 0 0 0 1.5px rgba(245, 158, 11, 0.55); }
+    0%, 100% { box-shadow: inset 0 0 0 1px rgba(255, 0, 102, 0.35); }
+    50% { box-shadow: inset 0 0 0 1.5px rgba(255, 0, 102, 0.55); }
   }
 
   @keyframes neonShineSweep {
@@ -43,61 +43,61 @@ const NEON_CAROUSEL_STYLES = `
   }
 
   @keyframes logoNeonGlow {
-    0%, 100% { filter: drop-shadow(0 0 5px rgba(245, 158, 11, 0.5)); }
-    50% { filter: drop-shadow(0 0 15px rgba(245, 158, 11, 0.9)) drop-shadow(0 0 30px rgba(245, 158, 11, 0.6)); }
+    0%, 100% { filter: drop-shadow(0 0 5px rgba(255, 0, 102, 0.5)); }
+    50% { filter: drop-shadow(0 0 15px rgba(255, 0, 102, 0.9)) drop-shadow(0 0 30px rgba(255, 0, 102, 0.6)); }
   }
 
-  @keyframes goldHudGlow {
+  @keyframes pinkHudGlow {
     0%, 100% { 
       box-shadow: 
-        inset 0 0 0 1.5px rgba(255, 200, 0, 0.6),
-        0 0 20px rgba(255, 200, 0, 0.4),
-        0 0 40px rgba(255, 160, 0, 0.2);
+        inset 0 0 0 1.5px rgba(255, 0, 102, 0.6),
+        0 0 20px rgba(255, 0, 102, 0.4),
+        0 0 40px rgba(255, 0, 102, 0.2);
     }
     50% { 
       box-shadow: 
-        inset 0 0 0 2px rgba(255, 220, 50, 1),
-        0 0 30px rgba(255, 200, 0, 0.6),
-        0 0 60px rgba(255, 160, 0, 0.3);
+        inset 0 0 0 2px rgba(255, 0, 102, 1),
+        0 0 30px rgba(255, 0, 102, 0.6),
+        0 0 60px rgba(255, 0, 102, 0.3);
     }
   }
 
   @keyframes cyanHudGlow {
     0%, 100% { 
       box-shadow: 
-        inset 0 0 0 1.5px rgba(245, 158, 11, 0.65),
-        0 0 20px rgba(245, 158, 11, 0.4),
-        0 0 40px rgba(245, 158, 11, 0.2);
+        inset 0 0 0 1.5px rgba(255, 0, 102, 0.65),
+        0 0 20px rgba(255, 0, 102, 0.4),
+        0 0 40px rgba(255, 0, 102, 0.2);
     }
     50% { 
       box-shadow: 
-        inset 0 0 0 2px rgba(245, 158, 11, 1),
-        0 0 30px rgba(245, 158, 11, 0.6),
-        0 0 60px rgba(245, 158, 11, 0.3);
+        inset 0 0 0 2px rgba(255, 0, 102, 1),
+        0 0 30px rgba(255, 0, 102, 0.6),
+        0 0 60px rgba(255, 0, 102, 0.3);
     }
   }
 
-  @keyframes brightCyanPulse {
+  @keyframes brightPinkPulse {
     0%, 100% { 
       box-shadow: 
-        inset 0 0 0 1.5px rgba(245, 158, 11, 0.8),
-        0 0 25px rgba(245, 158, 11, 0.5),
-        0 0 50px rgba(245, 158, 11, 0.3);
+        inset 0 0 0 1.5px rgba(255, 0, 102, 0.8),
+        0 0 25px rgba(255, 0, 102, 0.5),
+        0 0 50px rgba(255, 0, 102, 0.3);
     }
     50% { 
       box-shadow: 
-        inset 0 0 0 2.5px rgba(245, 158, 11, 1),
-        0 0 40px rgba(245, 158, 11, 0.8),
-        0 0 80px rgba(245, 158, 11, 0.5);
+        inset 0 0 0 2.5px rgba(255, 0, 102, 1),
+        0 0 40px rgba(255, 0, 102, 0.8),
+        0 0 80px rgba(255, 0, 102, 0.5);
     }
   }
 
   .neon-center-card { animation: neonCyanGlow 2.5s ease-in-out infinite; }
   .neon-side-card { animation: neonSideEdge 2s ease-in-out infinite; }
   .neon-logo { animation: logoNeonGlow 2.5s ease-in-out infinite; }
-  .hud-card-gold { animation: goldHudGlow 2.5s ease-in-out infinite; }
+  .hud-card-pink { animation: pinkHudGlow 2.5s ease-in-out infinite; }
   .hud-card-cyan { animation: cyanHudGlow 2.5s ease-in-out infinite; }
-  .hud-card-pulse { animation: brightCyanPulse 1.5s ease-in-out infinite; }
+  .hud-card-pulse { animation: brightPinkPulse 1.5s ease-in-out infinite; }
 
   .carousel-stage {
     background: radial-gradient(ellipse at center, 
@@ -144,8 +144,16 @@ export const PlayerQueueCarousel: React.FC<PlayerQueueCarouselProps> = ({
 
   // Build 5-slot carousel array (ALWAYS 5 cards visible)
   const carouselSlots = useMemo(() => {
+    // CRITICAL GUARD: Filter to only APPROVED players before building carousel
+    // A declined player must NEVER appear in the auction carousel
+    const approvedPlayersOnly = allPlayers.filter(p => 
+      p.approvalStatus === 'accepted' || 
+      p.approvalStatus === undefined || 
+      p.approvalStatus === null
+    );
+    
     // Get available players for carousel
-    const availablePlayers = allPlayers.length > 0 ? allPlayers : [];
+    const availablePlayers = approvedPlayersOnly.length > 0 ? approvedPlayersOnly : [];
     
     // Find center player index
     const centerIndex = currentPlayer 
@@ -187,10 +195,14 @@ export const PlayerQueueCarousel: React.FC<PlayerQueueCarouselProps> = ({
   }, [allPlayers, currentPlayer]);
   
   // Get sold/queue counts for status display
+  // CRITICAL: Only count APPROVED players
   const { soldCount, queueCount } = useMemo(() => {
     let sold = 0;
     let queue = 0;
     allPlayers.forEach(player => {
+      // Skip declined players entirely
+      if (player.approvalStatus === 'declined') return;
+      
       if (player.status === 'SOLD') sold++;
       else if (player.status !== 'SOLD' && player.id !== currentPlayer?.id) queue++;
     });
@@ -239,7 +251,7 @@ export const PlayerQueueCarousel: React.FC<PlayerQueueCarouselProps> = ({
       <div className="absolute inset-0 pointer-events-none">
         <div 
           className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[200px] opacity-15"
-          style={{ background: 'radial-gradient(ellipse at top, rgba(245, 158, 11, 0.25) 0%, transparent 70%)' }}
+          style={{ background: 'radial-gradient(ellipse at top, rgba(255, 0, 102, 0.25) 0%, transparent 70%)' }}
         />
       </div>
 
@@ -284,15 +296,15 @@ export const PlayerQueueCarousel: React.FC<PlayerQueueCarouselProps> = ({
       {/* 3 SEPARATE HUD CARDS - BELOW PLAYER CAROUSEL */}
       <div className="absolute w-full flex items-center justify-center gap-8" style={{ top: '350px' }}>
         
-        {/* CARD 1: BASE PRICE - Gold HUD Style */}
+        {/* CARD 1: BASE PRICE - Pink HUD Style */}
         <div 
-          className="hud-card-gold relative overflow-hidden"
+          className="hud-card-pink relative overflow-hidden"
           style={{
             width: '165px',
             height: '105px',
-            background: 'linear-gradient(135deg, rgba(20, 15, 5, 0.95) 0%, rgba(35, 25, 5, 0.95) 100%)',
+            background: 'linear-gradient(135deg, rgba(20, 5, 15, 0.95) 0%, rgba(35, 5, 25, 0.95) 100%)',
             clipPath: 'polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%)',
-            border: '1.5px solid rgba(255, 200, 0, 0.4)',
+            border: '1.5px solid rgba(255, 0, 102, 0.4)',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -300,10 +312,10 @@ export const PlayerQueueCarousel: React.FC<PlayerQueueCarouselProps> = ({
             padding: '14px'
           }}
         >
-          <span style={{ fontSize: '9px', color: 'rgba(255, 200, 0, 0.7)', fontWeight: '600', letterSpacing: '1px', textTransform: 'uppercase' }}>
+          <span style={{ fontSize: '9px', color: 'rgba(255, 0, 102, 0.7)', fontWeight: '600', letterSpacing: '1px', textTransform: 'uppercase' }}>
             BASE PRICE
           </span>
-          <span style={{ fontSize: '18px', color: '#FFD700', fontWeight: '900', marginTop: '6px', textShadow: '0 0 10px rgba(255, 200, 0, 0.6)' }}>
+          <span style={{ fontSize: '18px', color: '#FF0066', fontWeight: '900', marginTop: '6px', textShadow: '0 0 10px rgba(255, 0, 102, 0.6)' }}>
             {formatCurrency(currentPlayer?.basePrice || 0)}
           </span>
         </div>
@@ -315,10 +327,10 @@ export const PlayerQueueCarousel: React.FC<PlayerQueueCarouselProps> = ({
               src={currentTeamLogo} 
               alt={leadingTeamName} 
               className="h-12 w-auto object-contain"
-              style={{ filter: 'drop-shadow(0 0 10px rgba(245, 158, 11, 0.5))' }}
+              style={{ filter: 'drop-shadow(0 0 10px rgba(255, 0, 102, 0.5))' }}
             />
           ) : null}
-          <span style={{ fontSize: '13px', color: 'rgba(245, 158, 11, 0.9)', fontWeight: '700', letterSpacing: '0.5px', textAlign: 'center' }}>
+          <span style={{ fontSize: '13px', color: 'rgba(255, 0, 102, 0.9)', fontWeight: '700', letterSpacing: '0.5px', textAlign: 'center' }}>
             {leadingTeamName || 'NO TEAM'}
           </span>
         </div>
@@ -339,10 +351,10 @@ export const PlayerQueueCarousel: React.FC<PlayerQueueCarouselProps> = ({
             padding: '14px'
           }}
         >
-          <span style={{ fontSize: '9px', color: 'rgba(245, 158, 11, 0.8)', fontWeight: '700', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
+          <span style={{ fontSize: '9px', color: 'rgba(255, 0, 102, 0.8)', fontWeight: '700', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
             LIVE BID
           </span>
-          <span style={{ fontSize: '18px', color: '#F59E0B', fontWeight: '900', marginTop: '6px', textShadow: '0 0 15px rgba(245, 158, 11, 0.8), 0 0 30px rgba(245, 158, 11, 0.5)' }}>
+          <span style={{ fontSize: '18px', color: '#FF0066', fontWeight: '900', marginTop: '6px', textShadow: '0 0 15px rgba(255, 0, 102, 0.8), 0 0 30px rgba(255, 0, 102, 0.5)' }}>
             {formatCurrency(currentBidAmount || 0)}
           </span>
         </div>
@@ -485,7 +497,7 @@ const StageCard: React.FC<StageCardProps> = ({
         zIndex,
         transformStyle: 'preserve-3d',
         filter: isCenter 
-          ? 'drop-shadow(0px 8px 30px rgba(0,0,0,0.7)) drop-shadow(0px 0px 40px rgba(245,158,11,0.3))'
+          ? 'drop-shadow(0px 8px 30px rgba(0,0,0,0.7)) drop-shadow(0px 0px 40px rgba(255,0,102,0.3))'
           : blur > 0 
             ? `blur(${blur}px) drop-shadow(0px ${Math.abs(slotPosition) * 4}px ${Math.abs(slotPosition) * 8}px rgba(0,0,0,0.6))` 
             : 'drop-shadow(0px 4px 12px rgba(0,0,0,0.4))',
@@ -518,7 +530,7 @@ const StageCard: React.FC<StageCardProps> = ({
           <div className="absolute top-2 right-2 z-20">
             <div 
               className="px-2 py-0.5 text-[8px] font-black uppercase tracking-wider text-white"
-              style={{ background: '#F59E0B', borderRadius: '3px' }}
+              style={{ background: '#FF0066', borderRadius: '3px' }}
             >
               LIVE
             </div>
@@ -552,10 +564,10 @@ const StageCard: React.FC<StageCardProps> = ({
           <div 
             className="inline-block mt-1.5 px-2 py-0.5 text-[9px] font-bold tracking-wide"
             style={{ 
-              background: 'rgba(245, 158, 11, 0.15)', 
-              color: '#F59E0B', 
+              background: 'rgba(255, 0, 102, 0.15)', 
+              color: '#FF0066', 
               borderRadius: '2px',
-              border: '1px solid rgba(245, 158, 11, 0.3)'
+              border: '1px solid rgba(255, 0, 102, 0.3)'
             }}
           >
             {getCategoryDisplay(player.role)}

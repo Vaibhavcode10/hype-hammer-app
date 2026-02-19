@@ -241,12 +241,33 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
     };
   }, [currentUser?.email, activeMatch?.id]);
 
-  // KPIs
-  const totalTeams = teams.length;
-  const totalPlayers = players.length;
-  const soldPlayers = players.filter(p => p.status === 'SOLD').length;
-  const totalBudget = teams.reduce((acc, team) => acc + (team.budget || team.initialBudget || 0), 0);
-  const remainingBudget = teams.reduce((acc, team) => acc + (team.remainingBudget || team.budget || team.initialBudget || 0), 0);
+  /**
+   * CRITICAL: Filter to only APPROVED players and teams for auction KPIs
+   * Approved = approvalStatus === 'accepted' OR undefined/null (backwards compatibility)
+   * This ensures guest dashboard shows REAL auction pool counts
+   */
+  const approvedPlayers = useMemo(() => {
+    return players.filter(p => 
+      p.approvalStatus === 'accepted' || 
+      p.approvalStatus === undefined || 
+      p.approvalStatus === null
+    );
+  }, [players]);
+
+  const approvedTeams = useMemo(() => {
+    return teams.filter(t => 
+      t.approvalStatus === 'accepted' || 
+      t.approvalStatus === undefined || 
+      t.approvalStatus === null
+    );
+  }, [teams]);
+
+  // KPIs - Use approved-only counts for real auction data
+  const totalTeams = approvedTeams.length;
+  const totalPlayers = approvedPlayers.length;
+  const soldPlayers = approvedPlayers.filter(p => p.status === 'SOLD').length;
+  const totalBudget = approvedTeams.reduce((acc, team) => acc + (team.budget || team.initialBudget || 0), 0);
+  const remainingBudget = approvedTeams.reduce((acc, team) => acc + (team.remainingBudget || team.budget || team.initialBudget || 0), 0);
   const spentBudget = totalBudget - remainingBudget;
 
   // ─────────────────────────────────────── RENDER ────────────────────────────
@@ -764,7 +785,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                         <div className="rounded-3xl overflow-hidden relative h-full" style={{ minHeight: '320px' }}>
                           {currentBiddingPlayer && liveAuctionStatus === 'LIVE' ? (
                             <>
-                              <div className="absolute inset-0 bg-cover bg-center bg-no-repeat" style={{ backgroundImage: currentBiddingPlayer.imageUrl ? `url(${currentBiddingPlayer.imageUrl})` : 'linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(217, 119, 6, 0.3))' }} />
+                              <div className="absolute inset-0 bg-cover bg-center bg-no-repeat" style={{ backgroundImage: currentBiddingPlayer.imageUrl ? `url(${currentBiddingPlayer.imageUrl})` : 'linear-gradient(135deg, rgba(255, 0, 102, 0.3), rgba(200, 0, 80, 0.3))' }} />
                               <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
                               <div className="relative h-full flex flex-col justify-between p-5 z-10">
                                 <div className="flex justify-between items-start">
@@ -774,21 +795,21 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                                   </div>
                                 </div>
                                 <div>
-                                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/80 border border-amber-400/50 mb-2">
+                                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-pink-500/80 border border-pink-400/50 mb-2">
                                     <span className="text-white text-[10px] font-bold tracking-wider uppercase">{currentBiddingPlayer.role || 'PLAYER'}</span>
                                   </div>
                                   <h2 className="text-xl font-black text-white mb-1" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>{currentBiddingPlayer.name}</h2>
-                                  <p className="text-amber-300 text-xs font-medium">Base Price: ₹{((currentBiddingPlayer.basePrice || 0) / 100000).toFixed(1)}L</p>
+                                  <p className="text-pink-300 text-xs font-medium">Base Price: ₹{((currentBiddingPlayer.basePrice || 0) / 100000).toFixed(1)}L</p>
                                 </div>
                               </div>
                             </>
                           ) : (
-                            <div className="h-full glass-card rounded-3xl flex flex-col items-center justify-center p-6 border border-amber-500/20" style={{ background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(217, 119, 6, 0.05))' }}>
-                              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-amber-500/20 to-amber-600/10 flex items-center justify-center mb-4 border border-amber-500/30">
-                                <Activity size={36} className="text-amber-400/60" />
+                            <div className="h-full glass-card rounded-3xl flex flex-col items-center justify-center p-6 border border-pink-500/20" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.08), rgba(200, 0, 80, 0.05))' }}>
+                              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-pink-500/20 to-pink-600/10 flex items-center justify-center mb-4 border border-pink-500/30">
+                                <Activity size={36} className="text-pink-400/60" />
                               </div>
                               <h3 className="text-lg font-bold text-white mb-2">{liveAuctionStatus === 'ENDED' ? 'Auction Ended' : 'Waiting for Bidding'}</h3>
-                              <p className="text-amber-400/60 text-sm text-center">{liveAuctionStatus === 'ENDED' ? 'All players have been auctioned' : liveAuctionStatus === 'LIVE' ? 'Next player loading...' : 'Auction has not started yet'}</p>
+                              <p className="text-pink-400/60 text-sm text-center">{liveAuctionStatus === 'ENDED' ? 'All players have been auctioned' : liveAuctionStatus === 'LIVE' ? 'Next player loading...' : 'Auction has not started yet'}</p>
                             </div>
                           )}
                         </div>
@@ -801,7 +822,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                             <h3 className="text-lg font-bold text-white flex items-center gap-2">
                               <Users size={18} className="text-pink-400" />
                               Registered Teams
-                              <span className="text-pink-400/60 text-sm font-normal">({teams.length})</span>
+                              <span className="text-pink-400/60 text-sm font-normal">({approvedTeams.length})</span>
                             </h3>
                             <button
                               onClick={() => setActiveSection('teams')}
@@ -811,9 +832,9 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                             </button>
                           </div>
 
-                          {teams.length > 0 ? (
+                          {approvedTeams.length > 0 ? (
                             <div className="grid grid-cols-2 gap-4">
-                              {teams.slice(0, 4).map((team) => (
+                              {approvedTeams.slice(0, 4).map((team) => (
                                 <div key={team.id} className="team-card glass-card rounded-2xl p-3 transition-all duration-300 cursor-pointer group border border-pink-500/10 hover:border-pink-500/30">
                                   <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-pink-500/20 to-red-600/20 flex items-center justify-center overflow-hidden border border-pink-500/20 flex-shrink-0">
@@ -896,7 +917,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                             </div>
                             Registered Players
                             <span className="text-pink-400/60 text-sm font-normal ml-2">
-                              ({players.length} total)
+                              ({approvedPlayers.length} total)
                             </span>
                           </h3>
                           <button
@@ -908,9 +929,9 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                           </button>
                         </div>
 
-                        {players.length > 0 ? (
+                        {approvedPlayers.length > 0 ? (
                           <div className="grid grid-cols-6 gap-4">
-                            {players.slice(0, 12).map((player, idx) => (
+                            {approvedPlayers.slice(0, 12).map((player, idx) => (
                               <div key={player.id || idx} className="player-card glass-card rounded-2xl p-4 transition-all duration-300 cursor-pointer group text-center">
                                 <div className="relative w-20 h-20 mx-auto mb-3">
                                   <div className="w-full h-full rounded-full bg-gradient-to-br from-pink-500/20 to-red-600/20 flex items-center justify-center overflow-hidden border-2 border-pink-500/30 group-hover:border-pink-500/60 transition-all">

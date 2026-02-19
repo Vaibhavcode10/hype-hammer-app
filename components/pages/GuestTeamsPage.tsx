@@ -36,7 +36,14 @@ export const GuestTeamsPage: React.FC<GuestTeamsPageProps> = ({ onClose, current
 
       if (teamsRes.ok) {
         const teamsData = await teamsRes.json();
-        setTeams(teamsData.data || []);
+        // Filter out declined teams - only show accepted/pending teams to guests
+        const allTeams = teamsData.data || [];
+        const eligibleTeams = allTeams.filter((t: Team) => 
+          t.approvalStatus === 'accepted' || 
+          t.approvalStatus === undefined || 
+          t.approvalStatus === null
+        );
+        setTeams(eligibleTeams);
       }
 
       if (playersRes.ok) {
