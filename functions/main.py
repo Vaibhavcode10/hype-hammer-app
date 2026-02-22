@@ -5,13 +5,131 @@ Single Cloud Function with all routes handled via path routing
 
 from firebase_functions import https_fn, options
 from firebase_admin import credentials, firestore, initialize_app, storage
-from datetime import datetime
-from typing import Dict, Any
+from datetime import datetime, timedelta
+from typing import Dict, Any, List
 import uuid
 import json
 import traceback
 import os
+import csv
+import io
+import zipfile
+import tempfile
+import smtplib
+import random
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from werkzeug.utils import secure_filename
+
+# ====================
+# EMAIL CONFIGURATION (SMTP)
+# ====================
+# Set these via Firebase secrets:
+#   firebase functions:secrets:set EMAIL_SENDER
+#   firebase functions:secrets:set EMAIL_PASSWORD
+#
+# For Gmail:
+# 1. Enable 2FA on your Google account
+# 2. Create App Password: https://myaccount.google.com/apppasswords
+# 3. Use that 16-char password as EMAIL_PASSWORD
+EMAIL_SENDER = os.environ.get('EMAIL_SENDER', '')
+EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
+SMTP_TIMEOUT = 15  # seconds
+
+def generate_otp():
+    """Generate a 6-digit OTP"""
+    return str(random.randint(100000, 999999))
+
+def send_otp_email(to_email: str, otp: str) -> dict:
+    """
+    Send OTP email via SMTP (Gmail).
+    
+    Returns:
+        dict with 'success' (bool) and 'error' (str if failed)
+    """
+    # Validate configuration
+    if not EMAIL_SENDER or not EMAIL_PASSWORD:
+        error_msg = "Email not configured. Set EMAIL_SENDER and EMAIL_PASSWORD environment variables."
+        print(f"❌ {error_msg}")
+        return {'success': False, 'error': error_msg}
+    
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['From'] = f"HypeHammer <{EMAIL_SENDER}>"
+        msg['To'] = to_email
+        msg['Subject'] = 'Your HypeHammer Password Reset Code'
+        
+        # Plain text fallback
+        text_body = f"""
+HypeHammer - Password Reset Code
+
+Your verification code is: {otp}
+
+This code expires in 10 minutes.
+If you didn't request this, please ignore this email.
+        """
+        
+        # HTML email body
+        html_body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f5f5f5;">
+            <div style="max-width: 500px; margin: 0 auto; background: linear-gradient(135deg, #1e3a5f, #0f1729); padding: 30px; border-radius: 15px;">
+                <h1 style="color: #f472b6; text-align: center; margin-bottom: 20px;">HypeHammer</h1>
+                <h2 style="color: white; text-align: center;">Password Reset Code</h2>
+                <p style="color: #e0e0e0; text-align: center; margin-bottom: 30px;">
+                    Use this code to reset your password. It expires in 10 minutes.
+                </p>
+                <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 10px; text-align: center;">
+                    <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #f472b6;">{otp}</span>
+                </div>
+                <p style="color: #888; text-align: center; margin-top: 20px; font-size: 12px;">
+                    If you didn't request this, please ignore this email.
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg.attach(MIMEText(text_body, 'plain'))
+        msg.attach(MIMEText(html_body, 'html'))
+        
+        # Connect to Gmail SMTP with timeout
+        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=SMTP_TIMEOUT)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"✅ OTP email sent successfully to {to_email}")
+        return {'success': True, 'error': None}
+        
+    except smtplib.SMTPAuthenticationError as e:
+        error_msg = "SMTP authentication failed. Check EMAIL_SENDER and EMAIL_PASSWORD."
+        print(f"❌ {error_msg}: {str(e)}")
+        return {'success': False, 'error': error_msg}
+        
+    except smtplib.SMTPRecipientsRefused as e:
+        error_msg = f"Invalid recipient email: {to_email}"
+        print(f"❌ {error_msg}: {str(e)}")
+        return {'success': False, 'error': error_msg}
+        
+    except smtplib.SMTPException as e:
+        error_msg = f"SMTP error: {str(e)}"
+        print(f"❌ {error_msg}")
+        return {'success': False, 'error': error_msg}
+        
+    except TimeoutError:
+        error_msg = "Email server connection timed out. Please try again."
+        print(f"❌ {error_msg}")
+        return {'success': False, 'error': error_msg}
+        
+    except Exception as e:
+        error_msg = f"Failed to send email: {str(e)}"
+        print(f"❌ {error_msg}")
+        traceback.print_exc()
+        return {'success': False, 'error': error_msg}
 
 # Initialize Firebase Admin
 try:
@@ -170,11 +288,19 @@ def emit_realtime_push(collection_name: str, data: Dict):
 
 ALLOWED_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'webp'}
 ALLOWED_PDF_EXTENSIONS = {'pdf'}
+ALLOWED_VIDEO_EXTENSIONS = {'mp4', 'webm', 'mov', 'avi', 'mkv'}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 def validate_file(file, file_type: str = 'image'):
     """Validate file size and extension"""
-    allowed_extensions = ALLOWED_IMAGE_EXTENSIONS if file_type == 'image' else ALLOWED_PDF_EXTENSIONS
+    if file_type == 'image':
+        allowed_extensions = ALLOWED_IMAGE_EXTENSIONS
+    elif file_type == 'pdf':
+        allowed_extensions = ALLOWED_PDF_EXTENSIONS
+    elif file_type == 'video':
+        allowed_extensions = ALLOWED_VIDEO_EXTENSIONS
+    else:
+        allowed_extensions = ALLOWED_IMAGE_EXTENSIONS
     
     if file.content_length and file.content_length > MAX_FILE_SIZE:
         raise ValueError(f"File size exceeds {MAX_FILE_SIZE / (1024*1024)}MB limit")
@@ -187,14 +313,15 @@ def validate_file(file, file_type: str = 'image'):
     
     return filename, ext
 
-def upload_file_to_storage(file, folder: str, file_type: str = 'image') -> str:
+def upload_file_to_storage(file, folder: str, file_type: str = 'image', match_name: str = None) -> str:
     """
     Upload file to Firebase Storage and return download URL
     
     Args:
         file: Flask file object
-        folder: Storage folder (e.g., 'players/photos', 'documents')
+        folder: Storage folder (e.g., 'Players', 'Teams', 'Documents')
         file_type: 'image' or 'pdf'
+        match_name: Optional match name to use as root folder (e.g., 'WPL' -> 'WPL/Players/')
     
     Returns:
         Download URL of the uploaded file
@@ -206,7 +333,14 @@ def upload_file_to_storage(file, folder: str, file_type: str = 'image') -> str:
         # Generate unique filename with timestamp
         timestamp = int(datetime.now().timestamp() * 1000)
         unique_filename = f"{timestamp}_{uuid.uuid4().hex[:8]}.{ext}"
-        storage_path = f"{folder}/{unique_filename}"
+        
+        # Build storage path with match name if provided
+        if match_name:
+            # Sanitize match name for use as folder name
+            safe_match_name = match_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+            storage_path = f"{safe_match_name}/{folder}/{unique_filename}"
+        else:
+            storage_path = f"{folder}/{unique_filename}"
         
         # Get storage bucket
         bucket = get_storage_bucket()
@@ -234,7 +368,7 @@ def upload_file_to_storage(file, folder: str, file_type: str = 'image') -> str:
         raise Exception(f"Failed to upload file: {str(e)}")
 
 def handle_file_upload(req: https_fn.Request, folder: str, file_type: str = 'image'):
-    """Handle file upload request"""
+    """Handle file upload request with match-based folder structure"""
     try:
         if 'file' not in req.files:
             return create_response(error_response("No file provided"), 400)
@@ -244,8 +378,11 @@ def handle_file_upload(req: https_fn.Request, folder: str, file_type: str = 'ima
         if file.filename == '':
             return create_response(error_response("No file selected"), 400)
         
-        # Upload to Firebase Storage
-        download_url = upload_file_to_storage(file, folder, file_type)
+        # Get match name from query params for match-based folder structure
+        match_name = req.args.get('matchName') or req.args.get('matchId') or req.args.get('seasonName')
+        
+        # Upload to Firebase Storage with match-based folder
+        download_url = upload_file_to_storage(file, folder, file_type, match_name)
         
         response_data = {
             'success': True,
@@ -267,10 +404,13 @@ def handle_file_upload(req: https_fn.Request, folder: str, file_type: str = 'ima
 # UNIFIED API ENDPOINT
 # ====================
 
-@https_fn.on_request(cors=options.CorsOptions(
-    cors_origins=["*"],
-    cors_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-))
+@https_fn.on_request(
+    cors=options.CorsOptions(
+        cors_origins=["*"],
+        cors_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    ),
+    secrets=["EMAIL_SENDER", "EMAIL_PASSWORD"]
+)
 def auction(req: https_fn.Request) -> https_fn.Response:
     """
     Single unified API endpoint for all routes - 'auction' function
@@ -327,6 +467,12 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                 return handle_login(data)
             elif (action == 'register' or resource_id == 'register') and method == 'POST':
                 return handle_auth_register(data)
+            elif (action == 'reset-password' or resource_id == 'reset-password') and method == 'POST':
+                return handle_reset_password(data)
+            elif (action == 'check-email' or resource_id == 'check-email') and method == 'POST':
+                return handle_check_email(data)
+            elif (action == 'verify-otp' or resource_id == 'verify-otp') and method == 'POST':
+                return handle_verify_otp(data)
             elif (action == 'users' or resource_id == 'users') and method == 'GET':
                 return get_auth_users(data)
             elif (action == 'complete-profile' or resource_id == 'complete-profile') and method == 'POST':
@@ -570,26 +716,30 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                 return save_sports(data)
         
         # ===== FILE UPLOAD ROUTES =====
+        # All uploads now support match-based folder structure via ?matchName=<name> query param
+        # Example: /upload/player-photo?matchName=WPL -> uploads to WPL/Players/
         elif resource == 'upload':
             if method == 'POST':
                 upload_type = resource_id  # e.g., 'player-photo', 'team-logo', 'document', 'custom'
                 
                 if upload_type == 'player-photo':
-                    return handle_file_upload(req, 'players/photos', 'image')
+                    return handle_file_upload(req, 'Players', 'image')
                 elif upload_type == 'team-logo':
-                    return handle_file_upload(req, 'teams/logos', 'image')
+                    return handle_file_upload(req, 'Teams', 'image')
                 elif upload_type == 'profile-picture':
-                    return handle_file_upload(req, 'users/profiles', 'image')
+                    return handle_file_upload(req, 'Profiles', 'image')
+                elif upload_type == 'auctioneer-photo':
+                    return handle_file_upload(req, 'Auctioneers', 'image')
                 elif upload_type == 'auction-recording':
-                    return handle_file_upload(req, 'auctions/recordings', 'video')
+                    return handle_file_upload(req, 'Recordings', 'video')
                 elif upload_type == 'auction-replay':
-                    return handle_file_upload(req, 'auctions/replays', 'video')
+                    return handle_file_upload(req, 'Replays', 'video')
                 elif upload_type == 'document':
-                    return handle_file_upload(req, 'documents', 'pdf')
+                    return handle_file_upload(req, 'Documents', 'pdf')
                 elif upload_type == 'match-highlight':
-                    return handle_file_upload(req, 'matches/highlights', 'video')
+                    return handle_file_upload(req, 'Highlights', 'video')
                 elif upload_type == 'custom':
-                    # Custom folder upload: /upload/custom?folder=folder_name&type=image
+                    # Custom folder upload: /upload/custom?folder=folder_name&type=image&matchName=WPL
                     folder = data.get('folder') or req.args.get('folder')
                     file_type = data.get('type') or req.args.get('type', 'image')
                     if not folder:
@@ -619,6 +769,55 @@ def auction(req: https_fn.Request) -> https_fn.Response:
                 return get_state(data)
             elif method == 'POST':
                 return save_state(data)
+        
+        # ===== BACKUP & RESTORE ROUTES =====
+        elif resource == 'backups':
+            if method == 'GET' and not resource_id:
+                # GET /backups?matchId=xxx - List all backups for a match
+                return get_backups(data)
+            elif method == 'GET' and resource_id:
+                if action == 'download':
+                    # GET /backups/{id}/download - Download a backup file
+                    return download_backup(resource_id)
+                else:
+                    # GET /backups/{id} - Get backup details
+                    return get_backup(resource_id)
+            elif method == 'POST':
+                # POST /backups - Create new backup
+                return create_backup(data)
+            elif method == 'DELETE' and resource_id:
+                # DELETE /backups/{id} - Delete a backup
+                return delete_backup(resource_id, data)
+        
+        elif resource == 'backup':
+            if resource_id == 'full' and method == 'POST':
+                # POST /backup/full - Create full backup
+                data['type'] = 'full'
+                return create_backup(data)
+            elif resource_id == 'quick' and method == 'POST':
+                # POST /backup/quick - Create quick backup (JSON only)
+                data['type'] = 'quick'
+                return create_backup(data)
+            elif resource_id == 'auto-config' and method == 'GET':
+                # GET /backup/auto-config - Get auto backup config
+                return get_auto_backup_config(data)
+            elif resource_id == 'auto-config' and method == 'PUT':
+                # PUT /backup/auto-config - Update auto backup config
+                return update_auto_backup_config(data)
+            elif resource_id == 'status' and method == 'GET':
+                # GET /backup/status?matchId=xxx - Check if backup is in progress
+                return get_backup_status(data)
+        
+        elif resource == 'restore':
+            if method == 'POST' and not resource_id:
+                # POST /restore - Restore from backup
+                return restore_backup(data)
+            elif resource_id == 'preview' and method == 'POST':
+                # POST /restore/preview - Preview restore contents
+                return preview_restore(data)
+            elif resource_id == 'validate' and method == 'POST':
+                # POST /restore/validate - Validate backup file
+                return validate_backup_file(data)
         
         # 404 Not Found
         return create_response(error_response(f"Route not found: {method} /{'/'.join(path)}", 404), 404)
@@ -818,6 +1017,221 @@ def handle_auth_register(data):
         return create_response(success_response({'user': response_data}, "Registration successful"), 201)
     except Exception as e:
         return create_response(error_response(f"Registration failed: {str(e)}", 500), 500)
+
+def handle_check_email(data):
+    """Check if email exists and send OTP for password reset"""
+    try:
+        email = data.get('email', '').lower().strip()
+        
+        if not email:
+            return create_response(error_response("Email required", 400), 400)
+        
+        print(f"🔍 Checking if email exists: {email}")
+        
+        # Check all role-specific collections
+        collections = ['auctioneers', 'teams', 'players', 'guests', 'matches']
+        found_collection = None
+        
+        for collection_name in collections:
+            try:
+                docs = list(get_db().collection(collection_name).where('email', '==', email).stream())
+                
+                # For matches collection, also check adminEmail and organizerEmail fields
+                if collection_name == 'matches' and not docs:
+                    admin_docs = list(get_db().collection(collection_name).where('adminEmail', '==', email).stream())
+                    org_docs = list(get_db().collection(collection_name).where('organizerEmail', '==', email).stream())
+                    docs = admin_docs + org_docs
+                
+                if docs:
+                    found_collection = collection_name
+                    break
+                    
+            except Exception as e:
+                print(f"Error checking {collection_name}: {e}")
+                continue
+        
+        if not found_collection:
+            print(f"❌ Email not found: {email}")
+            return create_response(error_response("No account found with this email address", 404), 404)
+        
+        # Generate OTP
+        otp = generate_otp()
+        expiry = datetime.now() + timedelta(minutes=10)
+        
+        # Store OTP in Firestore
+        otp_data = {
+            'email': email,
+            'otp': otp,
+            'expiresAt': expiry.isoformat(),
+            'createdAt': datetime.now().isoformat(),
+            'used': False
+        }
+        get_db().collection('password_reset_otps').document(email.replace('@', '_at_').replace('.', '_dot_')).set(otp_data)
+        
+        # Send OTP email
+        email_result = send_otp_email(email, otp)
+        
+        if email_result['success']:
+            print(f"✅ OTP sent to {email}")
+            return create_response(success_response({
+                'exists': True, 
+                'collection': found_collection,
+                'otpSent': True,
+                'message': 'A 6-digit verification code has been sent to your email.'
+            }, "Verification code sent"))
+        else:
+            # Email failed - return error so user knows
+            error_msg = email_result.get('error', 'Failed to send verification email')
+            print(f"❌ Email sending failed for {email}: {error_msg}")
+            return create_response(error_response(f"Could not send verification email. {error_msg}", 500), 500)
+            
+    except Exception as e:
+        print(f"❌ Check email error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Check failed: {str(e)}", 500), 500)
+
+def handle_verify_otp(data):
+    """Verify OTP for password reset"""
+    try:
+        email = data.get('email', '').lower().strip()
+        otp = data.get('otp', '').strip()
+        
+        if not email or not otp:
+            return create_response(error_response("Email and OTP required", 400), 400)
+        
+        print(f"🔍 Verifying OTP for: {email}")
+        
+        # Get stored OTP
+        otp_doc_id = email.replace('@', '_at_').replace('.', '_dot_')
+        otp_ref = get_db().collection('password_reset_otps').document(otp_doc_id)
+        otp_doc = otp_ref.get()
+        
+        if not otp_doc.exists:
+            return create_response(error_response("No verification code found. Please request a new one.", 404), 404)
+        
+        otp_data = otp_doc.to_dict()
+        
+        # Check if already used
+        if otp_data.get('used'):
+            return create_response(error_response("This code has already been used. Please request a new one.", 400), 400)
+        
+        # Check if expired
+        expiry = datetime.fromisoformat(otp_data.get('expiresAt', '2000-01-01'))
+        if datetime.now() > expiry:
+            return create_response(error_response("Verification code has expired. Please request a new one.", 400), 400)
+        
+        # Check OTP match
+        if otp_data.get('otp') != otp:
+            return create_response(error_response("Invalid verification code. Please try again.", 400), 400)
+        
+        # Mark as verified (but not used yet - will be used when password is actually reset)
+        otp_ref.update({'verified': True, 'verifiedAt': datetime.now().isoformat()})
+        
+        print(f"✅ OTP verified for {email}")
+        return create_response(success_response({'verified': True}, "Verification successful"))
+        
+    except Exception as e:
+        print(f"❌ OTP verification error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Verification failed: {str(e)}", 500), 500)
+
+def handle_reset_password(data):
+    """Reset password for a user by email (requires verified OTP)"""
+    try:
+        email = data.get('email', '').lower().strip()
+        new_password = data.get('newPassword')
+        otp = data.get('otp', '').strip()
+        
+        if not email or not new_password:
+            return create_response(error_response("Email and new password required", 400), 400)
+        
+        if len(new_password) < 6:
+            return create_response(error_response("Password must be at least 6 characters", 400), 400)
+        
+        print(f"🔐 Password reset for email: {email}")
+        
+        # Verify OTP first
+        otp_doc_id = email.replace('@', '_at_').replace('.', '_dot_')
+        otp_ref = get_db().collection('password_reset_otps').document(otp_doc_id)
+        otp_doc = otp_ref.get()
+        
+        if otp_doc.exists:
+            otp_data = otp_doc.to_dict()
+            
+            # If OTP is provided, verify it
+            if otp:
+                if otp_data.get('used'):
+                    return create_response(error_response("This reset code has already been used.", 400), 400)
+                
+                expiry = datetime.fromisoformat(otp_data.get('expiresAt', '2000-01-01'))
+                if datetime.now() > expiry:
+                    return create_response(error_response("Reset code has expired. Please request a new one.", 400), 400)
+                
+                if otp_data.get('otp') != otp:
+                    return create_response(error_response("Invalid verification code.", 400), 400)
+            
+            # Check if OTP was verified (either just now or previously)
+            elif not otp_data.get('verified'):
+                return create_response(error_response("Please verify your email first.", 400), 400)
+        
+        # Check all role-specific collections
+        collections = ['auctioneers', 'teams', 'players', 'guests', 'matches']
+        
+        for collection_name in collections:
+            try:
+                docs = list(get_db().collection(collection_name).where('email', '==', email).stream())
+                
+                # For matches collection, also check adminEmail and organizerEmail fields
+                if collection_name == 'matches' and not docs:
+                    admin_docs = list(get_db().collection(collection_name).where('adminEmail', '==', email).stream())
+                    org_docs = list(get_db().collection(collection_name).where('organizerEmail', '==', email).stream())
+                    docs = admin_docs + org_docs
+                
+                if docs:
+                    user_doc = docs[0]
+                    doc_id = user_doc.id
+                    user_data = user_doc.to_dict()
+                    
+                    # Determine which password field to update
+                    if collection_name == 'matches':
+                        # For match documents, update organizerPassword
+                        update_data = {
+                            'organizerPassword': new_password,
+                            'updatedAt': datetime.now().isoformat()
+                        }
+                        # Also update password if it exists
+                        if 'password' in user_data:
+                            update_data['password'] = new_password
+                    else:
+                        update_data = {
+                            'password': new_password,
+                            'updatedAt': datetime.now().isoformat()
+                        }
+                    
+                    get_db().collection(collection_name).document(doc_id).update(update_data)
+                    
+                    # Mark OTP as used
+                    if otp_doc.exists:
+                        otp_ref.update({'used': True, 'usedAt': datetime.now().isoformat()})
+                    
+                    print(f"✅ Password reset successful for {email} in {collection_name}")
+                    return create_response(success_response(None, "Password reset successful"))
+                    
+            except Exception as e:
+                print(f"Error checking {collection_name}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        print(f"❌ User not found for password reset: {email}")
+        return create_response(error_response("User not found", 404), 404)
+    except Exception as e:
+        print(f"❌ Password reset error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return create_response(error_response(f"Password reset failed: {str(e)}", 500), 500)
 
 def get_auth_users(data):
     """Get all registered users from all collections"""
@@ -1307,6 +1721,33 @@ def get_match(match_id):
             return create_response(error_response("Not found", 404), 404)
         
         match_data = serialize_firestore_doc(doc)
+        
+        # Handle admin documents - transform to proper match format
+        if match_data.get('role') == 'ADMIN':
+            # Admin docs store season data - transform to match format
+            if not match_data.get('name') and match_data.get('seasonName'):
+                match_data['name'] = match_data['seasonName']
+            if not match_data.get('status'):
+                match_data['status'] = 'SETUP'
+            if match_data.get('sportType') and not match_data.get('sport'):
+                match_data['sport'] = match_data['sportType']
+            # Create default config if missing
+            if not match_data.get('config'):
+                match_data['config'] = {
+                    'baseTeamBudget': match_data.get('baseBudgetPerTeam', 10000000),
+                    'totalBudget': match_data.get('baseBudgetPerTeam', 10000000),
+                    'maxTeams': match_data.get('maxTeams', 8),
+                    'minSquad': 11,
+                    'maxSquad': match_data.get('maxPlayersPerTeam', 15),
+                    'bidIncrement': 100000,
+                }
+            # Initialize empty arrays if missing
+            if 'players' not in match_data:
+                match_data['players'] = []
+            if 'teams' not in match_data:
+                match_data['teams'] = []
+            if 'history' not in match_data:
+                match_data['history'] = []
         
         # Also fetch the live auction state if it exists
         try:
@@ -2187,6 +2628,21 @@ def handle_register_admin(data):
         
         # Create admin user in 'matches' collection
         user_id = generate_id('admin')
+        
+        # Handle organizer type - use custom text if "Other" was selected
+        organizer_type = data.get('organizerType', '')
+        if organizer_type == 'Other' and data.get('organizerTypeOther'):
+            organizer_type = data.get('organizerTypeOther')
+        
+        # Handle sport type - use custom text if "Custom" was selected
+        sport_type = data.get('sportType', '')
+        if sport_type == 'Custom' and data.get('sportTypeCustom'):
+            sport_type = data.get('sportTypeCustom')
+        
+        max_teams = data.get('maxTeams', 8)
+        max_players = data.get('maxPlayersPerTeam', 15)
+        base_budget = data.get('baseBudgetPerTeam', 10000000)
+        
         user_data = {
             'id': user_id,
             'name': data.get('fullName'),
@@ -2196,7 +2652,28 @@ def handle_register_admin(data):
             'role': 'ADMIN',
             'adminId': user_id,
             'organizationName': data.get('organizationName', ''),
-            'organizationType': data.get('organizationType', ''),
+            'organizationType': organizer_type,
+            'seasonName': data.get('seasonName', ''),
+            'sportType': sport_type,
+            'sport': sport_type,  # For consistency with match format
+            'auctionDateTime': data.get('auctionDateTime', ''),
+            'venueMode': data.get('venueMode', ''),
+            'venueLocation': data.get('venueLocation', ''),
+            'maxTeams': max_teams,
+            'maxPlayersPerTeam': max_players,
+            'baseBudgetPerTeam': base_budget,
+            'status': 'SETUP',  # Match status
+            'config': {
+                'baseTeamBudget': base_budget,
+                'totalBudget': base_budget,
+                'maxTeams': max_teams,
+                'minSquad': 11,
+                'maxSquad': max_players,
+                'bidIncrement': 100000,
+            },
+            'players': [],
+            'teams': [],
+            'history': [],
             'adminApprovalStatus': 'APPROVED',  # Auto-approve admins
             'createdAt': datetime.now().isoformat(),
             'updatedAt': datetime.now().isoformat()
@@ -3792,7 +4269,7 @@ def delete_auction(auction_id):
         return create_response(error_response(str(e)), 400)
 
 def get_sports(data):
-    """Get all sports data aggregated from Firestore"""
+    """Get all sports data aggregated from Firestore (matches collection only)"""
     try:
         sports_data = []
         
@@ -3802,8 +4279,7 @@ def get_sports(data):
         for match_doc in matches_docs:
             match_data = serialize_firestore_doc(match_doc)
             
-            # Skip admin user documents - only process actual match documents
-            # Admin documents have role='ADMIN', actual matches have sport/status fields
+            # Skip admin documents - only fetch from matches collection
             if match_data.get('role') == 'ADMIN':
                 print(f"⏭️  Skipping admin document: {match_doc.id}")
                 continue
@@ -3987,3 +4463,753 @@ def debug_seed_test_users():
         print(f"Error seeding test users: {e}")
         return create_response(error_response(f"Failed to seed users: {str(e)}", 500), 500)
 
+
+# ====================
+# BACKUP & RESTORE HANDLERS
+# ====================
+
+BACKUP_SCHEMA_VERSION = "2.0.0"  # Match-scoped backup format
+MAX_BACKUPS_TO_KEEP = 10
+
+def _check_backup_in_progress(match_id: str) -> bool:
+    """Check if a backup is currently in progress for this match"""
+    try:
+        backups = get_db().collection('backups').where('matchId', '==', match_id).where('status', '==', 'in-progress').limit(1).stream()
+        return any(True for _ in backups)
+    except:
+        return False
+
+def _check_live_auction(match_id: str) -> bool:
+    """Check if auction is currently live (blocks restore)"""
+    try:
+        doc = get_db().collection('liveAuctions').document(match_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            return data.get('status') == 'LIVE'
+        return False
+    except:
+        return False
+
+def _get_match_teams(match_id: str) -> List[Dict]:
+    """Get teams from match subcollection matches/{matchId}/teams"""
+    try:
+        # Try subcollection first
+        docs = list(get_db().collection('matches').document(match_id).collection('teams').stream())
+        if docs:
+            return [serialize_firestore_doc(doc) for doc in docs]
+        
+        # Fallback to global collection filtered by matchId
+        docs = list(get_db().collection('teams').where('matchId', '==', match_id).stream())
+        return [serialize_firestore_doc(doc) for doc in docs]
+    except Exception as e:
+        print(f"Error getting match teams: {e}")
+        return []
+
+def _get_match_players(match_id: str) -> List[Dict]:
+    """Get players from match subcollection matches/{matchId}/players"""
+    try:
+        # Try subcollection first
+        docs = list(get_db().collection('matches').document(match_id).collection('players').stream())
+        if docs:
+            return [serialize_firestore_doc(doc) for doc in docs]
+        
+        # Fallback to global collection filtered by matchId
+        docs = list(get_db().collection('players').where('matchId', '==', match_id).stream())
+        return [serialize_firestore_doc(doc) for doc in docs]
+    except Exception as e:
+        print(f"Error getting match players: {e}")
+        return []
+
+def _get_match_bids(match_id: str) -> List[Dict]:
+    """Get bids from match subcollection matches/{matchId}/bids"""
+    try:
+        # Try subcollection first
+        docs = list(get_db().collection('matches').document(match_id).collection('bids').stream())
+        if docs:
+            return [serialize_firestore_doc(doc) for doc in docs]
+        
+        # Fallback to global collection filtered by matchId
+        docs = list(get_db().collection('bids').where('matchId', '==', match_id).stream())
+        return [serialize_firestore_doc(doc) for doc in docs]
+    except Exception as e:
+        print(f"Error getting match bids: {e}")
+        return []
+
+def _create_teams_csv(teams: List[Dict]) -> str:
+    """Create clean CSV for teams with specific columns"""
+    if not teams:
+        return ""
+    
+    fieldnames = ['teamId', 'teamName', 'shortName', 'totalPurse', 'remainingPurse', 'playersBought', 'slotsLeft', 'maxPlayers', 'minPlayers', 'status']
+    
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+    writer.writeheader()
+    
+    for team in teams:
+        row = {
+            'teamId': team.get('id') or team.get('teamId', ''),
+            'teamName': team.get('name') or team.get('teamName', ''),
+            'shortName': team.get('shortName', ''),
+            'totalPurse': team.get('budget') or team.get('totalPurse', 0),
+            'remainingPurse': team.get('remainingBudget') or team.get('remainingPurse', 0),
+            'playersBought': len(team.get('players', [])) if isinstance(team.get('players'), list) else team.get('playersBought', 0),
+            'slotsLeft': team.get('slotsLeft') or (team.get('maxPlayers', 0) - len(team.get('players', []))),
+            'maxPlayers': team.get('maxPlayers', 0),
+            'minPlayers': team.get('minPlayers', 0),
+            'status': team.get('status', 'ACTIVE')
+        }
+        writer.writerow(row)
+    
+    return output.getvalue()
+
+def _create_players_csv(players: List[Dict]) -> str:
+    """Create clean CSV for players with specific columns"""
+    if not players:
+        return ""
+    
+    fieldnames = ['playerId', 'name', 'role', 'basePrice', 'soldPrice', 'soldToTeamId', 'soldToTeamName', 'status', 'category', 'age', 'battingStyle', 'bowlingStyle']
+    
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+    writer.writeheader()
+    
+    for player in players:
+        row = {
+            'playerId': player.get('id') or player.get('playerId', ''),
+            'name': player.get('name', ''),
+            'role': player.get('role') or player.get('position', ''),
+            'basePrice': player.get('basePrice', 0),
+            'soldPrice': player.get('soldPrice') or player.get('finalPrice', 0),
+            'soldToTeamId': player.get('soldTo') or player.get('teamId', ''),
+            'soldToTeamName': player.get('soldToTeamName', ''),
+            'status': player.get('status', 'PENDING'),
+            'category': player.get('category', ''),
+            'age': player.get('age', ''),
+            'battingStyle': player.get('battingStyle', ''),
+            'bowlingStyle': player.get('bowlingStyle', '')
+        }
+        writer.writerow(row)
+    
+    return output.getvalue()
+
+def _create_bids_csv(bids: List[Dict]) -> str:
+    """Create clean CSV for bids with specific columns"""
+    if not bids:
+        return ""
+    
+    fieldnames = ['bidId', 'playerId', 'playerName', 'teamId', 'teamName', 'bidAmount', 'timestamp', 'isWinning']
+    
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+    writer.writeheader()
+    
+    for bid in bids:
+        row = {
+            'bidId': bid.get('id') or bid.get('bidId', ''),
+            'playerId': bid.get('playerId', ''),
+            'playerName': bid.get('playerName', ''),
+            'teamId': bid.get('teamId', ''),
+            'teamName': bid.get('teamName', ''),
+            'bidAmount': bid.get('amount') or bid.get('bidAmount', 0),
+            'timestamp': bid.get('timestamp') or bid.get('createdAt', ''),
+            'isWinning': bid.get('isWinning', False)
+        }
+        writer.writerow(row)
+    
+    return output.getvalue()
+
+def get_backups(data):
+    """Get all backups for a match"""
+    try:
+        match_id = data.get('matchId')
+        if not match_id:
+            return create_response(error_response("matchId is required"), 400)
+        
+        # Get docs without order_by (no composite index required)
+        docs = list(get_db().collection('backups').where('matchId', '==', match_id).stream())
+        backups = serialize_firestore_docs(docs)
+        
+        # Sort by createdAt in Python
+        backups.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        
+        return create_response(success_response(backups, f"Found {len(backups)} backups"))
+    except Exception as e:
+        print(f"Error in get_backups: {e}")
+        traceback.print_exc()
+        return create_response(error_response(f"Failed to get backups: {str(e)}"), 500)
+
+def get_backup(backup_id: str):
+    """Get a specific backup by ID"""
+    try:
+        doc = get_db().collection('backups').document(backup_id).get()
+        if not doc.exists:
+            return create_response(error_response("Backup not found", 404), 404)
+        
+        return create_response(success_response(serialize_firestore_doc(doc)))
+    except Exception as e:
+        return create_response(error_response(f"Failed to get backup: {str(e)}"), 500)
+
+def create_backup(data):
+    """Create a match-scoped backup - only exports data related to this match"""
+    try:
+        match_id = data.get('matchId')
+        backup_type = data.get('type', 'full')  # 'full', 'quick', 'auto'
+        created_by = data.get('createdBy', 'system')
+        created_by_email = data.get('createdByEmail', '')
+        created_by_role = data.get('createdByRole', 'ADMIN')
+        
+        if not match_id:
+            return create_response(error_response("matchId is required"), 400)
+        
+        # Check if backup is already in progress
+        if _check_backup_in_progress(match_id):
+            return create_response(error_response("A backup is already in progress for this match"), 409)
+        
+        # Get match details
+        match_doc = get_db().collection('matches').document(match_id).get()
+        if not match_doc.exists:
+            return create_response(error_response("Match not found", 404), 404)
+        
+        match_data = serialize_firestore_doc(match_doc)
+        match_name = match_data.get('name', match_id)
+        
+        # Create backup ID and metadata
+        backup_id = f"backup_{uuid.uuid4().hex[:12]}"
+        timestamp = datetime.now()
+        date_str = timestamp.strftime('%Y%m%d_%H%M%S')
+        safe_match_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in match_name)
+        file_name = f"{safe_match_name}_Backup_{date_str}.zip"
+        
+        # Create initial backup record (in-progress)
+        backup_metadata = {
+            'id': backup_id,
+            'matchId': match_id,
+            'matchName': match_name,
+            'fileName': file_name,
+            'type': backup_type,
+            'size': 0,
+            'createdBy': created_by,
+            'createdByEmail': created_by_email,
+            'createdByRole': created_by_role,
+            'createdAt': timestamp.isoformat(),
+            'status': 'in-progress',
+            'schemaVersion': BACKUP_SCHEMA_VERSION,
+            'playersCount': 0,
+            'teamsCount': 0,
+            'bidsCount': 0
+        }
+        
+        get_db().collection('backups').document(backup_id).set(backup_metadata)
+        print(f"📦 Starting match-scoped {backup_type} backup for: {match_name}")
+        
+        try:
+            # Collect MATCH-SCOPED data only (from subcollections)
+            teams = _get_match_teams(match_id)
+            players = _get_match_players(match_id)
+            bids = _get_match_bids(match_id)
+            
+            # Get live auction state for this match
+            live_auction_doc = get_db().collection('liveAuctions').document(match_id).get()
+            live_auction_state = serialize_firestore_doc(live_auction_doc) if live_auction_doc.exists else None
+            
+            # Build match.json with match metadata only
+            match_json = {
+                'schemaVersion': BACKUP_SCHEMA_VERSION,
+                'createdAt': timestamp.isoformat(),
+                'backupType': backup_type,
+                'match': {
+                    'id': match_id,
+                    'name': match_name,
+                    'auctioneerId': match_data.get('auctioneerId', ''),
+                    'status': match_data.get('status', ''),
+                    'currentPlayer': match_data.get('currentPlayer'),
+                    'soldPlayers': match_data.get('soldPlayers', 0),
+                    'unsoldPlayers': match_data.get('unsoldPlayers', 0),
+                    'totalPlayers': len(players),
+                    'totalTeams': len(teams),
+                    'totalBids': len(bids),
+                    'createdAt': match_data.get('createdAt', ''),
+                    'updatedAt': match_data.get('updatedAt', ''),
+                    'auctionSettings': match_data.get('auctionSettings', {}),
+                    'purseSettings': match_data.get('purseSettings', {}),
+                    'liveRoomState': live_auction_state
+                }
+            }
+            
+            # Create ZIP file with ONLY match-scoped data
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                # Add match.json (replaces database.json)
+                zf.writestr('backup/match.json', json.dumps(match_json, indent=2, default=str))
+                
+                # Add CSV files with clean column structure
+                if teams:
+                    zf.writestr('backup/teams.csv', _create_teams_csv(teams))
+                if players:
+                    zf.writestr('backup/players.csv', _create_players_csv(players))
+                if bids:
+                    zf.writestr('backup/bids.csv', _create_bids_csv(bids))
+            
+            # Get ZIP size
+            zip_buffer.seek(0)
+            zip_size = len(zip_buffer.getvalue())
+            
+            # Upload to Firebase Storage
+            bucket = get_storage_bucket()
+            blob = bucket.blob(f"backups/{match_id}/{file_name}")
+            blob.upload_from_string(zip_buffer.getvalue(), content_type='application/zip')
+            blob.make_public()
+            download_url = blob.public_url
+            
+            # Update backup metadata
+            backup_metadata.update({
+                'status': 'completed',
+                'size': zip_size,
+                'downloadURL': download_url,
+                'playersCount': len(players),
+                'teamsCount': len(teams),
+                'bidsCount': len(bids)
+            })
+            
+            get_db().collection('backups').document(backup_id).set(backup_metadata)
+            print(f"✅ Match backup completed: {file_name} ({zip_size} bytes) - {len(players)} players, {len(teams)} teams, {len(bids)} bids")
+            
+            # Cleanup old backups (keep only MAX_BACKUPS_TO_KEEP)
+            _cleanup_old_backups(match_id)
+            
+            return create_response(success_response(backup_metadata, "Backup created successfully"))
+            
+        except Exception as e:
+            # Update backup as failed
+            get_db().collection('backups').document(backup_id).update({
+                'status': 'failed',
+                'errorMessage': str(e)
+            })
+            raise e
+        
+    except Exception as e:
+        print(f"❌ Backup failed: {e}")
+        traceback.print_exc()
+        return create_response(error_response(f"Backup failed: {str(e)}"), 500)
+
+def _cleanup_old_backups(match_id: str):
+    """Remove old backups keeping only MAX_BACKUPS_TO_KEEP"""
+    try:
+        # Get completed backups without composite index
+        backups = list(get_db().collection('backups')
+                      .where('matchId', '==', match_id)
+                      .where('status', '==', 'completed')
+                      .stream())
+        
+        # Sort by createdAt in Python
+        backups.sort(key=lambda x: x.to_dict().get('createdAt', ''), reverse=True)
+        
+        if len(backups) > MAX_BACKUPS_TO_KEEP:
+            backups_to_delete = backups[MAX_BACKUPS_TO_KEEP:]
+            bucket = get_storage_bucket()
+            
+            for backup_doc in backups_to_delete:
+                backup_data = backup_doc.to_dict()
+                backup_id = backup_doc.id
+                
+                # Delete from storage
+                try:
+                    file_name = backup_data.get('fileName')
+                    if file_name:
+                        blob = bucket.blob(f"backups/{match_id}/{file_name}")
+                        if blob.exists():
+                            blob.delete()
+                except Exception as e:
+                    print(f"Error deleting backup file: {e}")
+                
+                # Delete from Firestore
+                get_db().collection('backups').document(backup_id).delete()
+                print(f"🗑️ Deleted old backup: {backup_id}")
+        
+    except Exception as e:
+        print(f"Error cleaning up old backups: {e}")
+        traceback.print_exc()
+
+def delete_backup(backup_id: str, data: Dict):
+    """Delete a backup"""
+    try:
+        user_role = data.get('userRole', 'GUEST')
+        
+        # Only ADMIN can delete backups
+        if user_role != 'ADMIN':
+            return create_response(error_response("Only admins can delete backups", 403), 403)
+        
+        doc = get_db().collection('backups').document(backup_id).get()
+        if not doc.exists:
+            return create_response(error_response("Backup not found", 404), 404)
+        
+        backup_data = doc.to_dict()
+        match_id = backup_data.get('matchId')
+        file_name = backup_data.get('fileName')
+        
+        # Delete from storage
+        try:
+            bucket = get_storage_bucket()
+            blob = bucket.blob(f"backups/{match_id}/{file_name}")
+            if blob.exists():
+                blob.delete()
+        except Exception as e:
+            print(f"Warning: Could not delete backup file: {e}")
+        
+        # Delete from Firestore
+        get_db().collection('backups').document(backup_id).delete()
+        
+        return create_response(success_response(None, "Backup deleted successfully"))
+    except Exception as e:
+        return create_response(error_response(f"Failed to delete backup: {str(e)}"), 500)
+
+def download_backup(backup_id: str):
+    """Get download URL for a backup"""
+    try:
+        doc = get_db().collection('backups').document(backup_id).get()
+        if not doc.exists:
+            return create_response(error_response("Backup not found", 404), 404)
+        
+        backup_data = doc.to_dict()
+        download_url = backup_data.get('downloadURL')
+        
+        if not download_url:
+            return create_response(error_response("Download URL not available"), 404)
+        
+        return create_response(success_response({'downloadURL': download_url}))
+    except Exception as e:
+        return create_response(error_response(f"Failed to get download URL: {str(e)}"), 500)
+
+def get_auto_backup_config(data):
+    """Get auto backup configuration for a match"""
+    try:
+        match_id = data.get('matchId')
+        if not match_id:
+            return create_response(error_response("matchId is required"), 400)
+        
+        doc = get_db().collection('autoBackupConfigs').document(match_id).get()
+        
+        if doc.exists:
+            config = serialize_firestore_doc(doc)
+        else:
+            # Default config
+            config = {
+                'id': match_id,
+                'enabled': False,
+                'interval': 'daily',
+                'retainCount': MAX_BACKUPS_TO_KEEP
+            }
+        
+        return create_response(success_response(config))
+    except Exception as e:
+        return create_response(error_response(f"Failed to get auto backup config: {str(e)}"), 500)
+
+def update_auto_backup_config(data):
+    """Update auto backup configuration"""
+    try:
+        match_id = data.get('matchId')
+        user_role = data.get('userRole', 'GUEST')
+        
+        if not match_id:
+            return create_response(error_response("matchId is required"), 400)
+        
+        # Only ADMIN can configure auto backups
+        if user_role != 'ADMIN':
+            return create_response(error_response("Only admins can configure auto backups", 403), 403)
+        
+        enabled = data.get('enabled', False)
+        interval = data.get('interval', 'daily')  # 'hourly', 'six_hours', 'daily', 'disabled'
+        
+        # Calculate next backup time
+        next_backup = None
+        if enabled:
+            now = datetime.now()
+            if interval == 'hourly':
+                next_backup = now + timedelta(hours=1)
+            elif interval == 'six_hours':
+                next_backup = now + timedelta(hours=6)
+            elif interval == 'daily':
+                next_backup = now + timedelta(days=1)
+        
+        config = {
+            'id': match_id,
+            'enabled': enabled,
+            'interval': interval,
+            'retainCount': data.get('retainCount', MAX_BACKUPS_TO_KEEP),
+            'nextBackupAt': next_backup.isoformat() if next_backup else None,
+            'updatedAt': datetime.now().isoformat()
+        }
+        
+        get_db().collection('autoBackupConfigs').document(match_id).set(config)
+        
+        return create_response(success_response(config, "Auto backup config updated"))
+    except Exception as e:
+        return create_response(error_response(f"Failed to update auto backup config: {str(e)}"), 500)
+
+def get_backup_status(data):
+    """Check if a backup is in progress"""
+    try:
+        match_id = data.get('matchId')
+        if not match_id:
+            return create_response(error_response("matchId is required"), 400)
+        
+        in_progress = _check_backup_in_progress(match_id)
+        
+        # Get latest backup info without composite index
+        latest_backup = None
+        docs = list(get_db().collection('backups')
+                   .where('matchId', '==', match_id)
+                   .stream())
+        
+        if docs:
+            # Sort by createdAt in Python and get latest
+            docs.sort(key=lambda x: x.to_dict().get('createdAt', ''), reverse=True)
+            latest_backup = serialize_firestore_doc(docs[0])
+        
+        return create_response(success_response({
+            'inProgress': in_progress,
+            'latestBackup': latest_backup
+        }))
+    except Exception as e:
+        print(f"Error in get_backup_status: {e}")
+        traceback.print_exc()
+        return create_response(error_response(f"Failed to get backup status: {str(e)}"), 500)
+
+def restore_backup(data):
+    """Restore from a match-scoped backup"""
+    try:
+        backup_id = data.get('backupId')
+        user_role = data.get('userRole', 'GUEST')
+        match_id = data.get('matchId')
+        
+        if not backup_id:
+            return create_response(error_response("backupId is required"), 400)
+        
+        # Only ADMIN can restore
+        if user_role != 'ADMIN':
+            return create_response(error_response("Only admins can restore backups", 403), 403)
+        
+        # Check if auction is live
+        if match_id and _check_live_auction(match_id):
+            return create_response(error_response("Cannot restore during a live auction", 403), 403)
+        
+        # Get backup details
+        backup_doc = get_db().collection('backups').document(backup_id).get()
+        if not backup_doc.exists:
+            return create_response(error_response("Backup not found", 404), 404)
+        
+        backup_data = backup_doc.to_dict()
+        match_id = backup_data.get('matchId')
+        file_name = backup_data.get('fileName')
+        schema_version = backup_data.get('schemaVersion', '1.0.0')
+        
+        print(f"🔄 Starting restore from backup: {backup_id} (schema v{schema_version})")
+        
+        # Download backup file
+        bucket = get_storage_bucket()
+        blob = bucket.blob(f"backups/{match_id}/{file_name}")
+        
+        if not blob.exists():
+            return create_response(error_response("Backup file not found in storage"), 404)
+        
+        zip_content = blob.download_as_bytes()
+        
+        # Parse backup
+        players = []
+        teams = []
+        bids = []
+        match_config = None
+        live_state = None
+        
+        with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zf:
+            file_list = zf.namelist()
+            
+            # Handle new match-scoped format (v2.0.0)
+            if 'backup/match.json' in file_list:
+                match_json = json.loads(zf.read('backup/match.json'))
+                match_config = match_json.get('match', {})
+                live_state = match_config.pop('liveRoomState', None)
+                
+                # Read CSVs and convert back to dicts
+                if 'backup/teams.csv' in file_list:
+                    teams = _parse_csv_to_dicts(zf.read('backup/teams.csv').decode('utf-8'))
+                if 'backup/players.csv' in file_list:
+                    players = _parse_csv_to_dicts(zf.read('backup/players.csv').decode('utf-8'))
+                if 'backup/bids.csv' in file_list:
+                    bids = _parse_csv_to_dicts(zf.read('backup/bids.csv').decode('utf-8'))
+            
+            # Handle legacy format (v1.0.0 - database.json)
+            elif 'backup/database.json' in file_list:
+                database_json = json.loads(zf.read('backup/database.json'))
+                db_data = database_json.get('database', {})
+                players = db_data.get('players', [])
+                teams = db_data.get('teams', [])
+                bids = db_data.get('bids', [])
+                match_config = db_data.get('matchConfig')
+                live_state = db_data.get('liveRoomState')
+            else:
+                return create_response(error_response("Invalid backup format - missing match.json or database.json"), 400)
+        
+        # Restore teams to subcollection
+        for team in teams:
+            team_id = team.get('teamId') or team.get('id')
+            if team_id:
+                get_db().collection('matches').document(match_id).collection('teams').document(team_id).set(team, merge=True)
+        print(f"✅ Restored {len(teams)} teams to matches/{match_id}/teams")
+        
+        # Restore players to subcollection
+        for player in players:
+            player_id = player.get('playerId') or player.get('id')
+            if player_id:
+                get_db().collection('matches').document(match_id).collection('players').document(player_id).set(player, merge=True)
+        print(f"✅ Restored {len(players)} players to matches/{match_id}/players")
+        
+        # Restore bids to subcollection
+        for bid in bids:
+            bid_id = bid.get('bidId') or bid.get('id')
+            if bid_id:
+                get_db().collection('matches').document(match_id).collection('bids').document(bid_id).set(bid, merge=True)
+        print(f"✅ Restored {len(bids)} bids to matches/{match_id}/bids")
+        
+        # Restore match config
+        if match_config and match_id:
+            get_db().collection('matches').document(match_id).set(match_config, merge=True)
+            print(f"✅ Restored match config")
+        
+        # Restore live auction state if present
+        if live_state and match_id:
+            get_db().collection('liveAuctions').document(match_id).set(live_state, merge=True)
+            print(f"✅ Restored live auction state")
+        
+        return create_response(success_response({
+            'restoredPlayers': len(players),
+            'restoredTeams': len(teams),
+            'restoredBids': len(bids)
+        }, "Restore completed successfully"))
+        
+    except Exception as e:
+        print(f"❌ Restore failed: {e}")
+        traceback.print_exc()
+        return create_response(error_response(f"Restore failed: {str(e)}"), 500)
+
+def _parse_csv_to_dicts(csv_content: str) -> List[Dict]:
+    """Parse CSV string content back to list of dicts"""
+    if not csv_content.strip():
+        return []
+    
+    reader = csv.DictReader(io.StringIO(csv_content))
+    return list(reader)
+
+def preview_restore(data):
+    """Preview contents of a backup before restoring"""
+    try:
+        backup_id = data.get('backupId')
+        
+        if not backup_id:
+            return create_response(error_response("backupId is required"), 400)
+        
+        # Get backup details
+        backup_doc = get_db().collection('backups').document(backup_id).get()
+        if not backup_doc.exists:
+            return create_response(error_response("Backup not found", 404), 404)
+        
+        backup_data = backup_doc.to_dict()
+        schema_version = backup_data.get('schemaVersion', 'unknown')
+        
+        preview = {
+            'playersCount': backup_data.get('playersCount', 0),
+            'teamsCount': backup_data.get('teamsCount', 0),
+            'bidsCount': backup_data.get('bidsCount', 0),
+            'schemaVersion': schema_version,
+            'backupDate': backup_data.get('createdAt'),
+            'matchId': backup_data.get('matchId'),
+            'matchName': backup_data.get('matchName'),
+            'backupType': backup_data.get('type'),
+            'isMatchScoped': schema_version.startswith('2.'),
+            'isCompatible': True,  # Both v1.x and v2.x are compatible (restore handles both)
+            'warnings': []
+        }
+        
+        # Add warnings if needed
+        if schema_version.startswith('1.'):
+            preview['warnings'].append("Legacy backup format (v1.x) - will be restored to subcollections")
+        
+        return create_response(success_response(preview))
+    except Exception as e:
+        return create_response(error_response(f"Failed to preview backup: {str(e)}"), 500)
+
+def validate_backup_file(data):
+    """Validate a backup file structure"""
+    try:
+        backup_id = data.get('backupId')
+        
+        if not backup_id:
+            return create_response(error_response("backupId is required"), 400)
+        
+        # Get backup details
+        backup_doc = get_db().collection('backups').document(backup_id).get()
+        if not backup_doc.exists:
+            return create_response(error_response("Backup not found", 404), 404)
+        
+        backup_data = backup_doc.to_dict()
+        match_id = backup_data.get('matchId')
+        file_name = backup_data.get('fileName')
+        
+        # Download and validate backup file
+        bucket = get_storage_bucket()
+        blob = bucket.blob(f"backups/{match_id}/{file_name}")
+        
+        if not blob.exists():
+            return create_response(success_response({
+                'valid': False,
+                'error': 'Backup file not found in storage'
+            }))
+        
+        zip_content = blob.download_as_bytes()
+        
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zf:
+                file_list = zf.namelist()
+                
+                # Check for either new (match.json) or legacy (database.json) format
+                has_match_json = 'backup/match.json' in file_list
+                has_database_json = 'backup/database.json' in file_list
+                
+                if not has_match_json and not has_database_json:
+                    return create_response(success_response({
+                        'valid': False,
+                        'error': 'Missing required files: match.json or database.json'
+                    }))
+                
+                # Validate appropriate JSON structure
+                if has_match_json:
+                    match_json = json.loads(zf.read('backup/match.json'))
+                    schema_version = match_json.get('schemaVersion')
+                    format_type = 'match-scoped (v2.0+)'
+                else:
+                    database_json = json.loads(zf.read('backup/database.json'))
+                    schema_version = database_json.get('schemaVersion')
+                    format_type = 'legacy (v1.x)'
+                
+                if not schema_version:
+                    return create_response(success_response({
+                        'valid': False,
+                        'error': 'Missing schemaVersion'
+                    }))
+                
+                return create_response(success_response({
+                    'valid': True,
+                    'schemaVersion': schema_version,
+                    'formatType': format_type,
+                    'files': file_list
+                }))
+                
+        except zipfile.BadZipFile:
+            return create_response(success_response({
+                'valid': False,
+                'error': 'Invalid ZIP file'
+            }))
+        
+    except Exception as e:
+        return create_response(error_response(f"Failed to validate backup: {str(e)}"), 500)

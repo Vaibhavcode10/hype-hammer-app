@@ -2,12 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users, Trophy, DollarSign, Activity,
   Search, User, Home, Radio, ChevronRight,
-  TrendingUp, Star, Eye, Shield, FileText, ArrowLeft
+  TrendingUp, Star, Eye, Shield, FileText, ArrowLeft, Award
 } from 'lucide-react';
 import { AuctionStatus, MatchData, UserRole, Player, Team } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
 import { GuestPlayersPage } from './GuestPlayersPage';
 import { GuestTeamsPage } from './GuestTeamsPage';
+import { AuctionResultsPage } from './AuctionResultsPage';
+import { AuctionCountdown } from '../ui/AuctionCountdown';
 import { socketService } from '../../services/socketService';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
@@ -20,7 +22,7 @@ interface GuestDashboardPageProps {
 
 export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
   // Navigation
-  const [activeSection, setActiveSection] = useState<'overview' | 'players' | 'teams' | 'liveRoom'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'players' | 'teams' | 'liveRoom' | 'results'>('overview');
 
   // Data states
   const [teams, setTeams] = useState<Team[]>([]);
@@ -266,6 +268,9 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
   const totalTeams = approvedTeams.length;
   const totalPlayers = approvedPlayers.length;
   const soldPlayers = approvedPlayers.filter(p => p.status === 'SOLD').length;
+
+  // Computed: Check if auction is ended (either from socket or backend status)
+  const isAuctionEnded = liveAuctionStatus === 'ENDED' || activeMatch?.status === 'COMPLETED';
   const totalBudget = approvedTeams.reduce((acc, team) => acc + (team.budget || team.initialBudget || 0), 0);
   const remainingBudget = approvedTeams.reduce((acc, team) => acc + (team.remainingBudget || team.budget || team.initialBudget || 0), 0);
   const spentBudget = totalBudget - remainingBudget;
@@ -550,6 +555,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                       { id: 'overview', icon: <Home size={20} />, label: 'Home' },
                       { id: 'players', icon: <Users size={20} />, label: 'Players' },
                       { id: 'teams', icon: <Trophy size={20} />, label: 'Teams' },
+                      ...(isAuctionEnded ? [{ id: 'results', icon: <Award size={20} />, label: 'Results' }] : []),
                       { id: 'liveRoom', icon: <Radio size={20} />, label: 'Live Room' },
                     ];
                     const activeNavIndex = navItems.findIndex(n => n.id === activeSection);
@@ -722,19 +728,19 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                           <div className="relative h-full p-8 flex flex-col justify-between z-10">
                             <div>
                               <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full mb-4 ${
-                                liveAuctionStatus === 'ENDED' ? 'bg-green-500/20 border border-green-500/30' :
+                                isAuctionEnded ? 'bg-green-500/20 border border-green-500/30' :
                                 liveAuctionStatus === 'LIVE' ? 'bg-red-500/20 border border-red-500/30' :
                                 'bg-pink-500/20 border border-pink-500/30'
                               }`}>
                                 <div className={`w-2 h-2 rounded-full animate-pulse ${
-                                  liveAuctionStatus === 'ENDED' ? 'bg-green-500' :
+                                  isAuctionEnded ? 'bg-green-500' :
                                   liveAuctionStatus === 'LIVE' ? 'bg-red-500' : 'bg-pink-500'
                                 }`}></div>
                                 <span className={`text-xs font-bold tracking-wider uppercase ${
-                                  liveAuctionStatus === 'ENDED' ? 'text-green-300' :
+                                  isAuctionEnded ? 'text-green-300' :
                                   liveAuctionStatus === 'LIVE' ? 'text-red-300' : 'text-pink-300'
                                 }`}>
-                                  {liveAuctionStatus === 'ENDED' ? 'Auction Ended' : liveAuctionStatus === 'LIVE' ? 'Live Now' : 'Ready to Start'}
+                                  {isAuctionEnded ? 'Auction Ended' : liveAuctionStatus === 'LIVE' ? 'Live Now' : 'Ready to Start'}
                                 </span>
                               </div>
                               <h2 className="text-4xl font-black text-white mb-2">{activeMatch?.name || 'No Active Auction'}</h2>
@@ -752,9 +758,9 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                                   <button onClick={() => setActiveSection('liveRoom')} className="cyber-button px-6 py-3 rounded-full text-white font-black tracking-wider flex items-center gap-2.5 text-sm">
                                     <Radio size={18} /> WATCH LIVE
                                   </button>
-                                ) : liveAuctionStatus === 'ENDED' ? (
-                                  <button onClick={() => setActiveSection('players')} className="cyber-button px-6 py-3 rounded-full text-white font-black tracking-wider flex items-center gap-2.5 text-sm" style={{ background: 'linear-gradient(135deg, #10B981, #059669)' }}>
-                                    <FileText size={18} /> VIEW RESULTS
+                                ) : isAuctionEnded ? (
+                                  <button onClick={() => setActiveSection('results')} className="cyber-button px-6 py-3 rounded-full text-white font-black tracking-wider flex items-center gap-2.5 text-sm" style={{ background: 'linear-gradient(135deg, #10B981, #059669)' }}>
+                                    <Award size={18} /> SEE RESULTS
                                   </button>
                                 ) : (
                                   <button onClick={() => setActiveSection('liveRoom')} className="cyber-button px-6 py-3 rounded-full text-white font-black tracking-wider flex items-center gap-2.5 text-sm">
@@ -881,6 +887,14 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                                 <Radio size={18} className="animate-pulse" />
                                 Watch Live Auction
                               </button>
+                            ) : isAuctionEnded ? (
+                              <button
+                                onClick={() => setActiveSection('results')}
+                                className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-500/20 to-teal-600/20 border border-emerald-500/30 text-emerald-300 hover:border-emerald-500/50 hover:bg-emerald-500/30 transition-all flex items-center justify-center gap-3 font-medium"
+                              >
+                                <Award size={18} />
+                                See Auction Results
+                              </button>
                             ) : (
                               <button
                                 onClick={() => setActiveSection('liveRoom')}
@@ -998,6 +1012,16 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
               </div>
             </div>
           </div>
+
+          {/* Full-Screen Results — Gaming-style leaderboard (Spectator Mode) */}
+          {activeSection === 'results' && activeMatch && (
+            <div className="fixed inset-0 z-[60] animate-in fade-in duration-500 overflow-auto">
+              <AuctionResultsPage
+                onClose={() => setActiveSection('overview')}
+                currentMatch={currentMatch}
+              />
+            </div>
+          )}
 
           {/* Full-Screen Live Room — No Sidebar, No Topbar (Spectator Mode) */}
           {activeSection === 'liveRoom' && activeMatch && (

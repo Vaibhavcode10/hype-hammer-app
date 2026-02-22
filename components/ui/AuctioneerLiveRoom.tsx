@@ -186,6 +186,41 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
   const soldPlayers = approvedPlayersOnly.filter(p => p.status === 'SOLD').length;
   const currentBid = auctionState?.currentBid || auctionState?.currentBidAmount || currentPlayer?.basePrice || 0;
   
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // AUCTION END STATE CALCULATIONS
+  // ═══════════════════════════════════════════════════════════════════════════════
+  
+  // All players processed = no AVAILABLE players left (all are either SOLD or UNSOLD)
+  const availablePlayers = approvedPlayersOnly.filter(p => p.status === 'AVAILABLE');
+  const unsoldPlayers = approvedPlayersOnly.filter(p => p.status === 'UNSOLD');
+  const allPlayersProcessed = availablePlayers.length === 0 && !currentPlayer;
+  
+  // Calculate team fill status
+  const teamsWithSlotInfo = useMemo(() => {
+    return teams.map(team => {
+      const currentSquadSize = team.players?.length || team.playerIds?.length || 0;
+      const maxSize = team.maxSquadSize || team.squadSize || 11;
+      const remainingSlots = Math.max(0, maxSize - currentSquadSize);
+      const isFull = currentSquadSize >= maxSize;
+      return { ...team, currentSquadSize, maxSize, remainingSlots, isFull };
+    });
+  }, [teams]);
+  
+  const allTeamsFull = teamsWithSlotInfo.every(t => t.isFull);
+  const filledTeamsCount = teamsWithSlotInfo.filter(t => t.isFull).length;
+  const teamsWithUnfilledSlots = teamsWithSlotInfo.filter(t => !t.isFull);
+  const totalUnfilledSlots = teamsWithUnfilledSlots.reduce((sum, t) => sum + t.remainingSlots, 0);
+  
+  // Warning conditions:
+  // 1. All players processed but teams have unfilled slots
+  const showTeamsUnfilledWarning = allPlayersProcessed && !allTeamsFull && teamsWithUnfilledSlots.length > 0;
+  
+  // 2. All teams full but players are still remaining
+  const showPlayersRemainingWarning = allTeamsFull && (availablePlayers.length > 0 || unsoldPlayers.length > 0);
+  
+  // Enable End Auction button when either warning condition is met OR all is complete
+  const canEndAuction = allPlayersProcessed || allTeamsFull;
+  
   // Calculate actual remaining budget for each team - memoized for performance
   const teamsWithRemainingBudget = useMemo(() => {
     return teams.map(team => {
@@ -1386,38 +1421,286 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
               </button>
             </div>
           </div>
+          
+          {/* ═══════════════════════════════════════════════════════════════════════════════ */}
+          {/* AUCTION END WARNINGS & END AUCTION BUTTON */}
+          {/* ═══════════════════════════════════════════════════════════════════════════════ */}
+          
+          {/* Warning: All Players Processed but Teams Have Unfilled Slots */}
+          {showTeamsUnfilledWarning && (
+            <div 
+              className="mx-6 mb-4 p-4 rounded-xl flex items-start gap-4"
+              style={{
+                background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(217, 119, 6, 0.1) 100%)',
+                border: '2px solid rgba(245, 158, 11, 0.5)',
+                boxShadow: '0 0 30px rgba(245, 158, 11, 0.2)'
+              }}
+            >
+              <div className="p-2 rounded-full bg-amber-500/20 flex-shrink-0">
+                <AlertTriangle size={24} className="text-amber-400 animate-pulse" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-black text-amber-400 uppercase tracking-wide mb-2">
+                  ⚠️ All Players Processed - Teams Not Full
+                </h3>
+                <p className="text-sm text-gray-300 mb-3">
+                  All players have been auctioned but <span className="font-bold text-amber-300">{teamsWithUnfilledSlots.length} team(s)</span> still have unfilled slots.
+                  Total unfilled slots: <span className="font-bold text-amber-300">{totalUnfilledSlots}</span>
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {teamsWithUnfilledSlots.slice(0, 5).map(team => (
+                    <div 
+                      key={team.id}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2"
+                      style={{
+                        background: 'rgba(245, 158, 11, 0.15)',
+                        border: '1px solid rgba(245, 158, 11, 0.4)'
+                      }}
+                    >
+                      {team.logo && (
+                        <img src={team.logo} alt={team.name} className="w-4 h-4 rounded object-cover" />
+                      )}
+                      <span className="text-amber-200">{team.name}</span>
+                      <span className="text-amber-400">{team.currentSquadSize}/{team.maxSize}</span>
+                    </div>
+                  ))}
+                  {teamsWithUnfilledSlots.length > 5 && (
+                    <span className="px-3 py-1.5 text-xs text-amber-400 font-bold">
+                      +{teamsWithUnfilledSlots.length - 5} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Warning: All Teams Full but Players Still Remaining */}
+          {showPlayersRemainingWarning && (
+            <div 
+              className="mx-6 mb-4 p-4 rounded-xl flex items-start gap-4"
+              style={{
+                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)',
+                border: '2px solid rgba(239, 68, 68, 0.5)',
+                boxShadow: '0 0 30px rgba(239, 68, 68, 0.2)'
+              }}
+            >
+              <div className="p-2 rounded-full bg-red-500/20 flex-shrink-0">
+                <XCircle size={24} className="text-red-400 animate-pulse" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-black text-red-400 uppercase tracking-wide mb-2">
+                  ⚠️ All Teams Full - Players Remaining
+                </h3>
+                <p className="text-sm text-gray-300 mb-3">
+                  All teams have reached maximum capacity but <span className="font-bold text-red-300">
+                    {availablePlayers.length + unsoldPlayers.length} player(s)
+                  </span> are still not part of any team.
+                </p>
+                <div className="flex items-center gap-4 text-sm">
+                  {availablePlayers.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                      <span className="text-gray-400">Available: <span className="text-blue-400 font-bold">{availablePlayers.length}</span></span>
+                    </div>
+                  )}
+                  {unsoldPlayers.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                      <span className="text-gray-400">Unsold: <span className="text-red-400 font-bold">{unsoldPlayers.length}</span></span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* End Auction Button - Always at Bottom for Auctioneer */}
+          {onEndAuction && canEndAuction && (
+            <div className="mx-6 mb-4">
+              <button
+                onClick={onEndAuction}
+                className="w-full relative overflow-hidden px-8 py-4 rounded-xl
+                           hover:scale-[1.02] active:scale-95
+                           transition-all duration-300"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)',
+                  border: '2px solid rgba(239, 68, 68, 0.8)',
+                  boxShadow: '0 0 40px rgba(239, 68, 68, 0.4), inset 0 0 20px rgba(255, 255, 255, 0.1)'
+                }}
+              >
+                {/* Animated gradient overlay */}
+                <div 
+                  className="absolute inset-0 opacity-30"
+                  style={{
+                    background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)',
+                    backgroundSize: '200% 100%',
+                    animation: 'shimmer 2s infinite'
+                  }}
+                />
+                
+                <div className="relative flex items-center justify-center gap-3">
+                  <Square size={20} className="text-white" />
+                  <span className="text-white font-black text-lg uppercase tracking-wider">
+                    End Auction
+                  </span>
+                  <AlertCircle size={18} className="text-white/70" />
+                </div>
+              </button>
+            </div>
+          )}
           </>
         ) : (
-          // No Player Selected State
+          // No Player Selected State - Show different UI based on auction state
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <div className="relative inline-block mb-6">
-                <div className="absolute inset-0 bg-pink-500/10 blur-2xl"></div>
-                <Gavel size={80} className="relative text-pink-600/40" />
+            {allPlayersProcessed ? (
+              // ═══════════════════════════════════════════════════════════════════════════════
+              // AUCTION COMPLETE STATE - All Players Have Been Processed
+              // ═══════════════════════════════════════════════════════════════════════════════
+              <div className="text-center max-w-2xl mx-auto px-6">
+                <div className="relative inline-block mb-6">
+                  <div className="absolute inset-0 bg-green-500/20 blur-3xl"></div>
+                  <CheckCircle2 size={100} className="relative text-green-500" style={{ filter: 'drop-shadow(0 0 20px rgba(34, 197, 94, 0.6))' }} />
+                </div>
+                
+                <h2 className="text-4xl font-black text-white tracking-wide mb-3 uppercase">
+                  Auction Complete
+                </h2>
+                <p className="text-gray-400 text-lg mb-8">
+                  All players have been processed. Review the results below.
+                </p>
+                
+                {/* Stats Summary */}
+                <div className="grid grid-cols-3 gap-6 mb-8">
+                  <div 
+                    className="p-6 rounded-xl"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(22, 163, 74, 0.1) 100%)',
+                      border: '1px solid rgba(34, 197, 94, 0.3)'
+                    }}
+                  >
+                    <div className="text-4xl font-black text-green-400 mb-2">{soldPlayers}</div>
+                    <div className="text-sm text-gray-400 uppercase tracking-wider">Players Sold</div>
+                  </div>
+                  <div 
+                    className="p-6 rounded-xl"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)'
+                    }}
+                  >
+                    <div className="text-4xl font-black text-red-400 mb-2">{unsoldPlayers.length}</div>
+                    <div className="text-sm text-gray-400 uppercase tracking-wider">Unsold</div>
+                  </div>
+                  <div 
+                    className="p-6 rounded-xl"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.1) 0%, rgba(126, 34, 206, 0.1) 100%)',
+                      border: '1px solid rgba(147, 51, 234, 0.3)'
+                    }}
+                  >
+                    <div className="text-4xl font-black text-purple-400 mb-2">{filledTeamsCount}/{teams.length}</div>
+                    <div className="text-sm text-gray-400 uppercase tracking-wider">Teams Filled</div>
+                  </div>
+                </div>
+                
+                {/* Warnings */}
+                {showTeamsUnfilledWarning && (
+                  <div 
+                    className="p-4 rounded-xl mb-6 flex items-start gap-4 text-left"
+                    style={{
+                      background: 'rgba(245, 158, 11, 0.1)',
+                      border: '1px solid rgba(245, 158, 11, 0.4)'
+                    }}
+                  >
+                    <AlertTriangle size={24} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-amber-300 font-bold mb-1">Teams Not Fully Filled</p>
+                      <p className="text-sm text-gray-400">
+                        {teamsWithUnfilledSlots.length} team(s) have {totalUnfilledSlots} unfilled slot(s) remaining.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                
+                {showPlayersRemainingWarning && (
+                  <div 
+                    className="p-4 rounded-xl mb-6 flex items-start gap-4 text-left"
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.4)'
+                    }}
+                  >
+                    <XCircle size={24} className="text-red-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-red-300 font-bold mb-1">Players Could Not Be Placed</p>
+                      <p className="text-sm text-gray-400">
+                        All teams are full but {availablePlayers.length + unsoldPlayers.length} player(s) remain unassigned.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* End Auction Button */}
+                {onEndAuction && (
+                  <button
+                    onClick={onEndAuction}
+                    className="relative overflow-hidden px-12 py-5 rounded-xl mx-auto
+                               hover:scale-105 active:scale-95
+                               transition-all duration-300"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)',
+                      border: '2px solid rgba(239, 68, 68, 0.8)',
+                      boxShadow: '0 0 50px rgba(239, 68, 68, 0.5), inset 0 0 20px rgba(255, 255, 255, 0.1)'
+                    }}
+                  >
+                    <div 
+                      className="absolute inset-0 opacity-30"
+                      style={{
+                        background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)',
+                        backgroundSize: '200% 100%',
+                        animation: 'shimmer 2s infinite'
+                      }}
+                    />
+                    <div className="relative flex items-center justify-center gap-3">
+                      <Square size={22} className="text-white" />
+                      <span className="text-white font-black text-xl uppercase tracking-wider">
+                        End Auction & Close
+                      </span>
+                    </div>
+                  </button>
+                )}
               </div>
-              <h2 className="text-3xl font-black text-gray-500 tracking-wide mb-3">
-                Ready to Start Auction
-              </h2>
-              <p className="text-gray-600 text-lg mb-8">
-                Select a player to begin the bidding process
-              </p>
-              
-              {onStartAuction && (
-                <button
-                  onClick={onStartAuction}
-                  className="flex items-center gap-3 px-10 py-4 mx-auto
-                             bg-gradient-to-r from-pink-600 to-pink-500
-                             border border-pink-400/60 rounded-lg
-                             text-white font-black uppercase tracking-wider text-lg
-                             hover:scale-105 active:scale-95
-                             transition-all duration-200
-                             shadow-[0_0_30px_rgba(236,72,153,0.4)]"
-                >
-                  <Play size={24} />
-                  <span>Start Auction</span>
-                </button>
-              )}
-            </div>
+            ) : (
+              // Ready to Start State
+              <div className="text-center">
+                <div className="relative inline-block mb-6">
+                  <div className="absolute inset-0 bg-pink-500/10 blur-2xl"></div>
+                  <Gavel size={80} className="relative text-pink-600/40" />
+                </div>
+                <h2 className="text-3xl font-black text-gray-500 tracking-wide mb-3">
+                  Ready to Start Auction
+                </h2>
+                <p className="text-gray-600 text-lg mb-8">
+                  Select a player to begin the bidding process
+                </p>
+                
+                {onStartAuction && (
+                  <button
+                    onClick={onStartAuction}
+                    className="flex items-center gap-3 px-10 py-4 mx-auto
+                               bg-gradient-to-r from-pink-600 to-pink-500
+                               border border-pink-400/60 rounded-lg
+                               text-white font-black uppercase tracking-wider text-lg
+                               hover:scale-105 active:scale-95
+                               transition-all duration-200
+                               shadow-[0_0_30px_rgba(236,72,153,0.4)]"
+                  >
+                    <Play size={24} />
+                    <span>Start Auction</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Trophy, Calendar, Users, Play, Clock, MapPin, Filter, Search, Plus, ArrowLeft, Eye, UserPlus } from 'lucide-react';
+import { Trophy, Calendar, Users, Play, Clock, MapPin, Filter, Search, Plus, ArrowLeft, Eye, UserPlus, Award } from 'lucide-react';
 import { AuctionStatus, SportData, MatchData, UserRole } from '../../types';
+import { CountdownDisplay } from '../ui/CountdownDisplay';
+import { NeonDesignStyles, GlassCard, NeonButton, LiveBadge, GradientHeading, NeonPageWrapper, NeonSearchBar, FilterPill } from '../ui/NeonDesignSystem';
 
 interface MarketplacePageProps {
   allSports: SportData[];
@@ -71,11 +73,11 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
   const getStatusBadge = useCallback((status: string) => {
     switch (status) {
       case 'SETUP':
-        return <span className="px-3 py-1 bg-blue-100 text-blue-600 rounded-full text-xs font-bold">UPCOMING</span>;
+        return <span className="px-3 py-1 rounded-full text-xs font-bold text-blue-300" style={{ background: 'rgba(59, 130, 246, 0.2)', border: '1px solid rgba(59, 130, 246, 0.4)' }}>UPCOMING</span>;
       case 'ONGOING':
-        return <span className="px-3 py-1 bg-green-100 text-green-600 rounded-full text-xs font-bold animate-pulse">LIVE NOW</span>;
+        return <LiveBadge />;
       case 'COMPLETED':
-        return <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold">COMPLETED</span>;
+        return <span className="px-3 py-1 rounded-full text-xs font-bold text-pink-300/60" style={{ background: 'rgba(255, 0, 102, 0.1)', border: '1px solid rgba(255, 0, 102, 0.3)' }}>COMPLETED</span>;
       default:
         return null;
     }
@@ -87,20 +89,21 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
     const totalPlayers = match.players.length;
     
     return (
-    <div
+    <GlassCard
       key={`${match.sportType}-${match.id}`}
-      className="bg-white border-2 border-slate-200 rounded-2xl p-6 hover:border-blue-500 hover:shadow-xl transition-all group"
+      glow
+      className="group hover:scale-[1.02] transition-all"
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-4">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-2">
-            <span className="px-2 py-1 bg-gradient-to-r from-blue-500 to-orange-500 text-white rounded text-[10px] font-black uppercase tracking-wider">
+            <span className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-wider text-white" style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)' }}>
               {match.sportName}
             </span>
             {getStatusBadge(match.status)}
           </div>
-          <h3 className="text-xl font-black text-slate-900 group-hover:text-blue-600 transition-colors">
+          <h3 className="text-xl font-black text-pink-100 group-hover:text-pink-300 transition-colors">
             {match.name}
           </h3>
         </div>
@@ -108,22 +111,31 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
 
       {/* Info Grid */}
       <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="flex items-center gap-2 text-sm text-slate-600">
-          <Calendar className="w-4 h-4 text-blue-500" />
+        <div className="flex items-center gap-2 text-sm text-pink-300/70">
+          <Calendar className="w-4 h-4 text-pink-400" />
           <span>{match.matchDate ? new Date(match.matchDate).toLocaleDateString() : match.createdAt ? new Date(match.createdAt).toLocaleDateString() : 'TBD'}</span>
         </div>
         {match.place && (
-          <div className="flex items-center gap-2 text-sm text-slate-600">
-            <MapPin className="w-4 h-4 text-orange-500" />
+          <div className="flex items-center gap-2 text-sm text-pink-300/70">
+            <MapPin className="w-4 h-4 text-pink-400" />
             <span>{match.place}</span>
           </div>
         )}
       </div>
 
+      {/* Countdown */}
+      <div className="mb-4 py-2 px-3 rounded-lg" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+        <CountdownDisplay
+          targetDate={match.auctionDateTime || match.matchDate}
+          auctionStatus={match.status}
+        />
+      </div>
+
       {/* Action Buttons */}
       <div className="space-y-3">
-        <button
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-500 to-orange-500 text-white rounded-lg font-bold uppercase text-sm tracking-wider hover:brightness-110 transition-all"
+        <NeonButton
+          fullWidth
+          variant="primary"
           onClick={(e) => {
             e.stopPropagation();
             onSelectMatch(match.sportType, match.id);
@@ -131,51 +143,65 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
         >
           <UserPlus className="w-4 h-4" />
           Apply for Auction
-        </button>
-        <button
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white border-2 border-blue-500 text-blue-600 rounded-lg font-bold uppercase text-sm tracking-wider hover:bg-blue-500 hover:text-white transition-all"
-          onClick={(e) => {
-            e.stopPropagation();
-            onViewLiveAuction(match.sportType, match.id);
-          }}
-        >
-          <Eye className="w-4 h-4" />
-          View Live Auction
-        </button>
+        </NeonButton>
+        {match.status === 'COMPLETED' ? (
+          <NeonButton
+            fullWidth
+            variant="secondary"
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewLiveAuction(match.sportType, match.id);
+            }}
+          >
+            <Award className="w-4 h-4" />
+            See Results
+          </NeonButton>
+        ) : (
+          <NeonButton
+            fullWidth
+            variant="secondary"
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewLiveAuction(match.sportType, match.id);
+            }}
+          >
+            <Eye className="w-4 h-4" />
+            View Live Auction
+          </NeonButton>
+        )}
       </div>
-    </div>
+    </GlassCard>
     );
   }, [onSelectMatch, onViewLiveAuction, getStatusBadge]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50">
+    <NeonPageWrapper className="min-h-screen">
+      <NeonDesignStyles />
+      
       {/* Header */}
-      <div className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-xl border-b border-slate-200 shadow-sm">
+      <div className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl" style={{ background: 'rgba(26, 10, 10, 0.95)', borderBottom: '1px solid rgba(255, 0, 102, 0.2)' }}>
         <div className="max-w-7xl mx-auto px-8 py-4">
           <div className="flex items-center justify-between">
             {/* Logo & Back */}
             <div className="flex items-center gap-6">
               <button
                 onClick={() => setStatus(AuctionStatus.HOME)}
-                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 transition-colors"
+                className="flex items-center gap-2 text-pink-300/70 hover:text-pink-300 transition-colors"
               >
                 <ArrowLeft size={20} />
                 <span className="text-sm font-bold">Home</span>
               </button>
-              <div className="h-8 w-px bg-slate-300"></div>
-              <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-                <span className="gold-text">Auction</span> Marketplace
-              </h1>
+              <div className="h-8 w-px" style={{ background: 'rgba(255, 0, 102, 0.3)' }}></div>
+              <GradientHeading size="lg">
+                Auction Marketplace
+              </GradientHeading>
             </div>
 
             {/* Create Season Button (Only for potential organizers) */}
-            <button
-              onClick={onCreateSeason}
-              className="flex items-center gap-2 px-6 py-3 gold-gradient text-white rounded-full font-bold text-sm uppercase tracking-wider hover:brightness-110 transition-all shadow-lg"
-            >
+            <NeonButton variant="primary" onClick={onCreateSeason}>
               <Plus size={18} />
               Organize Season
-            </button>
+            </NeonButton>
           </div>
         </div>
       </div>
@@ -185,20 +211,15 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
         {/* Search & Filters */}
         <div className="mb-8 space-y-4">
           {/* Search Bar */}
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search auctions by name, sport, or location..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-12 pr-4 py-4 bg-white border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:outline-none text-slate-900 placeholder-slate-400 font-medium"
-            />
-          </div>
+          <NeonSearchBar
+            value={searchTerm}
+            onChange={setSearchTerm}
+            placeholder="Search auctions by name, sport, or location..."
+          />
 
           {/* Filter Pills */}
           <div className="flex items-center gap-3">
-            <Filter className="w-4 h-4 text-slate-500" />
+            <Filter className="w-4 h-4 text-pink-400/60" />
             <div className="flex gap-2 flex-wrap">
               {[
                 { key: 'all', label: 'All Auctions', count: allMatches.length },
@@ -206,17 +227,12 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
                 { key: 'ongoing', label: 'Live Now', count: ongoingMatches.length },
                 { key: 'completed', label: 'Completed', count: completedMatches.length }
               ].map((filter) => (
-                <button
+                <FilterPill
                   key={filter.key}
+                  label={`${filter.label} (${filter.count})`}
+                  active={activeFilter === filter.key}
                   onClick={() => setActiveFilter(filter.key as FilterType)}
-                  className={`px-4 py-2 rounded-full font-bold text-sm transition-all ${
-                    activeFilter === filter.key
-                      ? 'gold-gradient text-white shadow-lg'
-                      : 'bg-white border-2 border-slate-200 text-slate-600 hover:border-blue-500'
-                  }`}
-                >
-                  {filter.label} ({filter.count})
-                </button>
+                />
               ))}
             </div>
           </div>
@@ -225,24 +241,21 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
         {/* Loading State */}
         {isLoading && (
           <div className="flex items-center justify-center py-20">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500"></div>
+            <div className="w-16 h-16 rounded-full" style={{ border: '4px solid rgba(255, 0, 102, 0.2)', borderTop: '4px solid #ff0066', animation: 'spin 1s linear infinite' }}></div>
           </div>
         )}
 
         {/* Empty State */}
         {!isLoading && filteredMatches.length === 0 && (
           <div className="text-center py-20">
-            <Trophy className="w-20 h-20 mx-auto mb-6 text-slate-300" />
-            <h3 className="text-2xl font-bold text-slate-900 mb-2">No Auctions Found</h3>
-            <p className="text-slate-600 mb-8">
+            <Trophy className="w-20 h-20 mx-auto mb-6 text-pink-400/30" />
+            <GradientHeading size="lg" className="mb-2">No Auctions Found</GradientHeading>
+            <p className="text-pink-300/70 mb-8">
               {searchTerm ? 'Try adjusting your search terms' : 'Be the first to organize an auction!'}
             </p>
-            <button
-              onClick={onCreateSeason}
-              className="px-8 py-4 gold-gradient text-white rounded-full font-bold uppercase tracking-wider hover:brightness-110 transition-all shadow-lg"
-            >
+            <NeonButton variant="primary" onClick={onCreateSeason}>
               Create Your First Season
-            </button>
+            </NeonButton>
           </div>
         )}
 
@@ -250,9 +263,9 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
         {!isLoading && ongoingMatches.length > 0 && (activeFilter === 'all' || activeFilter === 'ongoing') && (
           <div className="mb-12">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-              <h2 className="text-2xl font-black text-slate-900">Live Auctions</h2>
-              <span className="text-sm text-slate-500">({ongoingMatches.length})</span>
+              <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" style={{ boxShadow: '0 0 10px rgba(34, 197, 94, 0.5)' }}></div>
+              <GradientHeading size="lg">Live Auctions</GradientHeading>
+              <span className="text-sm text-pink-300/50">({ongoingMatches.length})</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {ongoingMatches.map(renderMatchCard)}
@@ -264,9 +277,9 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
         {!isLoading && upcomingMatches.length > 0 && (activeFilter === 'all' || activeFilter === 'upcoming') && (
           <div className="mb-12">
             <div className="flex items-center gap-3 mb-6">
-              <Clock className="w-6 h-6 text-blue-500" />
-              <h2 className="text-2xl font-black text-slate-900">Upcoming Auctions</h2>
-              <span className="text-sm text-slate-500">({upcomingMatches.length})</span>
+              <Clock className="w-6 h-6 text-pink-400" />
+              <GradientHeading size="lg">Upcoming Auctions</GradientHeading>
+              <span className="text-sm text-pink-300/50">({upcomingMatches.length})</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {upcomingMatches.map(renderMatchCard)}
@@ -278,9 +291,9 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
         {!isLoading && completedMatches.length > 0 && (activeFilter === 'all' || activeFilter === 'completed') && (
           <div>
             <div className="flex items-center gap-3 mb-6">
-              <Trophy className="w-6 h-6 text-gray-500" />
-              <h2 className="text-2xl font-black text-slate-900">Completed Auctions</h2>
-              <span className="text-sm text-slate-500">({completedMatches.length})</span>
+              <Trophy className="w-6 h-6 text-pink-400/60" />
+              <GradientHeading size="lg">Completed Auctions</GradientHeading>
+              <span className="text-sm text-pink-300/50">({completedMatches.length})</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {completedMatches.map(renderMatchCard)}
@@ -288,7 +301,18 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
           </div>
         )}
       </div>
-    </div>
+
+      {/* Support Footer */}
+      <div className="py-8 text-center" style={{ borderTop: '1px solid rgba(255, 0, 102, 0.1)' }}>
+        <p className="text-xs text-pink-300/50 font-medium">
+          Support{' '}
+          <span className="mx-2 text-pink-300/30">•</span>
+          <a href="mailto:hypehammer.mail@gmail.com" className="text-pink-400/70 hover:text-pink-400 transition-colors">
+            hypehammer.mail@gmail.com
+          </a>
+        </p>
+      </div>
+    </NeonPageWrapper>
   );
 };
 

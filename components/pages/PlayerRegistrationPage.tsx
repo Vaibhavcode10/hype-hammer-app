@@ -90,8 +90,13 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
     setUploadErrors([]);
 
     try {
-      const photoURL = await uploadPlayerPhotoViaAPI(file, (progress) => {
-        setUploadProgress(prev => ({ ...prev, photo: progress }));
+      // Use match name from selectedMatchData or selectedMatch ID as fallback
+      const matchName = selectedMatchData?.name || selectedMatchData?.seasonName || (typeof selectedMatch === 'string' ? selectedMatch : selectedMatch?.id) || 'DefaultMatch';
+      const photoURL = await uploadPlayerPhotoViaAPI(file, {
+        onProgress: (progress) => {
+          setUploadProgress(prev => ({ ...prev, photo: progress }));
+        },
+        matchName
       });
       setPlayerData(prev => ({ ...prev, imageUrl: photoURL }));
     } catch (error) {
@@ -112,8 +117,13 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
     setUploadErrors([]);
 
     try {
-      const documentURL = await uploadDocumentViaAPI(file, (progress) => {
-        setUploadProgress(prev => ({ ...prev, document: progress }));
+      // Use match name from selectedMatchData or selectedMatch ID as fallback
+      const matchName = selectedMatchData?.name || selectedMatchData?.seasonName || (typeof selectedMatch === 'string' ? selectedMatch : selectedMatch?.id) || 'DefaultMatch';
+      const documentURL = await uploadDocumentViaAPI(file, {
+        onProgress: (progress) => {
+          setUploadProgress(prev => ({ ...prev, document: progress }));
+        },
+        matchName
       });
       // Store document URL in a new field
       setPlayerData(prev => ({ ...prev, documentUrl: documentURL }));

@@ -361,6 +361,110 @@ export interface AdminControls {
   canAdjustSettings: boolean;
 }
 
+// ========================
+// BACKUP & RESTORE TYPES
+// ========================
+
+export type BackupType = 'full' | 'quick' | 'auto';
+export type BackupStatus = 'pending' | 'in-progress' | 'completed' | 'failed';
+
+export type AutoBackupInterval = 'hourly' | 'six_hours' | 'daily' | 'disabled';
+
+export interface BackupMetadata {
+  id: string;
+  matchId: string;
+  matchName: string;
+  fileName: string;
+  type: BackupType;
+  size: number; // in bytes
+  createdBy: string;
+  createdByEmail: string;
+  createdByRole: UserRole;
+  createdAt: string;
+  status: BackupStatus;
+  downloadURL?: string;
+  errorMessage?: string;
+  schemaVersion: string;
+  
+  // Counts for preview
+  playersCount: number;
+  teamsCount: number;
+  auctionsCount: number;
+  bidsCount: number;
+  usersCount: number;
+  storageFilesCount: number;
+  
+  // Auto backup specific
+  autoBackupInterval?: AutoBackupInterval;
+  nextAutoBackupAt?: string;
+}
+
+export interface BackupData {
+  schemaVersion: string;
+  createdAt: string;
+  matchId: string;
+  matchName: string;
+  backupType: BackupType;
+  
+  // Database collections
+  database: {
+    players: Player[];
+    teams: Team[];
+    auctions: any[];
+    bids: Bid[];
+    users: any[];
+    settings: any;
+    matchConfig: MatchData | null;
+    liveRoomState: LiveAuctionState | null;
+    purseData: any[];
+    soldHistory: any[];
+    unsoldHistory: any[];
+  };
+  
+  // Storage file manifest
+  storageManifest: StorageFileManifest[];
+}
+
+export interface StorageFileManifest {
+  path: string;
+  type: 'player_photo' | 'team_logo' | 'id_document' | 'asset';
+  originalUrl: string;
+  fileName: string;
+  size?: number;
+  mimeType?: string;
+}
+
+export interface RestorePreview {
+  playersCount: number;
+  teamsCount: number;
+  auctionsCount: number;
+  bidsCount: number;
+  usersCount: number;
+  storageFilesCount: number;
+  schemaVersion: string;
+  backupDate: string;
+  matchName: string;
+  isCompatible: boolean;
+  warnings: string[];
+}
+
+export interface AutoBackupConfig {
+  enabled: boolean;
+  interval: AutoBackupInterval;
+  lastBackupAt?: string;
+  nextBackupAt?: string;
+  retainCount: number; // Keep minimum N backups
+}
+
+export interface BackupPermissions {
+  canCreateFullBackup: boolean;
+  canCreateQuickBackup: boolean;
+  canRestore: boolean;
+  canScheduleAutoBackup: boolean;
+  canDeleteBackups: boolean;
+  canViewBackups: boolean;
+}
+
 export interface TeamControls {
   canBid: boolean;
   remainingBudget: number;

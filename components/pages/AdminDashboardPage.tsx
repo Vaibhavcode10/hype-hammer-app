@@ -24,6 +24,9 @@ import { firestore } from '../../services/firebaseConfig';
 import { doc, getDoc } from 'firebase/firestore';
 import { useMatchSettings } from '../../hooks/useMatchSettings';
 import { formatIndianCurrency, formatIndianCurrencyShort } from '../../services/currencyUtils';
+import { AuctionCountdown } from '../ui/AuctionCountdown';
+import { AuctionDateSettings } from '../ui/AuctionDateSettings';
+import { BackupRestoreSection } from '../ui/BackupRestoreSection';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
@@ -1546,11 +1549,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
   // Profile photo upload handler
   const handleProfilePhotoUpload = async (file: File) => {
-    const matchId = resolvedMatch?.id || currentMatch?.id;
+    const matchRef = resolvedMatch || currentMatch;
+    const matchId = matchRef?.id;
     if (!matchId) return;
     setUploadingPhoto(true);
     try {
-      const photoUrl = await uploadProfilePicture(file, matchId);
+      // Get match name for folder organization - ensure we have the actual match name
+      const matchName = matchRef?.name || matchRef?.seasonName || matchId || 'Admin_Profile';
+      const photoUrl = await uploadProfilePicture(file, matchId, matchName);
       // Save URL to match document
       const res = await fetch(`${API_BASE}/matches/${matchId}`, {
         method: 'PUT',
@@ -2017,10 +2023,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
     try {
       console.log('================== TEAM REGISTRATION START ==================');
+      
+      // Get match name for folder organization - ensure we have the actual match name
+      const matchName = matchRef?.name || matchRef?.seasonName || matchRef?.id || 'Admin_Team';
+      
       const tempTeamId = `team_${Date.now()}`;
-      const logoUrl = await uploadTeamLogo(teamLogoFile, tempTeamId);
-      const authLetterUrl = await uploadDocument(authLetterFile, 'authorization-letters', tempTeamId);
-      const govIdUrl = await uploadDocument(govIdFile, 'government-ids', tempTeamId);
+      const logoUrl = await uploadTeamLogo(teamLogoFile, tempTeamId, matchName);
+      const authLetterUrl = await uploadDocument(authLetterFile, 'authorization-letters', tempTeamId, matchName);
+      const govIdUrl = await uploadDocument(govIdFile, 'government-ids', tempTeamId, matchName);
 
       const registrationData = {
         fullName: ownerName, email: teamEmail, password: teamPassword, phone: teamPhone,
@@ -2215,9 +2225,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
     try {
       console.log('================== PLAYER REGISTRATION START ==================');
+      
+      // Get match name for folder organization - ensure we have the actual match name
+      const matchName = matchRef?.name || matchRef?.seasonName || matchRef?.id || 'Admin_Player';
+      
       const tempPlayerId = `player_${Date.now()}`;
-      const photoUrl = await uploadPlayerPhoto(playerPhotoFile, tempPlayerId);
-      const govIdUrl = await uploadDocument(playerGovIdFile, 'government-ids', tempPlayerId);
+      const photoUrl = await uploadPlayerPhoto(playerPhotoFile, tempPlayerId, matchName);
+      const govIdUrl = await uploadDocument(playerGovIdFile, 'government-ids', tempPlayerId, matchName);
 
       const registrationData = {
         fullName: playerName, email: playerEmail, phone: playerPhone, password: playerPassword,
@@ -3245,7 +3259,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
               </div>
             )}
             
-            {/* 2️⃣ ADMIN SETTINGS — Professional Compact Layout */}
+            {/* 2️⃣ ADMIN SETTINGS — Single Unified Page */}
             {activeSection === 'settings' && (
               <div className="animate-in fade-in duration-500">
                 {/* Section Header */}
@@ -3257,100 +3271,58 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                       <p className="text-xs text-pink-400/40 font-bold uppercase tracking-[0.2em] mt-0.5">Admin Control Panel</p>
                     </div>
                   </div>
-                  
-                  {/* Tab Navigation - Right Side */}
-                  <div className="flex items-center gap-2 p-2 rounded-xl hud-card">
-                    {([
-                      { id: 'account' as const, label: 'Account & Auction', icon: <User size={18} /> },
-                      { id: 'platform' as const, label: 'Platform', icon: <Shield size={18} /> },
-                      { id: 'media' as const, label: 'Media', icon: <Image size={18} /> },
-                    ]).map(tab => (
-                    <button
-                      key={tab.id}
-                      onClick={() => setSettingsTab(tab.id)}
-                      className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all ${
-                        settingsTab === tab.id
-                          ? 'bg-gradient-to-r from-pink-600/80 to-red-600/80 text-white shadow-lg'
-                          : 'text-pink-300/50 hover:text-pink-300 hover:bg-pink-500/10'
-                      }`}
-                    >
-                      {tab.icon}
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
                 </div>
 
-                <div className="grid grid-cols-12 gap-4">
+                <div className="space-y-6">
 
-                  {/* ── LEFT COLUMN: Personal Info Card (always visible) ── */}
-                  <div className="col-span-12 lg:col-span-4">
-                    <div className="hud-card rounded-2xl overflow-hidden">
-                      {/* Profile Header */}
-                      <div className="relative h-28" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.3), rgba(249, 115, 22, 0.2), rgba(139, 0, 50, 0.3))' }}>
-                        <div className="absolute inset-0 opacity-20" style={{ background: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,255,255,0.03) 3px, rgba(255,255,255,0.03) 4px)' }}></div>
+                  {/* ── COMPACT PROFILE HEADER (Full Width) ── */}
+                  <div className="hud-card rounded-2xl p-5">
+                    <div className="flex flex-wrap items-center gap-6">
+                      {/* Avatar */}
+                      <div className="relative w-20 h-20 rounded-2xl overflow-hidden flex-shrink-0" style={{ border: '3px solid rgba(255, 0, 102, 0.4)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.2)' }}>
+                        {(resolvedMatch || currentMatch)?.profilePhotoURL ? (
+                          <img src={(resolvedMatch || currentMatch)?.profilePhotoURL} alt="Admin" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-2xl font-black text-white" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.7), rgba(249, 115, 22, 0.6))' }}>
+                            {currentUser.name?.[0]?.toUpperCase() || 'A'}
+                          </div>
+                        )}
                       </div>
-                      <div className="px-6 pb-6 -mt-14 relative">
-                        {/* Avatar */}
-                        <div className="relative w-28 h-28 rounded-2xl overflow-hidden mb-4 flex-shrink-0" style={{ border: '3px solid rgba(255, 0, 102, 0.4)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.2)' }}>
-                          {(resolvedMatch || currentMatch)?.profilePhotoURL ? (
-                            <img src={(resolvedMatch || currentMatch)?.profilePhotoURL} alt="Admin" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-3xl font-black text-white" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.7), rgba(249, 115, 22, 0.6))' }}>
-                              {currentUser.name?.[0]?.toUpperCase() || 'A'}
-                            </div>
-                          )}
-                        </div>
-                        <h3 className="text-lg font-black text-pink-100 truncate">{activeMatch?.organizerName || currentUser.name}</h3>
-                        <div className="flex items-center gap-2 mt-2">
-                          <span className="px-3 py-1 rounded text-xs font-black uppercase tracking-wider bg-pink-500/20 text-pink-400 border border-pink-500/30">Admin</span>
+                      
+                      {/* Profile Info */}
+                      <div className="flex-1 min-w-[200px]">
+                        <h3 className="text-lg font-black text-pink-100">{activeMatch?.organizerName || currentUser.name}</h3>
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-pink-500/20 text-pink-400 border border-pink-500/30">Admin</span>
                           {activeMatch?.designation && (
-                            <span className="px-3 py-1 rounded text-xs font-black uppercase tracking-wider bg-orange-500/15 text-orange-400 border border-orange-500/25">{activeMatch.designation}</span>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-orange-500/15 text-orange-400 border border-orange-500/25">{activeMatch.designation}</span>
                           )}
                         </div>
-                        <div className="mt-4 space-y-2">
-                          <div className="flex items-center gap-2 text-sm text-pink-300/60">
-                            <Mail size={14} className="text-pink-400/40 flex-shrink-0" />
-                            <span className="truncate">{activeMatch?.organizerEmail || currentUser.email}</span>
-                          </div>
-                          {activeMatch?.organizerPhone && (
-                            <div className="flex items-center gap-2 text-sm text-pink-300/60">
-                              <User size={14} className="text-pink-400/40 flex-shrink-0" />
-                              <span>{activeMatch.organizerPhone}</span>
-                            </div>
-                          )}
-                          {(activeMatch?.organizationName) && (
-                            <div className="flex items-center gap-2 text-sm text-pink-300/60">
-                              <Briefcase size={14} className="text-pink-400/40 flex-shrink-0" />
-                              <span className="truncate">{activeMatch.organizationName}</span>
-                            </div>
-                          )}
-                        </div>
-                        {/* Quick Stats */}
-                        <div className="mt-5 grid grid-cols-3 gap-3">
-                          <div className="text-center p-3 rounded-lg bg-pink-900/20 border border-pink-500/15">
-                            <p className="text-lg font-black text-pink-100">{players.length}</p>
-                            <p className="text-[10px] font-bold uppercase text-pink-400/40 tracking-wider">Players</p>
-                          </div>
-                          <div className="text-center p-3 rounded-lg bg-pink-900/20 border border-pink-500/15">
-                            <p className="text-lg font-black text-pink-100">{teams.length}</p>
-                            <p className="text-[10px] font-bold uppercase text-pink-400/40 tracking-wider">Teams</p>
-                          </div>
-                          <div className="text-center p-3 rounded-lg bg-pink-900/20 border border-pink-500/15">
-                            <p className="text-lg font-black text-emerald-400">₹{((seasonSettings.baseTeamBudget || 0) / 10000000).toFixed(1)}Cr</p>
-                            <p className="text-[10px] font-bold uppercase text-pink-400/40 tracking-wider">Budget</p>
-                          </div>
+                        <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-pink-300/60">
+                          <span className="flex items-center gap-1.5"><Mail size={12} className="text-pink-400/40" /> {activeMatch?.organizerEmail || currentUser.email}</span>
+                          {activeMatch?.organizerPhone && <span className="flex items-center gap-1.5"><User size={12} className="text-pink-400/40" /> {activeMatch.organizerPhone}</span>}
+                          {activeMatch?.organizationName && <span className="flex items-center gap-1.5"><Briefcase size={12} className="text-pink-400/40" /> {activeMatch.organizationName}</span>}
                         </div>
                       </div>
-                    </div>
 
-                    {/* Match Status Control — compact */}
-                    <div className="hud-card rounded-2xl p-4 mt-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Activity size={14} className="text-pink-400/60" />
-                        <h4 className="text-[10px] font-black text-pink-400/60 uppercase tracking-wider">Match Status</h4>
+                      {/* Quick Stats */}
+                      <div className="flex gap-3">
+                        <div className="text-center px-4 py-2 rounded-lg bg-pink-900/20 border border-pink-500/15">
+                          <p className="text-xl font-black text-pink-100">{players.length}</p>
+                          <p className="text-[9px] font-bold uppercase text-pink-400/40 tracking-wider">Players</p>
+                        </div>
+                        <div className="text-center px-4 py-2 rounded-lg bg-pink-900/20 border border-pink-500/15">
+                          <p className="text-xl font-black text-pink-100">{teams.length}</p>
+                          <p className="text-[9px] font-bold uppercase text-pink-400/40 tracking-wider">Teams</p>
+                        </div>
+                        <div className="text-center px-4 py-2 rounded-lg bg-pink-900/20 border border-pink-500/15">
+                          <p className="text-xl font-black text-emerald-400">₹{((seasonSettings.baseTeamBudget || 0) / 10000000).toFixed(1)}Cr</p>
+                          <p className="text-[9px] font-bold uppercase text-pink-400/40 tracking-wider">Budget</p>
+                        </div>
                       </div>
-                      <div className="flex gap-1.5">
+
+                      {/* Match Status */}
+                      <div className="flex items-center gap-2">
                         {(['SETUP', 'ONGOING', 'COMPLETED'] as const).map(s => (
                           <button
                             key={s}
@@ -3365,9 +3337,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                                 addSystemLog('admin', `Match status → ${s}`);
                               }
                             }}
-                            className={`flex-1 px-2 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${
+                            className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
                               resolvedMatch?.status === s
-                                ? s === 'ONGOING' ? 'bg-green-500 text-white neon-pulse' :
+                                ? s === 'ONGOING' ? 'bg-green-500 text-white' :
                                   s === 'COMPLETED' ? 'bg-gray-500 text-white' : 'bg-blue-500 text-white'
                                 : 'hud-card text-pink-300/40 hover:text-pink-300/70'
                             }`}
@@ -3379,338 +3351,342 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                     </div>
                   </div>
 
-                  {/* ── RIGHT COLUMN: Tab Content ── */}
-                  <div className="col-span-12 lg:col-span-8">
+                  {/* ── FULL WIDTH SETTINGS GRID ── */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
-                    {/* ─── ACCOUNT & AUCTION TAB (COMBINED) ─── */}
-                    {settingsTab === 'account' && (
-                      <div className="space-y-4">
-                        {/* Account Settings Card */}
-                        <div className="hud-card rounded-2xl p-5">
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-2">
-                              <div className="w-8 h-8 rounded-lg bg-pink-500/20 flex items-center justify-center border border-pink-500/30">
-                                <User size={14} className="text-pink-400" />
-                              </div>
-                              <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Account Settings</h3>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {editingAccount ? (
-                                <>
-                                  <button onClick={() => { setEditingAccount(false); if (activeMatch) setAccountSettings({ name: activeMatch.organizerName || currentUser.name || '', email: activeMatch.organizerEmail || currentUser.email || '', phone: activeMatch.organizerPhone || '', organizationName: activeMatch.organizationName || '', organizationType: activeMatch.organizationType || '', designation: activeMatch.designation || '' }); }} className="px-3 py-1.5 rounded-lg hud-card text-pink-300/60 text-[10px] font-bold flex items-center gap-1 hover:bg-pink-500/10 transition-all">
-                                    <X size={12} /> Cancel
-                                  </button>
-                                  <button onClick={handleSaveAccountSettings} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
-                                    <Save size={12} /> Save
-                                  </button>
-                                </>
-                              ) : (
-                                <button onClick={() => setEditingAccount(true)} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-600 to-red-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
-                                  <Edit size={12} /> Edit
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Full Name</label>
-                              <input type="text" value={accountSettings.name} onChange={(e) => setAccountSettings({...accountSettings, name: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
-                            </div>
-                            <div>
-                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Email Address</label>
-                              <input type="email" value={accountSettings.email} onChange={(e) => setAccountSettings({...accountSettings, email: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
-                            </div>
-                            <div>
-                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Phone Number</label>
-                              <input type="tel" value={accountSettings.phone} onChange={(e) => setAccountSettings({...accountSettings, phone: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" placeholder="Not set" />
-                            </div>
-                            <div>
-                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Designation</label>
-                              <select value={accountSettings.designation} onChange={(e) => setAccountSettings({...accountSettings, designation: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
-                                <option value="">Select</option>
-                                <option value="Organizer">Organizer</option>
-                                <option value="Coordinator">Coordinator</option>
-                                <option value="Owner">Owner</option>
-                              </select>
-                            </div>
-                          </div>
-                        </div>
-                        {/* Password Change Card */}
-                        <div className="hud-card rounded-2xl p-5">
-                          <div className="flex items-center gap-2 mb-3">
-                            <Lock size={14} className="text-orange-400/60" />
-                            <h4 className="text-[10px] font-black text-pink-400/50 uppercase tracking-wider">Security</h4>
-                          </div>
-                          <p className="text-xs text-pink-300/40 mb-3">Password can be changed via the authentication system.</p>
-                          <button className="px-4 py-2 rounded-lg hud-card text-pink-300/50 text-[10px] font-bold uppercase tracking-wider hover:bg-pink-500/10 hover:text-pink-300 transition-all flex items-center gap-2" onClick={() => alert('Password reset will be sent to your email.')}>
-                            <Lock size={12} />
-                            Request Password Reset
-                          </button>
-                        </div>
-                        
-                        {/* Auction Configuration Card */}
-                        <div className="hud-card rounded-2xl p-5">
-                          <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
-                              <Gavel size={14} className="text-indigo-400" />
-                            </div>
-                            <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Auction Configuration</h3>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {editingSettings ? (
-                              <>
-                                <button onClick={() => setEditingSettings(false)} className="px-3 py-1.5 rounded-lg hud-card text-pink-300/60 text-[10px] font-bold flex items-center gap-1 hover:bg-pink-500/10 transition-all">
-                                  <X size={12} /> Cancel
-                                </button>
-                                <button onClick={handleSaveSettings} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
-                                  <Save size={12} /> Save
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <button onClick={() => setEditingSettings(true)} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-600 to-red-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
-                                  <Edit size={12} /> Edit
-                                </button>
-                                <button onClick={handleLockSeason} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-red-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
-                                  <Lock size={12} /> Lock
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
+                    {/* 🎯 AUCTION DATE SETTINGS — Full Width */}
+                    <div className="lg:col-span-2">
+                      <AuctionDateSettings 
+                        matchId={resolvedMatch?.id || currentMatch?.id}
+                        canEdit={true}
+                      />
+                    </div>
 
-                        {/* Season Info Row */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                          <div>
-                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Season Name</label>
-                            <input type="text" value={seasonSettings.name} onChange={(e) => setSeasonSettings({...seasonSettings, name: e.target.value})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                    {/* Account Settings Card */}
+                    <div className="hud-card rounded-2xl p-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-lg bg-pink-500/20 flex items-center justify-center border border-pink-500/30">
+                            <User size={14} className="text-pink-400" />
                           </div>
-                          <div>
-                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Sport Type</label>
-                            <select value={seasonSettings.sport} onChange={(e) => setSeasonSettings({...seasonSettings, sport: e.target.value})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
-                              <option value="Cricket">Cricket</option>
-                              <option value="Football">Football</option>
-                              <option value="Basketball">Basketball</option>
-                              <option value="Kabaddi">Kabaddi</option>
-                            </select>
-                          </div>
+                          <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Account Settings</h3>
                         </div>
-
-                        {/* Budget & Bid Row */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                          <div>
-                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Base Team Budget (₹)</label>
-                            <input type="number" value={seasonSettings.baseTeamBudget} onChange={(e) => setSeasonSettings({...seasonSettings, baseTeamBudget: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all font-mono" />
-                            <p className="text-[9px] text-emerald-400/50 mt-0.5 font-mono">₹{(seasonSettings.baseTeamBudget || 0).toLocaleString()}</p>
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Bid Increment (₹)</label>
-                            <input type="number" value={seasonSettings.bidIncrement} onChange={(e) => setSeasonSettings({...seasonSettings, bidIncrement: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all font-mono" />
-                            <p className="text-[9px] text-emerald-400/50 mt-0.5 font-mono">₹{(seasonSettings.bidIncrement || 0).toLocaleString()}</p>
-                          </div>
-                        </div>
-
-                        {/* Team & Squad Row */}
-                        <div className="grid grid-cols-3 gap-3 mb-4">
-                          <div>
-                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Max Teams</label>
-                            <input type="number" value={seasonSettings.maxTeams} onChange={(e) => setSeasonSettings({...seasonSettings, maxTeams: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Min Squad</label>
-                            <input type="number" value={seasonSettings.minSquadSize} onChange={(e) => setSeasonSettings({...seasonSettings, minSquadSize: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Max Squad</label>
-                            <input type="number" value={seasonSettings.maxSquadSize} onChange={(e) => setSeasonSettings({...seasonSettings, maxSquadSize: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
-                          </div>
-                        </div>
-
-                        {/* Duration Row */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Auction Duration (min)</label>
-                            <input type="number" value={seasonSettings.duration} onChange={(e) => setSeasonSettings({...seasonSettings, duration: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
-                          </div>
-                          <div className="flex items-end">
-                            <div className="w-full p-2.5 rounded-lg bg-pink-900/10 border border-pink-500/10">
-                              <p className="text-[9px] text-pink-300/40 flex items-center gap-1.5"><AlertCircle size={10} /> Budget changes won't affect existing teams</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      </div>
-                    )}
-
-                    {/* ─── PLATFORM TAB ─── */}
-                    {settingsTab === 'platform' && (
-                      <div className="space-y-4">
-                        <div className="hud-card rounded-2xl p-5">
-                          <div className="flex items-center gap-2 mb-4">
-                            <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
-                              <Shield size={14} className="text-cyan-400" />
-                            </div>
-                            <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Organization & Platform</h3>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                            <div>
-                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Organization Name</label>
-                              <input type="text" value={accountSettings.organizationName} onChange={(e) => setAccountSettings({...accountSettings, organizationName: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" placeholder="Not set" />
-                            </div>
-                            <div>
-                              <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Organization Type</label>
-                              <select value={accountSettings.organizationType} onChange={(e) => setAccountSettings({...accountSettings, organizationType: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
-                                <option value="">Select</option>
-                                <option value="Sports Club">Sports Club</option>
-                                <option value="Corporate">Corporate</option>
-                                <option value="Educational">Educational</option>
-                                <option value="Government">Government</option>
-                                <option value="Other">Other</option>
-                              </select>
-                            </div>
-                          </div>
-                          {!editingAccount && (
-                            <button onClick={() => { setEditingAccount(true); setSettingsTab('account'); }} className="text-[10px] text-pink-400/40 hover:text-pink-400 transition-all flex items-center gap-1 font-bold">
-                              <Edit size={10} /> Edit in Account tab
+                        <div className="flex items-center gap-2">
+                          {editingAccount ? (
+                            <>
+                              <button onClick={() => { setEditingAccount(false); if (activeMatch) setAccountSettings({ name: activeMatch.organizerName || currentUser.name || '', email: activeMatch.organizerEmail || currentUser.email || '', phone: activeMatch.organizerPhone || '', organizationName: activeMatch.organizationName || '', organizationType: activeMatch.organizationType || '', designation: activeMatch.designation || '' }); }} className="px-3 py-1.5 rounded-lg hud-card text-pink-300/60 text-[10px] font-bold flex items-center gap-1 hover:bg-pink-500/10 transition-all">
+                                <X size={12} /> Cancel
+                              </button>
+                              <button onClick={handleSaveAccountSettings} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
+                                <Save size={12} /> Save
+                              </button>
+                            </>
+                          ) : (
+                            <button onClick={() => setEditingAccount(true)} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-600 to-red-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
+                              <Edit size={12} /> Edit
                             </button>
                           )}
                         </div>
-                        {/* Access & Role Info */}
-                        <div className="hud-card rounded-2xl p-5">
-                          <div className="flex items-center gap-2 mb-4">
-                            <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center border border-amber-500/30">
-                              <Star size={14} className="text-amber-400" />
-                            </div>
-                            <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Access & Role</h3>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
-                              <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Role</p>
-                              <p className="text-sm font-black text-pink-100">Administrator</p>
-                            </div>
-                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
-                              <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Access Level</p>
-                              <p className="text-sm font-black text-pink-100">Full Access</p>
-                            </div>
-                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
-                              <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Match ID</p>
-                              <p className="text-[11px] font-mono text-pink-300/60 truncate">{activeMatch?.id || '—'}</p>
-                            </div>
-                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
-                              <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Venue</p>
-                              <p className="text-sm font-bold text-pink-100 truncate">{activeMatch?.place || activeMatch?.venueLocation || activeMatch?.venueMode || '—'}</p>
-                            </div>
-                          </div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Full Name</label>
+                          <input type="text" value={accountSettings.name} onChange={(e) => setAccountSettings({...accountSettings, name: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
                         </div>
-                        {/* Data Stats */}
-                        <div className="hud-card rounded-2xl p-5">
-                          <div className="flex items-center gap-2 mb-3">
-                            <BarChart3 size={14} className="text-pink-400/60" />
-                            <h4 className="text-[10px] font-black text-pink-400/50 uppercase tracking-wider">Data Overview</h4>
-                          </div>
-                          <div className="grid grid-cols-4 gap-2">
-                            <div className="text-center p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                              <p className="text-lg font-black text-blue-400">{eligiblePlayers.length}</p>
-                              <p className="text-[8px] font-bold uppercase text-blue-400/50 tracking-wider">Players</p>
-                            </div>
-                            <div className="text-center p-2.5 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                              <p className="text-lg font-black text-orange-400">{teams.length}</p>
-                              <p className="text-[8px] font-bold uppercase text-orange-400/50 tracking-wider">Teams</p>
-                            </div>
-                            <div className="text-center p-2.5 rounded-lg bg-green-500/10 border border-green-500/20">
-                              <p className="text-lg font-black text-green-400">{eligiblePlayers.filter(p => p.status === 'SOLD').length}</p>
-                              <p className="text-[8px] font-bold uppercase text-green-400/50 tracking-wider">Sold</p>
-                            </div>
-                            <div className="text-center p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                              <p className="text-lg font-black text-amber-400">{eligiblePlayers.filter(p => p.status === 'PENDING' || p.status === 'AVAILABLE').length}</p>
-                              <p className="text-[8px] font-bold uppercase text-amber-400/50 tracking-wider">Pending</p>
-                            </div>
-                          </div>
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Email Address</label>
+                          <input type="email" value={accountSettings.email} onChange={(e) => setAccountSettings({...accountSettings, email: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Phone Number</label>
+                          <input type="tel" value={accountSettings.phone} onChange={(e) => setAccountSettings({...accountSettings, phone: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" placeholder="Not set" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Designation</label>
+                          <select value={accountSettings.designation} onChange={(e) => setAccountSettings({...accountSettings, designation: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
+                            <option value="">Select</option>
+                            <option value="Organizer">Organizer</option>
+                            <option value="Coordinator">Coordinator</option>
+                            <option value="Owner">Owner</option>
+                          </select>
                         </div>
                       </div>
-                    )}
+                    </div>
 
-                    {/* ─── MEDIA TAB ─── */}
-                    {settingsTab === 'media' && (
-                      <div className="space-y-4">
-                        <div className="hud-card rounded-2xl p-5">
-                          <div className="flex items-center gap-2 mb-4">
-                            <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center border border-purple-500/30">
-                              <Image size={14} className="text-purple-400" />
-                            </div>
-                            <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Profile Image</h3>
+                    {/* Password Change Card */}
+                    <div className="hud-card rounded-2xl p-5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Lock size={14} className="text-orange-400/60" />
+                        <h4 className="text-[10px] font-black text-pink-400/50 uppercase tracking-wider">Security</h4>
+                      </div>
+                      <p className="text-xs text-pink-300/40 mb-3">Password can be changed via the authentication system.</p>
+                      <button className="px-4 py-2 rounded-lg hud-card text-pink-300/50 text-[10px] font-bold uppercase tracking-wider hover:bg-pink-500/10 hover:text-pink-300 transition-all flex items-center gap-2" onClick={() => alert('Password reset will be sent to your email.')}>
+                        <Lock size={12} />
+                        Request Password Reset
+                      </button>
+                    </div>
+                        
+                    {/* Auction Configuration Card */}
+                    <div className="hud-card rounded-2xl p-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
+                            <Gavel size={14} className="text-indigo-400" />
                           </div>
-                          <div className="flex items-start gap-5">
-                            {/* Current Image */}
-                            <div className="flex-shrink-0">
-                              <div className="w-28 h-28 rounded-2xl overflow-hidden" style={{ border: '2px solid rgba(255, 0, 102, 0.3)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.1)' }}>
-                                {(resolvedMatch || currentMatch)?.profilePhotoURL ? (
-                                  <img src={(resolvedMatch || currentMatch)?.profilePhotoURL} alt="Profile" className="w-full h-full object-cover" />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-3xl font-black text-white" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.5), rgba(249, 115, 22, 0.4))' }}>
-                                    {currentUser.name?.[0]?.toUpperCase() || 'A'}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            {/* Upload Zone */}
-                            <div className="flex-1">
-                              <p className="text-xs text-pink-300/50 mb-3">Upload a new profile photo. Supported: JPG, PNG, WebP. Max 5MB.</p>
-                              <label className={`flex items-center justify-center gap-2 px-4 py-3 rounded-xl cursor-pointer transition-all ${uploadingPhoto ? 'opacity-50 pointer-events-none' : 'hover:bg-pink-500/15 hover:border-pink-500/40'}`} style={{ background: 'rgba(255, 0, 102, 0.06)', border: '1px dashed rgba(255, 0, 102, 0.25)' }}>
-                                {uploadingPhoto ? (
-                                  <><Loader2 size={16} className="text-pink-400 animate-spin" /><span className="text-[10px] font-bold text-pink-400 uppercase tracking-wider">Uploading...</span></>
-                                ) : (
-                                  <><Upload size={16} className="text-pink-400/60" /><span className="text-[10px] font-bold text-pink-300/60 uppercase tracking-wider">Choose File</span></>
-                                )}
-                                <input
-                                  type="file"
-                                  accept="image/jpeg,image/png,image/webp"
-                                  className="hidden"
-                                  onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    if (file) {
-                                      if (file.size > 5 * 1024 * 1024) { alert('File too large (max 5MB)'); return; }
-                                      handleProfilePhotoUpload(file);
-                                    }
-                                  }}
-                                />
-                              </label>
-                              {(resolvedMatch || currentMatch)?.profilePhotoURL && (
-                                <p className="text-[9px] text-green-400/50 mt-2 flex items-center gap-1"><CheckCircle size={10} /> Current photo loaded from server</p>
-                              )}
-                            </div>
-                          </div>
+                          <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Auction Configuration</h3>
                         </div>
-                        {/* Document Info */}
-                        <div className="hud-card rounded-2xl p-5">
-                          <div className="flex items-center gap-2 mb-3">
-                            <FileText size={14} className="text-pink-400/60" />
-                            <h4 className="text-[10px] font-black text-pink-400/50 uppercase tracking-wider">Verification Documents</h4>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10 flex items-center gap-3">
-                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${activeMatch?.governmentIdURL ? 'bg-green-500/20 border-green-500/30' : 'bg-pink-900/20 border-pink-500/15'} border`}>
-                                {activeMatch?.governmentIdURL ? <CheckCircle size={14} className="text-green-400" /> : <X size={14} className="text-pink-400/30" />}
-                              </div>
-                              <div>
-                                <p className="text-xs font-bold text-pink-100">Government ID</p>
-                                <p className="text-[9px] text-pink-300/40">{activeMatch?.governmentId || 'Not provided'}</p>
-                              </div>
-                            </div>
-                            <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10 flex items-center gap-3">
-                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${activeMatch?.organizerProofURL ? 'bg-green-500/20 border-green-500/30' : 'bg-pink-900/20 border-pink-500/15'} border`}>
-                                {activeMatch?.organizerProofURL ? <CheckCircle size={14} className="text-green-400" /> : <X size={14} className="text-pink-400/30" />}
-                              </div>
-                              <div>
-                                <p className="text-xs font-bold text-pink-100">Organizer Proof</p>
-                                <p className="text-[9px] text-pink-300/40">{activeMatch?.organizerProofURL ? 'Uploaded' : 'Not provided'}</p>
-                              </div>
-                            </div>
+                        <div className="flex items-center gap-2">
+                          {editingSettings ? (
+                            <>
+                              <button onClick={() => setEditingSettings(false)} className="px-3 py-1.5 rounded-lg hud-card text-pink-300/60 text-[10px] font-bold flex items-center gap-1 hover:bg-pink-500/10 transition-all">
+                                <X size={12} /> Cancel
+                              </button>
+                              <button onClick={handleSaveSettings} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
+                                <Save size={12} /> Save
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={() => setEditingSettings(true)} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-600 to-red-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
+                                <Edit size={12} /> Edit
+                              </button>
+                              <button onClick={handleLockSeason} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-red-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
+                                <Lock size={12} /> Lock
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Season Info Row */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Season Name</label>
+                          <input type="text" value={seasonSettings.name} onChange={(e) => setSeasonSettings({...seasonSettings, name: e.target.value})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Sport Type</label>
+                          <select value={seasonSettings.sport} onChange={(e) => setSeasonSettings({...seasonSettings, sport: e.target.value})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
+                            <option value="Cricket">Cricket</option>
+                            <option value="Football">Football</option>
+                            <option value="Basketball">Basketball</option>
+                            <option value="Kabaddi">Kabaddi</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Budget & Bid Row */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Base Team Budget (₹)</label>
+                          <input type="number" value={seasonSettings.baseTeamBudget} onChange={(e) => setSeasonSettings({...seasonSettings, baseTeamBudget: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all font-mono" />
+                          <p className="text-[9px] text-emerald-400/50 mt-0.5 font-mono">₹{(seasonSettings.baseTeamBudget || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Bid Increment (₹)</label>
+                          <input type="number" value={seasonSettings.bidIncrement} onChange={(e) => setSeasonSettings({...seasonSettings, bidIncrement: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all font-mono" />
+                          <p className="text-[9px] text-emerald-400/50 mt-0.5 font-mono">₹{(seasonSettings.bidIncrement || 0).toLocaleString()}</p>
+                        </div>
+                      </div>
+
+                      {/* Team & Squad Row */}
+                      <div className="grid grid-cols-3 gap-3 mb-4">
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Max Teams</label>
+                          <input type="number" value={seasonSettings.maxTeams} onChange={(e) => setSeasonSettings({...seasonSettings, maxTeams: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Min Squad</label>
+                          <input type="number" value={seasonSettings.minSquadSize} onChange={(e) => setSeasonSettings({...seasonSettings, minSquadSize: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Max Squad</label>
+                          <input type="number" value={seasonSettings.maxSquadSize} onChange={(e) => setSeasonSettings({...seasonSettings, maxSquadSize: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                        </div>
+                      </div>
+
+                      {/* Duration Row */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Auction Duration (min)</label>
+                          <input type="number" value={seasonSettings.duration} onChange={(e) => setSeasonSettings({...seasonSettings, duration: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
+                        </div>
+                        <div className="flex items-end">
+                          <div className="w-full p-2.5 rounded-lg bg-pink-900/10 border border-pink-500/10">
+                            <p className="text-[9px] text-pink-300/40 flex items-center gap-1.5"><AlertCircle size={10} /> Budget changes won't affect existing teams</p>
                           </div>
                         </div>
                       </div>
-                    )}
+                    </div>
+
+                    {/* Organization & Platform Card */}
+                    <div className="hud-card rounded-2xl p-5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
+                          <Shield size={14} className="text-cyan-400" />
+                        </div>
+                        <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Organization & Platform</h3>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Organization Name</label>
+                          <input type="text" value={accountSettings.organizationName} onChange={(e) => setAccountSettings({...accountSettings, organizationName: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" placeholder="Not set" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Organization Type</label>
+                          <select value={accountSettings.organizationType} onChange={(e) => setAccountSettings({...accountSettings, organizationType: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
+                            <option value="">Select</option>
+                            <option value="Sports Club">Sports Club</option>
+                            <option value="Corporate">Corporate</option>
+                            <option value="Educational">Educational</option>
+                            <option value="Government">Government</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </div>
+                      </div>
+                      {!editingAccount && (
+                        <button onClick={() => setEditingAccount(true)} className="text-[10px] text-pink-400/40 hover:text-pink-400 transition-all flex items-center gap-1 font-bold">
+                          <Edit size={10} /> Edit organization details above
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Access & Role Info */}
+                    <div className="hud-card rounded-2xl p-5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center border border-amber-500/30">
+                          <Star size={14} className="text-amber-400" />
+                        </div>
+                        <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Access & Role</h3>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
+                          <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Role</p>
+                          <p className="text-sm font-black text-pink-100">Administrator</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
+                          <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Access Level</p>
+                          <p className="text-sm font-black text-pink-100">Full Access</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
+                          <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Match ID</p>
+                          <p className="text-[11px] font-mono text-pink-300/60 truncate">{activeMatch?.id || '—'}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
+                          <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Venue</p>
+                          <p className="text-sm font-bold text-pink-100 truncate">{activeMatch?.place || activeMatch?.venueLocation || activeMatch?.venueMode || '—'}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Data Stats */}
+                    <div className="hud-card rounded-2xl p-5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <BarChart3 size={14} className="text-pink-400/60" />
+                        <h4 className="text-[10px] font-black text-pink-400/50 uppercase tracking-wider">Data Overview</h4>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2">
+                        <div className="text-center p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                          <p className="text-lg font-black text-blue-400">{eligiblePlayers.length}</p>
+                          <p className="text-[8px] font-bold uppercase text-blue-400/50 tracking-wider">Players</p>
+                        </div>
+                        <div className="text-center p-2.5 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                          <p className="text-lg font-black text-orange-400">{teams.length}</p>
+                          <p className="text-[8px] font-bold uppercase text-orange-400/50 tracking-wider">Teams</p>
+                        </div>
+                        <div className="text-center p-2.5 rounded-lg bg-green-500/10 border border-green-500/20">
+                          <p className="text-lg font-black text-green-400">{eligiblePlayers.filter(p => p.status === 'SOLD').length}</p>
+                          <p className="text-[8px] font-bold uppercase text-green-400/50 tracking-wider">Sold</p>
+                        </div>
+                        <div className="text-center p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                          <p className="text-lg font-black text-amber-400">{eligiblePlayers.filter(p => p.status === 'PENDING' || p.status === 'AVAILABLE').length}</p>
+                          <p className="text-[8px] font-bold uppercase text-amber-400/50 tracking-wider">Pending</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Profile Image Card */}
+                    <div className="hud-card rounded-2xl p-5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center border border-purple-500/30">
+                          <Image size={14} className="text-purple-400" />
+                        </div>
+                        <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Profile Image</h3>
+                      </div>
+                      <div className="flex items-start gap-5">
+                        {/* Current Image */}
+                        <div className="flex-shrink-0">
+                          <div className="w-28 h-28 rounded-2xl overflow-hidden" style={{ border: '2px solid rgba(255, 0, 102, 0.3)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.1)' }}>
+                            {(resolvedMatch || currentMatch)?.profilePhotoURL ? (
+                              <img src={(resolvedMatch || currentMatch)?.profilePhotoURL} alt="Profile" className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-3xl font-black text-white" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.5), rgba(249, 115, 22, 0.4))' }}>
+                                {currentUser.name?.[0]?.toUpperCase() || 'A'}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {/* Upload Zone */}
+                        <div className="flex-1">
+                          <p className="text-xs text-pink-300/50 mb-3">Upload a new profile photo. Supported: JPG, PNG, WebP. Max 5MB.</p>
+                          <label className={`flex items-center justify-center gap-2 px-4 py-3 rounded-xl cursor-pointer transition-all ${uploadingPhoto ? 'opacity-50 pointer-events-none' : 'hover:bg-pink-500/15 hover:border-pink-500/40'}`} style={{ background: 'rgba(255, 0, 102, 0.06)', border: '1px dashed rgba(255, 0, 102, 0.25)' }}>
+                            {uploadingPhoto ? (
+                              <><Loader2 size={16} className="text-pink-400 animate-spin" /><span className="text-[10px] font-bold text-pink-400 uppercase tracking-wider">Uploading...</span></>
+                            ) : (
+                              <><Upload size={16} className="text-pink-400/60" /><span className="text-[10px] font-bold text-pink-300/60 uppercase tracking-wider">Choose File</span></>
+                            )}
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  if (file.size > 5 * 1024 * 1024) { alert('File too large (max 5MB)'); return; }
+                                  handleProfilePhotoUpload(file);
+                                }
+                              }}
+                            />
+                          </label>
+                          {(resolvedMatch || currentMatch)?.profilePhotoURL && (
+                            <p className="text-[9px] text-green-400/50 mt-2 flex items-center gap-1"><CheckCircle size={10} /> Current photo loaded from server</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Document Info */}
+                    <div className="hud-card rounded-2xl p-5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <FileText size={14} className="text-pink-400/60" />
+                        <h4 className="text-[10px] font-black text-pink-400/50 uppercase tracking-wider">Verification Documents</h4>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10 flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${activeMatch?.governmentIdURL ? 'bg-green-500/20 border-green-500/30' : 'bg-pink-900/20 border-pink-500/15'} border`}>
+                            {activeMatch?.governmentIdURL ? <CheckCircle size={14} className="text-green-400" /> : <X size={14} className="text-pink-400/30" />}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-pink-100">Government ID</p>
+                            <p className="text-[9px] text-pink-300/40">{activeMatch?.governmentId || 'Not provided'}</p>
+                          </div>
+                        </div>
+                        <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10 flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${activeMatch?.organizerProofURL ? 'bg-green-500/20 border-green-500/30' : 'bg-pink-900/20 border-pink-500/15'} border`}>
+                            {activeMatch?.organizerProofURL ? <CheckCircle size={14} className="text-green-400" /> : <X size={14} className="text-pink-400/30" />}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-pink-100">Organizer Proof</p>
+                            <p className="text-[9px] text-pink-300/40">{activeMatch?.organizerProofURL ? 'Uploaded' : 'Not provided'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Data Backup & Restore */}
+                    <div className="lg:col-span-2">
+                      <BackupRestoreSection currentMatch={resolvedMatch || currentMatch} currentUser={currentUser} />
+                    </div>
 
                   </div>
                 </div>

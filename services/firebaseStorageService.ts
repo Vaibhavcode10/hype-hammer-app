@@ -1,40 +1,66 @@
 /**
  * Firebase Storage Service
  * Handles file uploads, downloads, and deletions from Firebase Storage
+ * 
+ * Storage Structure (Match-Based):
+ * When matchName is provided, files are organized under:
+ *   {MatchName}/Players/   - Player photos
+ *   {MatchName}/Teams/     - Team logos
+ *   {MatchName}/Documents/ - PDFs and documents
+ *   {MatchName}/Auctioneers/ - Auctioneer photos
+ *   {MatchName}/Recordings/ - Auction recordings
+ *   {MatchName}/Replays/   - Auction replays
+ *   {MatchName}/Highlights/ - Match highlights
+ *   {MatchName}/Profiles/  - Profile pictures
  */
 
 import { storage } from './firebaseConfig';
 import { ref, uploadBytes, getDownloadURL, deleteObject, listAll } from 'firebase/storage';
 
-// Storage folder structure
+// Storage folder structure (without match prefix)
 export const STORAGE_FOLDERS = {
-  PLAYER_PHOTOS: 'players/photos',
-  TEAM_LOGOS: 'teams/logos',
-  AUCTION_VIDEOS: 'auctions/videos',
-  AUCTION_REPLAYS: 'auctions/replays',
-  AUCTION_RECORDINGS: 'auctions/recordings',
-  DOCUMENTS: 'documents',
-  USER_PROFILES: 'users/profiles',
-  MATCH_HIGHLIGHTS: 'matches/highlights',
+  PLAYER_PHOTOS: 'Players',
+  TEAM_LOGOS: 'Teams',
+  AUCTION_VIDEOS: 'Videos',
+  AUCTION_REPLAYS: 'Replays',
+  AUCTION_RECORDINGS: 'Recordings',
+  DOCUMENTS: 'Documents',
+  USER_PROFILES: 'Profiles',
+  MATCH_HIGHLIGHTS: 'Highlights',
+  AUCTIONEERS: 'Auctioneers',
 };
+
+/**
+ * Build storage path with optional match name prefix
+ */
+function buildStoragePath(folder: string, fileName: string, matchName?: string): string {
+  if (matchName) {
+    // Sanitize match name for use as folder name
+    const safeMatchName = matchName.replace(/[\s\/\\]/g, '_');
+    return `${safeMatchName}/${folder}/${fileName}`;
+  }
+  return `${folder}/${fileName}`;
+}
 
 /**
  * Upload a file to Firebase Storage and return its download URL
  * @param file - File to upload
  * @param folder - Storage folder path
  * @param fileName - Optional custom file name
+ * @param matchName - Optional match name for folder organization
  * @returns Download URL of the uploaded file
  */
 export async function uploadFileToStorage(
   file: File,
   folder: string,
-  fileName?: string
+  fileName?: string,
+  matchName?: string
 ): Promise<string> {
   try {
     // Generate file name with timestamp for uniqueness
     const timestamp = Date.now();
     const finalFileName = fileName || `${timestamp}_${file.name}`;
-    const storagePath = `${folder}/${finalFileName}`;
+    const storagePath = buildStoragePath(folder, finalFileName, matchName);
 
     // Create storage reference
     const fileRef = ref(storage, storagePath);
@@ -57,51 +83,83 @@ export async function uploadFileToStorage(
 
 /**
  * Upload player photo
+ * @param file - Image file
+ * @param playerId - Player ID for file naming
+ * @param matchName - Optional match name for folder organization
  */
-export async function uploadPlayerPhoto(file: File, playerId: string): Promise<string> {
-  return uploadFileToStorage(file, STORAGE_FOLDERS.PLAYER_PHOTOS, `${playerId}_${Date.now()}`);
+export async function uploadPlayerPhoto(file: File, playerId: string, matchName?: string): Promise<string> {
+  return uploadFileToStorage(file, STORAGE_FOLDERS.PLAYER_PHOTOS, `${playerId}_${Date.now()}`, matchName);
 }
 
 /**
  * Upload team logo
+ * @param file - Image file
+ * @param teamId - Team ID for file naming
+ * @param matchName - Optional match name for folder organization
  */
-export async function uploadTeamLogo(file: File, teamId: string): Promise<string> {
-  return uploadFileToStorage(file, STORAGE_FOLDERS.TEAM_LOGOS, `${teamId}_${Date.now()}`);
+export async function uploadTeamLogo(file: File, teamId: string, matchName?: string): Promise<string> {
+  return uploadFileToStorage(file, STORAGE_FOLDERS.TEAM_LOGOS, `${teamId}_${Date.now()}`, matchName);
 }
 
 /**
  * Upload auction video/recording
+ * @param file - Video file
+ * @param auctionId - Auction ID for file naming
+ * @param matchName - Optional match name for folder organization
  */
-export async function uploadAuctionRecording(file: File, auctionId: string): Promise<string> {
-  return uploadFileToStorage(file, STORAGE_FOLDERS.AUCTION_RECORDINGS, `${auctionId}_${Date.now()}`);
+export async function uploadAuctionRecording(file: File, auctionId: string, matchName?: string): Promise<string> {
+  return uploadFileToStorage(file, STORAGE_FOLDERS.AUCTION_RECORDINGS, `${auctionId}_${Date.now()}`, matchName);
 }
 
 /**
  * Upload auction replay
+ * @param file - Video file
+ * @param auctionId - Auction ID for file naming
+ * @param matchName - Optional match name for folder organization
  */
-export async function uploadAuctionReplay(file: File, auctionId: string): Promise<string> {
-  return uploadFileToStorage(file, STORAGE_FOLDERS.AUCTION_REPLAYS, `${auctionId}_${Date.now()}`);
+export async function uploadAuctionReplay(file: File, auctionId: string, matchName?: string): Promise<string> {
+  return uploadFileToStorage(file, STORAGE_FOLDERS.AUCTION_REPLAYS, `${auctionId}_${Date.now()}`, matchName);
 }
 
 /**
  * Upload document (authorization letter, ID, agreement, etc.)
+ * @param file - PDF file
+ * @param documentType - Type of document
+ * @param docId - Document ID for file naming
+ * @param matchName - Optional match name for folder organization
  */
-export async function uploadDocument(file: File, documentType: string, docId: string): Promise<string> {
-  return uploadFileToStorage(file, `${STORAGE_FOLDERS.DOCUMENTS}/${documentType}`, `${docId}_${Date.now()}`);
+export async function uploadDocument(file: File, documentType: string, docId: string, matchName?: string): Promise<string> {
+  return uploadFileToStorage(file, `${STORAGE_FOLDERS.DOCUMENTS}/${documentType}`, `${docId}_${Date.now()}`, matchName);
 }
 
 /**
  * Upload user profile picture
+ * @param file - Image file
+ * @param userId - User ID for file naming
+ * @param matchName - Optional match name for folder organization
  */
-export async function uploadProfilePicture(file: File, userId: string): Promise<string> {
-  return uploadFileToStorage(file, STORAGE_FOLDERS.USER_PROFILES, `${userId}_profile_${Date.now()}`);
+export async function uploadProfilePicture(file: File, userId: string, matchName?: string): Promise<string> {
+  return uploadFileToStorage(file, STORAGE_FOLDERS.USER_PROFILES, `${userId}_profile_${Date.now()}`, matchName);
+}
+
+/**
+ * Upload auctioneer photo
+ * @param file - Image file
+ * @param auctioneerId - Auctioneer ID for file naming
+ * @param matchName - Optional match name for folder organization
+ */
+export async function uploadAuctioneerPhoto(file: File, auctioneerId: string, matchName?: string): Promise<string> {
+  return uploadFileToStorage(file, STORAGE_FOLDERS.AUCTIONEERS, `${auctioneerId}_${Date.now()}`, matchName);
 }
 
 /**
  * Upload match highlight video
+ * @param file - Video file
+ * @param matchId - Match ID for file naming
+ * @param matchName - Optional match name for folder organization
  */
-export async function uploadMatchHighlight(file: File, matchId: string): Promise<string> {
-  return uploadFileToStorage(file, STORAGE_FOLDERS.MATCH_HIGHLIGHTS, `${matchId}_${Date.now()}`);
+export async function uploadMatchHighlight(file: File, matchId: string, matchName?: string): Promise<string> {
+  return uploadFileToStorage(file, STORAGE_FOLDERS.MATCH_HIGHLIGHTS, `${matchId}_${Date.now()}`, matchName);
 }
 
 /**

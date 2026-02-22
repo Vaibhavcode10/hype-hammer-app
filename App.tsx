@@ -294,8 +294,12 @@ const AppContent: React.FC = () => {
         }
 
         // Load from localStorage immediately for instant display
+        // Use version number to invalidate cache when backend changes
+        const CACHE_VERSION = 2; // Increment this to force cache invalidation
+        const localCacheVersion = localStorage.getItem('hypehammer_cache_version');
+        
         const localData = localStorage.getItem('hypehammer_sports');
-        if (localData) {
+        if (localData && localCacheVersion === String(CACHE_VERSION)) {
           try {
             const parsedData = JSON.parse(localData);
             if (parsedData && parsedData.length > 0) {
@@ -305,6 +309,10 @@ const AppContent: React.FC = () => {
           } catch (err) {
             console.error('Error parsing local storage:', err);
           }
+        } else if (!localCacheVersion || localCacheVersion !== String(CACHE_VERSION)) {
+          console.log('🔄 Cache version mismatch, clearing stale data');
+          localStorage.removeItem('hypehammer_sports');
+          localStorage.removeItem('hypehammer_cache_version');
         }
 
         // Try API to get fresh data (source of truth)
@@ -318,6 +326,7 @@ const AppContent: React.FC = () => {
             console.log('📊 Data changed, updating state');
             setAllSports(sportsFromDB);
             localStorage.setItem('hypehammer_sports', newData);
+            localStorage.setItem('hypehammer_cache_version', '2');
           } else {
             console.log('✓ Data unchanged, skipping update');
           }
@@ -1334,11 +1343,15 @@ const AppContent: React.FC = () => {
           console.log('   - governmentId:', processedData.governmentId);
           console.log('   - governmentIdFile (before upload):', processedData.governmentIdFile);
           
+          // Get match name for folder organization - prioritize actual match name then fallback to registration data fields
+          const matchName = currentMatch?.name || currentMatch?.seasonName || registrationData.seasonId || registrationData.teamName || registrationData.fullName || 'Default_Match';
+          console.log('   - matchName for storage:', matchName);
+          
           try {
             // Upload team logo to Firebase Storage
             if (registrationData.teamLogo && registrationData.teamLogo instanceof File) {
               console.log('📤 Uploading team logo to Firebase Storage...');
-              const logoUrl = await uploadTeamLogo(registrationData.teamLogo);
+              const logoUrl = await uploadTeamLogo(registrationData.teamLogo, `team_${Date.now()}`, matchName);
               processedData.teamLogo = logoUrl;
               console.log('✅ Team logo uploaded:', logoUrl);
             }
@@ -1346,7 +1359,7 @@ const AppContent: React.FC = () => {
             // Upload player photo to Firebase Storage
             if (registrationData.playerPhoto && registrationData.playerPhoto instanceof File) {
               console.log('📤 Uploading player photo to Firebase Storage...');
-              const photoUrl = await uploadPlayerPhoto(registrationData.playerPhoto);
+              const photoUrl = await uploadPlayerPhoto(registrationData.playerPhoto, `player_${Date.now()}`, matchName);
               processedData.imageUrl = photoUrl;  // Map to imageUrl field for backend
               delete processedData.playerPhoto;
               console.log('✅ Player photo uploaded:', photoUrl);
@@ -1355,7 +1368,7 @@ const AppContent: React.FC = () => {
             // Upload auctioneer photo to Firebase Storage
             if (registrationData.auctioneerPhoto && registrationData.auctioneerPhoto instanceof File) {
               console.log('📤 Uploading auctioneer photo to Firebase Storage...');
-              const auctioneerPhotoUrl = await uploadProfilePicture(registrationData.auctioneerPhoto, `auctioneer_${Date.now()}`);
+              const auctioneerPhotoUrl = await uploadProfilePicture(registrationData.auctioneerPhoto, `auctioneer_${Date.now()}`, matchName);
               processedData.auctioneerPhoto = auctioneerPhotoUrl;  // Map to auctioneerPhoto field for backend
               console.log('✅ Auctioneer photo uploaded:', auctioneerPhotoUrl);
             }
@@ -1363,7 +1376,7 @@ const AppContent: React.FC = () => {
             // Upload documents
             if (registrationData.authorizationLetter && registrationData.authorizationLetter instanceof File) {
               console.log('📤 Uploading authorization letter...');
-              const letterUrl = await uploadDocument(registrationData.authorizationLetter, 'authorization-letters');
+              const letterUrl = await uploadDocument(registrationData.authorizationLetter, 'authorization-letters', `doc_${Date.now()}`, matchName);
               processedData.authorizationLetter = letterUrl;
               console.log('✅ Authorization letter uploaded:', letterUrl);
             }
@@ -1374,7 +1387,7 @@ const AppContent: React.FC = () => {
             
             if (registrationData.governmentIdFile && registrationData.governmentIdFile instanceof File) {
               console.log('📤 ✅ Uploading government ID...');
-              const idUrl = await uploadDocument(registrationData.governmentIdFile, 'government-ids');
+              const idUrl = await uploadDocument(registrationData.governmentIdFile, 'government-ids', `govid_${Date.now()}`, matchName);
               processedData.governmentIdFile = idUrl;
               console.log('✅ Government ID uploaded:', idUrl);
             } else {
@@ -1618,6 +1631,7 @@ const AppContent: React.FC = () => {
         
         // Save to localStorage for persistence
         localStorage.setItem('hypehammer_sports', JSON.stringify(updatedSports));
+        localStorage.setItem('hypehammer_cache_version', '2');
         
         // Save to Firebase in background (don't await - this was causing the delay)
         saveSportsData(updatedSports).catch(err => {
@@ -1781,6 +1795,7 @@ const AppContent: React.FC = () => {
       setCurrentUser={setCurrentUser}
       setStatus={setStatus}
       currentMatch={currentMatch}
+      auctionStatus={status}
     />;
   }
 

@@ -21,4 +21,5 @@ export { TeamRepDashboardPage } from './TeamRepDashboardPage';
 export { GuestDashboardPage } from './GuestDashboardPage';
 export { LiveAuctionPage } from './LiveAuctionPage';
 export { TeamSquadPage } from './TeamSquadPage';
+export { AuctionResultsPage } from './AuctionResultsPage';
 

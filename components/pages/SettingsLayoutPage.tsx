@@ -5,7 +5,8 @@ import {
   Plus, Building2, MapPin, ExternalLink,
   Clock, Activity, Globe, Gavel, Calendar, Loader2, AlertTriangle, Edit3, X
 } from 'lucide-react';
-import { AuctionStatus, AuctionConfig, Player, Team, SportType, AuctionType, MatchData } from '../../types';
+import { AuctionStatus, AuctionConfig, Player, Team, SportType, AuctionType, MatchData, UserRole, LiveAuctionStatus } from '../../types';
+import { BackupRestoreSection } from '../ui/BackupRestoreSection';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
@@ -20,10 +21,12 @@ interface SettingsLayoutPageProps {
     name: string;
     email: string;
     avatar?: string;
+    role?: UserRole;
   };
-  setCurrentUser: (user: { name: string; email: string; avatar?: string }) => void;
+  setCurrentUser: (user: { name: string; email: string; avatar?: string; role?: UserRole }) => void;
   setStatus: (status: AuctionStatus) => void;
   currentMatch: MatchData | null;
+  auctionStatus?: LiveAuctionStatus | string;
 }
 
 // Helper to format timestamps
@@ -57,7 +60,8 @@ export const SettingsLayoutPage: React.FC<SettingsLayoutPageProps> = ({
   currentUser,
   setCurrentUser,
   setStatus,
-  currentMatch
+  currentMatch,
+  auctionStatus
 }) => {
   // ─── Debug logging ───
   useEffect(() => {
@@ -862,6 +866,28 @@ export const SettingsLayoutPage: React.FC<SettingsLayoutPageProps> = ({
               </div>
             </div>
           </div>
+
+          {/* ═══════════ ROW 5 — Data Backup & Restore ═══════════ */}
+          {currentMatch?.id && (
+            <BackupRestoreSection
+              currentMatch={currentMatch}
+              currentUser={{
+                name: currentUser.name,
+                email: currentUser.email,
+                role: currentUser.role || UserRole.ADMIN,
+              }}
+              auctionStatus={auctionStatus}
+              onNotification={(message, type) => {
+                if (type === 'error') {
+                  setSaveError(message);
+                  setTimeout(() => setSaveError(null), 5000);
+                } else {
+                  setSaveNotification(message);
+                  setTimeout(() => setSaveNotification(null), 3000);
+                }
+              }}
+            />
+          )}
 
         </div>
       </div>

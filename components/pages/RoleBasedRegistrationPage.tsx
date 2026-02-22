@@ -3,6 +3,8 @@ import { Gavel, Users, User, Upload, ArrowLeft, CheckCircle, X, Info, AlertTrian
 import { AuctionStatus, UserRole, SportType, MatchData, SportData } from '../../types';
 import { useMatchSettings } from '../../hooks/useMatchSettings';
 import { formatIndianCurrency } from '../../services/currencyUtils';
+import { PhoneOtpVerification } from '../ui/PhoneOtpVerification';
+import { NeonDesignStyles, GlassCard, NeonButton, GradientHeading, NeonPageWrapper, NeonInput } from '../ui/NeonDesignSystem';
 
 interface RoleBasedRegistrationPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -25,6 +27,11 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const passwordsMatch = !confirmPassword || password === confirmPassword;
+  const passwordOk = !!(password && confirmPassword && password === confirmPassword);
 
 
   // Auctioneer fields
@@ -228,6 +235,18 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
     console.log('   - governmentId state:', governmentId);
     console.log('   - governmentIdFile state:', governmentIdFile);
 
+    // HARD BLOCK: Phone must be verified
+    if (!phoneVerified) {
+      alert('Please verify your phone number before submitting.');
+      return;
+    }
+
+    // HARD BLOCK: Password must match
+    if (!password || !passwordOk) {
+      alert('Please set and confirm your password before submitting.');
+      return;
+    }
+
     // HARD BLOCK: Validate base price for players
     if (selectedRole === UserRole.PLAYER && basePriceValidation.hasError) {
       console.log('❌ Base price validation FAILED:', basePriceValidation.errorMessage);
@@ -260,6 +279,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
       fullName,
       email,
       phone,
+      phoneVerified: true,
+      password,
       role: selectedRole,
       seasonId: selectedMatch?.id,
       governmentId: finalGovernmentId,
@@ -340,7 +361,9 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const Icon = getRoleIcon();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50 py-4 px-4">
+    <NeonPageWrapper className="min-h-screen py-4 px-4">
+      <NeonDesignStyles />
+      
       {/* Header - Single Row Layout */}
       <div className="w-full mb-6">
         {/* Horizontal row with back button on left, centered heading */}
@@ -348,7 +371,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
           {/* Left: Back Button */}
           <button
             onClick={() => setStatus(AuctionStatus.ROLE_SELECTION)}
-            className="text-blue-600 hover:text-blue-700 font-semibold transition-colors underline decoration-blue-600 hover:decoration-blue-700 flex items-center gap-2 whitespace-nowrap"
+            className="text-pink-400 hover:text-pink-300 font-semibold transition-colors flex items-center gap-2 whitespace-nowrap"
           >
             <ArrowLeft size={18} />
             Back to Role Selection
@@ -356,12 +379,12 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
           {/* Center: Title and Match Info */}
           <div className="flex-1 flex flex-col items-center">
-            <div className="w-12 h-12 mb-2 rounded-full bg-gradient-to-r from-blue-500 to-orange-500 flex items-center justify-center">
+            <div className="w-12 h-12 mb-2 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.4)' }}>
               <Icon size={24} className="text-white" />
             </div>
-            <h1 className="text-3xl font-black text-slate-900">{getRoleTitle()} Registration</h1>
-            <p className="text-sm text-slate-600 mt-1">
-              Register for <strong>{selectedMatch?.name}</strong>
+            <GradientHeading size="xl">{getRoleTitle()} Registration</GradientHeading>
+            <p className="text-sm text-pink-300/70 mt-1">
+              Register for <strong className="text-pink-300">{selectedMatch?.name}</strong>
             </p>
           </div>
 
@@ -372,8 +395,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
       {/* Form */}
       <div className="max-w-7xl mx-auto">
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl p-8 border-2 border-slate-200 space-y-4">
-          
+        <GlassCard glow className="p-8 space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
           {/* Common personal info block removed - each role now has its own integrated layout */}
 
           {/* AUCTIONEER SECTION - Moved Here */}
@@ -383,15 +406,16 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 {/* Left: Photo Upload (1 col) */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Your Photo</label>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Your Photo</label>
                   <div 
                     className={`border-2 border-dashed rounded-lg p-3 text-center transition-all cursor-pointer min-h-[160px] flex flex-col items-center justify-center ${
                       isDraggingAuctioneerPhoto
-                        ? 'border-blue-500 bg-blue-50' 
+                        ? 'border-pink-500' 
                         : auctioneerPhoto 
-                          ? 'border-green-500 bg-green-50'
-                          : 'border-slate-300 hover:border-blue-400'
+                          ? 'border-green-500'
+                          : 'border-pink-500/30 hover:border-pink-400'
                     }`}
+                    style={{ background: 'rgba(255, 0, 102, 0.08)' }}
                     onDragOver={handleAuctioneerPhotoDragOver}
                     onDragLeave={handleAuctioneerPhotoDragLeave}
                     onDrop={handleAuctioneerPhotoDrop}
@@ -403,8 +427,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                           alt="Auctioneer Photo" 
                           className="w-20 h-20 object-cover rounded mb-2"
                         />
-                        <p className="text-xs font-bold text-green-700 mb-1">✓ Ready</p>
-                        <p className="text-[10px] text-slate-600 truncate max-w-[90px]" title={auctioneerPhoto?.name}>{auctioneerPhoto?.name}</p>
+                        <p className="text-xs font-bold text-green-400 mb-1">✓ Ready</p>
+                        <p className="text-[10px] text-pink-300/70 truncate max-w-[90px]" title={auctioneerPhoto?.name}>{auctioneerPhoto?.name}</p>
                         <button
                           type="button"
                           onClick={(e) => {
@@ -412,14 +436,14 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                             setAuctioneerPhoto(null);
                             setAuctioneerPhotoPreview(null);
                           }}
-                          className="text-[9px] text-red-600 hover:text-red-800 font-bold mt-1"
+                          className="text-[9px] text-red-400 hover:text-red-300 font-bold mt-1"
                         >
                           Change
                         </button>
                       </div>
                     ) : (
                       <div>
-                        <Upload className="mx-auto text-slate-400 mb-2" size={20} />
+                        <Upload className="mx-auto text-pink-400/50 mb-2" size={20} />
                         <input
                           type="file"
                           onChange={handleAuctioneerPhotoChange}
@@ -428,8 +452,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                           accept="image/*"
                         />
                         <label htmlFor="auctioneerPhoto" className="cursor-pointer block">
-                          <p className="text-xs text-slate-600 font-medium mb-0.5">Upload</p>
-                          <p className="text-[9px] text-slate-500">JPG, PNG</p>
+                          <p className="text-xs text-pink-300/70 font-medium mb-0.5">Upload</p>
+                          <p className="text-[9px] text-pink-300/50">JPG, PNG</p>
                         </label>
                       </div>
                     )}
@@ -440,63 +464,84 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                 <div className="md:col-span-3">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Full Name <span className="text-red-500">*</span></label>
+                      <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Full Name <span className="text-red-400">*</span></label>
                       <input
                         type="text"
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
-                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                        className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                        style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                         required
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Email <span className="text-red-500">*</span></label>
+                      <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Email <span className="text-red-400">*</span></label>
                       <input
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                        className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                        style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                         required
                       />
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-red-500">*</span></label>
-                      <input
-                        type="tel"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
-                        required
+                    <div className="md:col-span-3">
+                      <PhoneOtpVerification
+                        phone={phone}
+                        setPhone={setPhone}
+                        phoneVerified={phoneVerified}
+                        setPhoneVerified={setPhoneVerified}
+                        containerId="recaptcha-role-reg"
+                        compact
                       />
                     </div>
                   </div>
                 </div>
               </div>
 
+              {/* Password Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Password <span className="text-red-400">*</span></label>
+                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} placeholder="••••••••" required />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Re-enter Password <span className="text-red-400">*</span></label>
+                  <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className={`w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none transition-colors`} style={{ background: 'rgba(255, 0, 102, 0.08)', border: !confirmPassword ? '1px solid rgba(255, 0, 102, 0.3)' : passwordsMatch ? '1px solid #22c55e' : '1px solid #f87171' }} placeholder="••••••••" required />
+                  {confirmPassword && (
+                    <p className={`mt-1 text-xs font-medium ${passwordsMatch ? 'text-green-400' : 'text-red-400'}`}>
+                      {passwordsMatch ? 'Passwords match' : 'Passwords do not match'}
+                    </p>
+                  )}
+                </div>
+              </div>
+
               {/* Row 2: Professional Information */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Experience Level <span className="text-red-500">*</span></label>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Experience Level <span className="text-red-400">*</span></label>
                   <select
                     value={experienceLevel}
                     onChange={(e) => setExperienceLevel(e.target.value)}
-                    className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                    className="w-full px-3 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                     required
                   >
-                    <option value="">Select Experience</option>
-                    <option value="Beginner">Beginner</option>
-                    <option value="Intermediate">Intermediate</option>
-                    <option value="Professional">Professional</option>
+                    <option value="" className="bg-[#1a0a0a] text-pink-300">Select Experience</option>
+                    <option value="Beginner" className="bg-[#1a0a0a] text-pink-300">Beginner</option>
+                    <option value="Intermediate" className="bg-[#1a0a0a] text-pink-300">Intermediate</option>
+                    <option value="Professional" className="bg-[#1a0a0a] text-pink-300">Professional</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Languages Spoken <span className="text-red-500">*</span></label>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Languages Spoken <span className="text-red-400">*</span></label>
                   <input
                     type="text"
                     value={languages}
                     onChange={(e) => setLanguages(e.target.value)}
                     placeholder="English, Hindi, Tamil"
-                    className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                    className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                     required
                   />
                 </div>
@@ -504,19 +549,20 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
               {/* Row 3: Previous Auctions */}
               <div className="mb-4">
-                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Previous Auctions (Optional)</label>
+                <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Previous Auctions (Optional)</label>
                 <textarea
                   value={previousAuctions}
                   onChange={(e) => setPreviousAuctions(e.target.value)}
                   placeholder="List any previous auction experience..."
-                  className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                  className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                  style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                   rows={2}
                 />
               </div>
 
               {/* Row 4: Availability */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Availability Confirmation <span className="text-red-500">*</span></label>
+                <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Availability Confirmation <span className="text-red-400">*</span></label>
                 <div className="flex gap-6">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -524,9 +570,9 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       value="Yes"
                       checked={availability === 'Yes'}
                       onChange={(e) => setAvailability(e.target.value)}
-                      className="w-4 h-4"
+                      className="w-4 h-4 accent-pink-500"
                     />
-                    <span className="text-sm">Yes, I'm available</span>
+                    <span className="text-sm text-pink-200">Yes, I'm available</span>
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -534,9 +580,9 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       value="No"
                       checked={availability === 'No'}
                       onChange={(e) => setAvailability(e.target.value)}
-                      className="w-4 h-4"
+                      className="w-4 h-4 accent-pink-500"
                     />
-                    <span className="text-sm">No</span>
+                    <span className="text-sm text-pink-200">No</span>
                   </label>
                 </div>
               </div>
@@ -547,57 +593,57 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
             <div>
               {/* Purse Intelligence Info for Team Reps */}
               {settingsLoading && (
-                <div className="bg-slate-50 border-2 border-slate-200 rounded-lg p-4 mb-4 animate-pulse">
+                <div className="rounded-lg p-4 mb-4 animate-pulse" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}>
                   <div className="flex items-center gap-2 mb-3">
-                    <div className="w-5 h-5 bg-slate-300 rounded"></div>
-                    <span className="text-sm font-bold text-slate-500">Loading purse information...</span>
+                    <div className="w-5 h-5 bg-pink-500/30 rounded"></div>
+                    <span className="text-sm font-bold text-pink-300/50">Loading purse information...</span>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     {[1, 2, 3, 4].map((i) => (
-                      <div key={i} className="bg-white rounded-lg p-3 border border-slate-200">
-                        <div className="h-3 bg-slate-200 rounded w-20 mb-2"></div>
-                        <div className="h-6 bg-slate-200 rounded w-16"></div>
+                      <div key={i} className="rounded-lg p-3" style={{ background: 'rgba(255, 0, 102, 0.12)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+                        <div className="h-3 bg-pink-500/20 rounded w-20 mb-2"></div>
+                        <div className="h-6 bg-pink-500/20 rounded w-16"></div>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
               {!settingsLoading && !matchSettings && (
-                <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-4 mb-4">
+                <div className="rounded-lg p-4 mb-4" style={{ background: 'rgba(251, 146, 60, 0.1)', border: '1px solid rgba(251, 146, 60, 0.3)' }}>
                   <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5 text-amber-600" />
-                    <span className="text-sm font-medium text-amber-800">Purse settings not available for this match</span>
+                    <AlertTriangle className="w-5 h-5 text-orange-400" />
+                    <span className="text-sm font-medium text-orange-300">Purse settings not available for this match</span>
                   </div>
-                  <p className="text-xs text-amber-700 mt-1">Match ID: {matchId || 'Not selected'}</p>
+                  <p className="text-xs text-orange-400/70 mt-1">Match ID: {matchId || 'Not selected'}</p>
                 </div>
               )}
               {!settingsLoading && matchSettings && (
-                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-4 mb-4">
+                <div className="rounded-lg p-4 mb-4" style={{ background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.12), rgba(147, 51, 234, 0.12))', border: '1px solid rgba(255, 0, 102, 0.3)' }}>
                   <div className="flex items-center gap-2 mb-3">
-                    <Info className="w-5 h-5 text-blue-600" />
-                    <span className="text-sm font-bold text-blue-800">Purse Information</span>
+                    <Info className="w-5 h-5 text-pink-400" />
+                    <span className="text-sm font-bold text-pink-300">Purse Information</span>
                     {isLocked && (
-                      <span className="ml-auto text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium">
+                      <span className="ml-auto text-xs bg-orange-500/20 text-orange-300 px-2 py-1 rounded-full font-medium border border-orange-500/30">
                         Settings Locked
                       </span>
                     )}
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="bg-white rounded-lg p-3 border border-blue-100">
-                      <p className="text-xs text-slate-600 uppercase font-medium">Total Purse</p>
-                      <p className="text-lg font-bold text-blue-700">{formattedPurse}</p>
+                    <div className="rounded-lg p-3" style={{ background: 'rgba(255, 0, 102, 0.1)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+                      <p className="text-xs text-pink-400/70 uppercase font-medium">Total Purse</p>
+                      <p className="text-lg font-bold text-pink-300">{formattedPurse}</p>
                     </div>
-                    <div className="bg-white rounded-lg p-3 border border-blue-100">
-                      <p className="text-xs text-slate-600 uppercase font-medium">Players to Buy</p>
-                      <p className="text-lg font-bold text-slate-800">{matchSettings.playersPerTeam}</p>
+                    <div className="rounded-lg p-3" style={{ background: 'rgba(255, 0, 102, 0.1)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+                      <p className="text-xs text-pink-400/70 uppercase font-medium">Players to Buy</p>
+                      <p className="text-lg font-bold text-pink-200">{matchSettings.playersPerTeam}</p>
                     </div>
-                    <div className="bg-white rounded-lg p-3 border border-blue-100">
-                      <p className="text-xs text-slate-600 uppercase font-medium">Avg Value/Player</p>
-                      <p className="text-lg font-bold text-green-700">{formattedAvgValue}</p>
+                    <div className="rounded-lg p-3" style={{ background: 'rgba(255, 0, 102, 0.1)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+                      <p className="text-xs text-pink-400/70 uppercase font-medium">Avg Value/Player</p>
+                      <p className="text-lg font-bold text-green-400">{formattedAvgValue}</p>
                     </div>
-                    <div className="bg-white rounded-lg p-3 border border-blue-100">
-                      <p className="text-xs text-slate-600 uppercase font-medium">Max Base Price</p>
-                      <p className="text-lg font-bold text-indigo-700">{formattedMaxBasePrice}</p>
+                    <div className="rounded-lg p-3" style={{ background: 'rgba(255, 0, 102, 0.1)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+                      <p className="text-xs text-pink-400/70 uppercase font-medium">Max Base Price</p>
+                      <p className="text-lg font-bold text-purple-400">{formattedMaxBasePrice}</p>
                     </div>
                   </div>
                 </div>
@@ -607,8 +653,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 {/* Left: Team Logo Upload (1 col) */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Team Logo <span className="text-red-500">*</span></label>
-                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-3 text-center hover:border-blue-500 transition-colors cursor-pointer min-h-[160px] flex flex-col items-center justify-center">
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Team Logo <span className="text-red-400">*</span></label>
+                  <div className="border-2 border-dashed border-pink-500/30 rounded-lg p-3 text-center hover:border-pink-400 transition-colors cursor-pointer min-h-[160px] flex flex-col items-center justify-center" style={{ background: 'rgba(255, 0, 102, 0.08)' }}>
                     {teamLogoPreview ? (
                       <div className="w-full flex flex-col items-center justify-center">
                         <img 
@@ -616,21 +662,21 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                           alt="Team Logo" 
                           className="w-20 h-20 object-cover rounded mb-2"
                         />
-                        <p className="text-xs font-bold text-green-700 mb-1">✓ Ready</p>
-                        <p className="text-[10px] text-slate-600 truncate max-w-[90px]" title={teamLogo?.name}>{teamLogo?.name}</p>
+                        <p className="text-xs font-bold text-green-400 mb-1">✓ Ready</p>
+                        <p className="text-[10px] text-pink-300/70 truncate max-w-[90px]" title={teamLogo?.name}>{teamLogo?.name}</p>
                         <button
                           type="button"
                           onClick={(e) => { e.preventDefault(); setTeamLogo(null); setTeamLogoPreview(null); }}
-                          className="text-[9px] text-red-600 hover:text-red-800 font-bold mt-1"
+                          className="text-[9px] text-red-400 hover:text-red-300 font-bold mt-1"
                         >Change</button>
                       </div>
                     ) : (
                       <div>
-                        <Upload className="mx-auto text-slate-400 mb-2" size={20} />
+                        <Upload className="mx-auto text-pink-400/50 mb-2" size={20} />
                         <input type="file" onChange={handleTeamLogoChange} className="hidden" id="teamLogo" accept="image/*" required />
                         <label htmlFor="teamLogo" className="cursor-pointer block">
-                          <p className="text-xs text-slate-600 font-medium mb-0.5">Upload</p>
-                          <p className="text-[9px] text-slate-500">JPG, PNG</p>
+                          <p className="text-xs text-pink-300/70 font-medium mb-0.5">Upload</p>
+                          <p className="text-[9px] text-pink-300/50">JPG, PNG</p>
                         </label>
                       </div>
                     )}
@@ -641,58 +687,81 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                 <div className="md:col-span-3">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Full Name <span className="text-red-500">*</span></label>
-                      <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                      <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Full Name <span className="text-red-400">*</span></label>
+                      <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Email <span className="text-red-500">*</span></label>
-                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                      <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Email <span className="text-red-400">*</span></label>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required />
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-red-500">*</span></label>
-                      <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                    <div className="md:col-span-3">
+                      <PhoneOtpVerification
+                        phone={phone}
+                        setPhone={setPhone}
+                        phoneVerified={phoneVerified}
+                        setPhoneVerified={setPhoneVerified}
+                        containerId="recaptcha-role-reg"
+                        compact
+                      />
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Password Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Password <span className="text-red-400">*</span></label>
+                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} placeholder="••••••••" required />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Re-enter Password <span className="text-red-400">*</span></label>
+                  <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none transition-colors" style={{ background: 'rgba(255, 0, 102, 0.08)', border: !confirmPassword ? '1px solid rgba(255, 0, 102, 0.3)' : passwordsMatch ? '1px solid #22c55e' : '1px solid #f87171' }} placeholder="••••••••" required />
+                  {confirmPassword && (
+                    <p className={`mt-1 text-xs font-medium ${passwordsMatch ? 'text-green-400' : 'text-red-400'}`}>
+                      {passwordsMatch ? 'Passwords match' : 'Passwords do not match'}
+                    </p>
+                  )}
                 </div>
               </div>
 
               {/* Row 2: Team Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Team Name <span className="text-red-500">*</span></label>
-                  <input type="text" value={teamName} onChange={(e) => setTeamName(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Team Name <span className="text-red-400">*</span></label>
+                  <input type="text" value={teamName} onChange={(e) => setTeamName(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Team Short Code <span className="text-red-500">*</span></label>
-                  <input type="text" value={teamShortCode} onChange={(e) => setTeamShortCode(e.target.value.toUpperCase())} maxLength={5} placeholder="e.g., MUM" className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Team Short Code <span className="text-red-400">*</span></label>
+                  <input type="text" value={teamShortCode} onChange={(e) => setTeamShortCode(e.target.value.toUpperCase())} maxLength={5} placeholder="e.g., MUM" className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required />
                 </div>
               </div>
 
               {/* Row 3: Location & Role */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Home City / Region <span className="text-red-500">*</span></label>
-                  <input type="text" value={homeCity} onChange={(e) => setHomeCity(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Home City / Region <span className="text-red-400">*</span></label>
+                  <input type="text" value={homeCity} onChange={(e) => setHomeCity(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Role in Team <span className="text-red-500">*</span></label>
-                  <select value={roleInTeam} onChange={(e) => setRoleInTeam(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required>
-                    <option value="">Select Role</option>
-                    <option value="Owner">Owner</option>
-                    <option value="Manager">Manager</option>
-                    <option value="Captain">Captain</option>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Role in Team <span className="text-red-400">*</span></label>
+                  <select value={roleInTeam} onChange={(e) => setRoleInTeam(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required>
+                    <option value="" className="bg-[#1a0a0a] text-pink-300">Select Role</option>
+                    <option value="Owner" className="bg-[#1a0a0a] text-pink-300">Owner</option>
+                    <option value="Manager" className="bg-[#1a0a0a] text-pink-300">Manager</option>
+                    <option value="Captain" className="bg-[#1a0a0a] text-pink-300">Captain</option>
                   </select>
                 </div>
               </div>
 
               {/* Row 4: Authorization Letter */}
               <div className="mb-4">
-                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Authorization Letter <span className="text-red-500">*</span></label>
-                <div className="border-2 border-dashed border-slate-300 rounded-lg p-3 text-center hover:border-blue-500 transition-colors cursor-pointer">
-                  <Upload className="mx-auto text-slate-400 mb-2" size={20} />
+                <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Authorization Letter <span className="text-red-400">*</span></label>
+                <div className="border-2 border-dashed border-pink-500/30 rounded-lg p-3 text-center hover:border-pink-400 transition-colors cursor-pointer" style={{ background: 'rgba(255, 0, 102, 0.08)' }}>
+                  <Upload className="mx-auto text-pink-400/50 mb-2" size={20} />
                   <input type="file" onChange={(e) => setAuthorizationLetter(e.target.files?.[0] || null)} className="hidden" id="authLetter" accept=".pdf" required />
                   <label htmlFor="authLetter" className="cursor-pointer">
-                    <span className="text-xs text-slate-600">{authorizationLetter ? authorizationLetter.name : 'Upload PDF'}</span>
+                    <span className="text-xs text-pink-300/70">{authorizationLetter ? authorizationLetter.name : 'Upload PDF'}</span>
                   </label>
                 </div>
               </div>
@@ -703,51 +772,51 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
             <div>
               {/* Purse Intelligence Info for Players */}
               {settingsLoading && (
-                <div className="bg-slate-50 border-2 border-slate-200 rounded-lg p-4 mb-4 animate-pulse">
+                <div className="rounded-lg p-4 mb-4 animate-pulse" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}>
                   <div className="flex items-center gap-2 mb-3">
-                    <div className="w-5 h-5 bg-slate-300 rounded"></div>
-                    <span className="text-sm font-bold text-slate-500">Loading base price guidelines...</span>
+                    <div className="w-5 h-5 bg-pink-500/30 rounded"></div>
+                    <span className="text-sm font-bold text-pink-300/50">Loading base price guidelines...</span>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     {[1, 2, 3].map((i) => (
-                      <div key={i} className="bg-white rounded-lg p-3 border border-slate-200">
-                        <div className="h-3 bg-slate-200 rounded w-20 mb-2"></div>
-                        <div className="h-6 bg-slate-200 rounded w-16"></div>
+                      <div key={i} className="rounded-lg p-3" style={{ background: 'rgba(255, 0, 102, 0.12)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+                        <div className="h-3 bg-pink-500/20 rounded w-20 mb-2"></div>
+                        <div className="h-6 bg-pink-500/20 rounded w-16"></div>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
               {!settingsLoading && !matchSettings && (
-                <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-4 mb-4">
+                <div className="rounded-lg p-4 mb-4" style={{ background: 'rgba(251, 146, 60, 0.1)', border: '1px solid rgba(251, 146, 60, 0.3)' }}>
                   <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5 text-amber-600" />
-                    <span className="text-sm font-medium text-amber-800">Base price guidelines not available</span>
+                    <AlertTriangle className="w-5 h-5 text-orange-400" />
+                    <span className="text-sm font-medium text-orange-300">Base price guidelines not available</span>
                   </div>
-                  <p className="text-xs text-amber-700 mt-1">Match ID: {matchId || 'Not selected'}</p>
+                  <p className="text-xs text-orange-400/70 mt-1">Match ID: {matchId || 'Not selected'}</p>
                 </div>
               )}
               {!settingsLoading && matchSettings && (
-                <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4 mb-4">
+                <div className="rounded-lg p-4 mb-4" style={{ background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.12), rgba(16, 185, 129, 0.12))', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
                   <div className="flex items-center gap-2 mb-3">
-                    <Info className="w-5 h-5 text-green-600" />
-                    <span className="text-sm font-bold text-green-800">Base Price Guidelines</span>
+                    <Info className="w-5 h-5 text-green-400" />
+                    <span className="text-sm font-bold text-green-300">Base Price Guidelines</span>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    <div className="bg-white rounded-lg p-3 border border-green-100">
-                      <p className="text-xs text-slate-600 uppercase font-medium">Recommended Min</p>
-                      <p className="text-lg font-bold text-green-700">{formattedRecommendedMin}</p>
+                    <div className="rounded-lg p-3" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
+                      <p className="text-xs text-green-400/70 uppercase font-medium">Recommended Min</p>
+                      <p className="text-lg font-bold text-green-300">{formattedRecommendedMin}</p>
                     </div>
-                    <div className="bg-white rounded-lg p-3 border border-green-100">
-                      <p className="text-xs text-slate-600 uppercase font-medium">Avg Value</p>
-                      <p className="text-lg font-bold text-blue-700">{formattedAvgValue}</p>
+                    <div className="rounded-lg p-3" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
+                      <p className="text-xs text-green-400/70 uppercase font-medium">Avg Value</p>
+                      <p className="text-lg font-bold text-pink-300">{formattedAvgValue}</p>
                     </div>
-                    <div className="bg-white rounded-lg p-3 border border-green-100">
-                      <p className="text-xs text-slate-600 uppercase font-medium">Max Allowed</p>
-                      <p className="text-lg font-bold text-indigo-700">{formattedMaxBasePrice}</p>
+                    <div className="rounded-lg p-3" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
+                      <p className="text-xs text-green-400/70 uppercase font-medium">Max Allowed</p>
+                      <p className="text-lg font-bold text-purple-400">{formattedMaxBasePrice}</p>
                     </div>
                   </div>
-                  <p className="text-xs text-slate-600 mt-2">
+                  <p className="text-xs text-green-300/70 mt-2">
                     Set your base price between the recommended minimum and maximum allowed values.
                   </p>
                 </div>
@@ -757,8 +826,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 {/* Left: Player Photo Upload (1 col) */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Your Photo <span className="text-red-500">*</span></label>
-                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-3 text-center hover:border-blue-500 transition-colors cursor-pointer min-h-[160px] flex flex-col items-center justify-center">
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Your Photo <span className="text-red-400">*</span></label>
+                  <div className="border-2 border-dashed border-pink-500/30 rounded-lg p-3 text-center hover:border-pink-400 transition-colors cursor-pointer min-h-[160px] flex flex-col items-center justify-center" style={{ background: 'rgba(255, 0, 102, 0.08)' }}>
                     {playerPhotoPreview ? (
                       <div className="w-full flex flex-col items-center justify-center">
                         <img 
@@ -766,21 +835,21 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                           alt="Player Photo" 
                           className="w-20 h-20 object-cover rounded mb-2"
                         />
-                        <p className="text-xs font-bold text-green-700 mb-1">✓ Ready</p>
-                        <p className="text-[10px] text-slate-600 truncate max-w-[90px]" title={playerPhoto?.name}>{playerPhoto?.name}</p>
+                        <p className="text-xs font-bold text-green-400 mb-1">✓ Ready</p>
+                        <p className="text-[10px] text-pink-300/70 truncate max-w-[90px]" title={playerPhoto?.name}>{playerPhoto?.name}</p>
                         <button
                           type="button"
                           onClick={(e) => { e.preventDefault(); setPlayerPhoto(null); setPlayerPhotoPreview(null); }}
-                          className="text-[9px] text-red-600 hover:text-red-800 font-bold mt-1"
+                          className="text-[9px] text-red-400 hover:text-red-300 font-bold mt-1"
                         >Change</button>
                       </div>
                     ) : (
                       <div>
-                        <Upload className="mx-auto text-slate-400 mb-2" size={20} />
+                        <Upload className="mx-auto text-pink-400/50 mb-2" size={20} />
                         <input type="file" onChange={handlePlayerPhotoChange} className="hidden" id="playerPhoto" accept="image/*" required />
                         <label htmlFor="playerPhoto" className="cursor-pointer block">
-                          <p className="text-xs text-slate-600 font-medium mb-0.5">Upload</p>
-                          <p className="text-[9px] text-slate-500">JPG, PNG</p>
+                          <p className="text-xs text-pink-300/70 font-medium mb-0.5">Upload</p>
+                          <p className="text-[9px] text-pink-300/50">JPG, PNG</p>
                         </label>
                       </div>
                     )}
@@ -791,76 +860,101 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                 <div className="md:col-span-3">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Full Name <span className="text-red-500">*</span></label>
-                      <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                      <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Full Name <span className="text-red-400">*</span></label>
+                      <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Email <span className="text-red-500">*</span></label>
-                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                      <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Email <span className="text-red-400">*</span></label>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required />
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-red-500">*</span></label>
-                      <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                    <div className="md:col-span-3">
+                      <PhoneOtpVerification
+                        phone={phone}
+                        setPhone={setPhone}
+                        phoneVerified={phoneVerified}
+                        setPhoneVerified={setPhoneVerified}
+                        containerId="recaptcha-role-reg"
+                        compact
+                      />
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Password Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Password <span className="text-red-400">*</span></label>
+                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} placeholder="••••••••" required />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Re-enter Password <span className="text-red-400">*</span></label>
+                  <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none transition-colors" style={{ background: 'rgba(255, 0, 102, 0.08)', border: !confirmPassword ? '1px solid rgba(255, 0, 102, 0.3)' : passwordsMatch ? '1px solid #22c55e' : '1px solid #f87171' }} placeholder="••••••••" required />
+                  {confirmPassword && (
+                    <p className={`mt-1 text-xs font-medium ${passwordsMatch ? 'text-green-400' : 'text-red-400'}`}>
+                      {passwordsMatch ? 'Passwords match' : 'Passwords do not match'}
+                    </p>
+                  )}
                 </div>
               </div>
 
               {/* Row 2: Basic Player Info */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Date of Birth <span className="text-red-500">*</span></label>
-                  <input type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Date of Birth <span className="text-red-400">*</span></label>
+                  <input type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Gender <span className="text-red-500">*</span></label>
-                  <select value={gender} onChange={(e) => setGender(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required>
-                    <option value="">Select</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Gender <span className="text-red-400">*</span></label>
+                  <select value={gender} onChange={(e) => setGender(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required>
+                    <option value="" className="bg-[#1a0a0a] text-pink-300">Select</option>
+                    <option value="Male" className="bg-[#1a0a0a] text-pink-300">Male</option>
+                    <option value="Female" className="bg-[#1a0a0a] text-pink-300">Female</option>
+                    <option value="Other" className="bg-[#1a0a0a] text-pink-300">Other</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Nationality <span className="text-red-500">*</span></label>
-                  <input type="text" value={nationality} onChange={(e) => setNationality(e.target.value)} className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm" required />
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Nationality <span className="text-red-400">*</span></label>
+                  <input type="text" value={nationality} onChange={(e) => setNationality(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required />
                 </div>
               </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                      Playing Role <span className="text-red-500">*</span>
+                    <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
+                      Playing Role <span className="text-red-400">*</span>
                     </label>
                     <input
                       type="text"
                       value={playingRole}
                       onChange={(e) => setPlayingRole(e.target.value)}
                       placeholder="e.g., Batsman, Bowler, All-rounder"
-                      className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                      className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                       required
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                      Experience Level <span className="text-red-500">*</span>
+                    <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
+                      Experience Level <span className="text-red-400">*</span>
                     </label>
                     <select
                       value={playerExperience}
                       onChange={(e) => setPlayerExperience(e.target.value)}
-                      className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                      className="w-full px-3 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none"
+                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                       required
                     >
-                      <option value="">Select</option>
-                      <option value="Beginner">Beginner</option>
-                      <option value="Intermediate">Intermediate</option>
-                      <option value="Professional">Professional</option>
+                      <option value="" className="bg-[#1a0a0a] text-pink-300">Select</option>
+                      <option value="Beginner" className="bg-[#1a0a0a] text-pink-300">Beginner</option>
+                      <option value="Intermediate" className="bg-[#1a0a0a] text-pink-300">Intermediate</option>
+                      <option value="Professional" className="bg-[#1a0a0a] text-pink-300">Professional</option>
                     </select>
                   </div>
                 </div>
                 {(selectedSport?.sportType === SportType.CRICKET || selectedSport?.sportType === 'Cricket') && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                      <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
                         Batting Style
                       </label>
                       <input
@@ -868,11 +962,12 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         value={battingStyle}
                         onChange={(e) => setBattingStyle(e.target.value)}
                         placeholder="e.g., Right-hand, Left-hand"
-                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                        className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                        style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                      <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
                         Bowling Style
                       </label>
                       <input
@@ -880,51 +975,55 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         value={bowlingStyle}
                         onChange={(e) => setBowlingStyle(e.target.value)}
                         placeholder="e.g., Fast, Spin"
-                        className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                        className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                        style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                       />
                     </div>
                   </div>
                 )}
                 <div className="mb-3">
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
                     Previous Teams (Optional)
                   </label>
                   <textarea
                     value={previousTeams}
                     onChange={(e) => setPreviousTeams(e.target.value)}
                     placeholder="List your previous teams..."
-                    className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                    className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                     rows={2}
                   />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                      Base Price (₹) <span className="text-red-500">*</span>
+                    <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
+                      Base Price (₹) <span className="text-red-400">*</span>
                     </label>
                     <input
                       type="number"
                       value={basePrice}
                       onChange={(e) => setBasePrice(e.target.value)}
-                      className={`w-full px-3 py-2.5 border-2 rounded-lg focus:outline-none text-sm ${
-                        basePriceValidation.hasError
-                          ? 'border-red-300 focus:border-red-500 bg-red-50'
+                      className="w-full px-3 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none"
+                      style={{ 
+                        background: 'rgba(255, 0, 102, 0.08)', 
+                        border: basePriceValidation.hasError
+                          ? '1px solid #f87171'
                           : basePriceValidation.hasWarning 
-                            ? 'border-amber-300 focus:border-amber-500 bg-amber-50'
+                            ? '1px solid #fbbf24'
                             : basePriceValidation.isValid && matchSettings && Number(basePrice) > 0
-                              ? 'border-green-300 focus:border-green-500 bg-green-50'
-                              : 'border-slate-200 focus:border-blue-500'
-                      }`}
+                              ? '1px solid #22c55e'
+                              : '1px solid rgba(255, 0, 102, 0.3)'
+                      }}
                       required
                     />
                     {/* Base Price Validation Feedback */}
                     {validationMessage && (
                       <div className={`flex items-center gap-1 mt-1 text-xs ${
                         basePriceValidation.hasError
-                          ? 'text-red-600'
+                          ? 'text-red-400'
                           : basePriceValidation.hasWarning 
-                            ? 'text-amber-600' 
-                            : 'text-green-600'
+                            ? 'text-amber-400' 
+                            : 'text-green-400'
                       }`}>
                         {basePriceValidation.hasError ? (
                           <AlertTriangle className="w-3 h-3" />
@@ -938,20 +1037,20 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                     )}
                     {/* Show valid message when all good */}
                     {!validationMessage && matchSettings && Number(basePrice) > 0 && basePriceValidation.isValid && (
-                      <div className="flex items-center gap-1 mt-1 text-xs text-green-600">
+                      <div className="flex items-center gap-1 mt-1 text-xs text-green-400">
                         <CheckCircle className="w-3 h-3" />
                         <span>Base price is within allowed range</span>
                       </div>
                     )}
                     {/* Formatted display of entered amount */}
                     {basePrice && parseInt(basePrice) > 0 && (
-                      <p className="text-xs text-slate-500 mt-1">
+                      <p className="text-xs text-pink-300/50 mt-1">
                         = {formatIndianCurrency(parseInt(basePrice))}
                       </p>
                     )}
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
+                    <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
                       Player Category
                     </label>
                     <input
@@ -959,35 +1058,37 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       value={playerCategory}
                       onChange={(e) => setPlayerCategory(e.target.value)}
                       placeholder="e.g., Elite, Premier"
-                      className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                      className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                      Availability <span className="text-red-500">*</span>
+                    <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
+                      Availability <span className="text-red-400">*</span>
                     </label>
                     <select
                       value={playerAvailability}
                       onChange={(e) => setPlayerAvailability(e.target.value)}
-                      className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                      className="w-full px-3 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none"
+                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                       required
                     >
-                      <option value="Yes">Available</option>
-                      <option value="No">Not Available</option>
+                      <option value="Yes" className="bg-[#1a0a0a] text-pink-300">Available</option>
+                      <option value="No" className="bg-[#1a0a0a] text-pink-300">Not Available</option>
                     </select>
                   </div>
                 </div>
-                <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-3 mb-3">
+                <div className="rounded-lg p-3 mb-3" style={{ background: 'rgba(251, 191, 36, 0.1)', border: '1px solid rgba(251, 191, 36, 0.3)' }}>
                   <label className="flex items-start gap-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={playerConsent}
                       onChange={(e) => setPlayerConsent(e.target.checked)}
-                      className="mt-1"
+                      className="mt-1 accent-pink-500"
                       required
                     />
-                    <span className="text-xs text-slate-700">
-                      <strong>Player Consent:</strong> I consent to participate in this auction and agree to the terms and conditions.
+                    <span className="text-xs text-amber-200">
+                      <strong className="text-amber-300">Player Consent:</strong> I consent to participate in this auction and agree to the terms and conditions.
                     </span>
                   </label>
                 </div>
@@ -996,38 +1097,40 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
           {/* Verification */}
           <div>
-              <h2 className="text-2xl font-black text-slate-900 mb-4">Verification</h2>
+              <h2 className="text-2xl font-black text-pink-300 mb-4">Verification</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                    Government ID Number <span className="text-red-500">*</span>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
+                    Government ID Number <span className="text-red-400">*</span>
                   </label>
                   <input
                     type="text"
                     value={governmentId}
                     onChange={(e) => setGovernmentId(e.target.value)}
                     placeholder="Aadhaar / PAN / Driving License"
-                    className="w-full px-3 py-2.5 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                    className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">
-                    Upload ID Proof <span className="text-red-500">*</span>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
+                    Upload ID Proof <span className="text-red-400">*</span>
                   </label>
                   <div 
                     className={`border-2 border-dashed rounded-lg p-3 text-center transition-all cursor-pointer ${
                       isDragging 
-                        ? 'border-blue-500 bg-blue-50' 
+                        ? 'border-pink-500' 
                         : governmentIdFile 
-                          ? 'border-green-500 bg-green-50'
-                          : 'border-slate-300 hover:border-blue-400'
+                          ? 'border-green-500'
+                          : 'border-pink-500/30 hover:border-pink-400'
                     }`}
+                    style={{ background: 'rgba(255, 0, 102, 0.08)' }}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
                     onDrop={handleDrop}
                   >
-                    <Upload className={`mx-auto mb-2 ${governmentIdFile ? 'text-green-500' : 'text-slate-400'}`} size={20} />
+                    <Upload className={`mx-auto mb-2 ${governmentIdFile ? 'text-green-400' : 'text-pink-400/50'}`} size={20} />
                     <input
                       type="file"
                       onChange={(e) => setGovernmentIdFile(e.target.files?.[0] || null)}
@@ -1038,26 +1141,26 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                     <label htmlFor="govId" className="cursor-pointer block">
                       {governmentIdFile ? (
                         <div className="space-y-2">
-                          <p className="text-xs font-bold text-green-700">✓ File uploaded</p>
-                          <p className="text-xs text-slate-600 truncate">{governmentIdFile.name}</p>
-                          <p className="text-xs text-slate-500">({(governmentIdFile.size / 1024 / 1024).toFixed(2)} MB)</p>
+                          <p className="text-xs font-bold text-green-400">✓ File uploaded</p>
+                          <p className="text-xs text-pink-300/70 truncate">{governmentIdFile.name}</p>
+                          <p className="text-xs text-pink-300/50">({(governmentIdFile.size / 1024 / 1024).toFixed(2)} MB)</p>
                           <button
                             type="button"
                             onClick={(e) => {
                               e.preventDefault();
                               setGovernmentIdFile(null);
                             }}
-                            className="text-xs text-red-600 hover:text-red-800 font-bold mt-2"
+                            className="text-xs text-red-400 hover:text-red-300 font-bold mt-2"
                           >
                             Remove file
                           </button>
                         </div>
                       ) : (
                         <div>
-                          <p className="text-xs text-slate-600 font-medium mb-1">
+                          <p className="text-xs text-pink-300/70 font-medium mb-1">
                             Click to upload or drag and drop
                           </p>
-                          <p className="text-xs text-slate-500">
+                          <p className="text-xs text-pink-300/50">
                             PDF, JPG, JPEG or PNG (Max 10MB)
                           </p>
                         </div>
@@ -1069,34 +1172,56 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
             </div>
 
           {/* Submit Button */}
-          <div className="pt-4 border-t-2 border-slate-200">
+          <div className="pt-4 space-y-3" style={{ borderTop: '1px solid rgba(255, 0, 102, 0.2)' }}>
+            {(!phoneVerified || !passwordOk) && (
+              <p className="text-center text-xs text-amber-300 rounded-lg px-4 py-2 font-medium" style={{ background: 'rgba(251, 191, 36, 0.1)', border: '1px solid rgba(251, 191, 36, 0.3)' }}>
+                {!phoneVerified
+                  ? '⚠ Please verify your phone number before submitting.'
+                  : '⚠ Please set and confirm your password before submitting.'}
+              </p>
+            )}
             <button
               type="submit"
-              className="w-full py-3 gold-gradient text-white rounded-lg font-bold uppercase tracking-wider hover:brightness-110 transition-all shadow-lg text-sm"
+              disabled={!phoneVerified || !passwordOk}
+              className={`w-full py-3 rounded-lg font-bold uppercase tracking-wider transition-all text-sm ${
+                phoneVerified && passwordOk
+                  ? 'text-white hover:brightness-110'
+                  : 'text-pink-300/40 cursor-not-allowed'
+              }`}
+              style={{
+                background: phoneVerified && passwordOk 
+                  ? 'linear-gradient(135deg, #ff0066, #ff4d94)' 
+                  : 'rgba(255, 0, 102, 0.2)',
+                boxShadow: phoneVerified && passwordOk 
+                  ? '0 0 20px rgba(255, 0, 102, 0.4)' 
+                  : 'none'
+              }}
             >
               Submit Registration
             </button>
           </div>
         </form>
+        </GlassCard>
       </div>
 
       {/* Success Modal */}
       {showSuccessModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 animate-in zoom-in duration-300">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="rounded-2xl max-w-md w-full p-8 animate-in zoom-in duration-300" style={{ background: 'linear-gradient(135deg, rgba(26, 10, 10, 0.98), rgba(45, 10, 10, 0.98))', border: '1px solid rgba(255, 0, 102, 0.4)', boxShadow: '0 0 40px rgba(255, 0, 102, 0.3)' }}>
             <div className="text-center">
-              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-r from-green-400 to-green-600 flex items-center justify-center animate-bounce">
+              <div className="w-20 h-20 mx-auto mb-6 rounded-full flex items-center justify-center animate-bounce" style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)', boxShadow: '0 0 20px rgba(34, 197, 94, 0.4)' }}>
                 <CheckCircle size={48} className="text-white" />
               </div>
-              <h2 className="text-3xl font-black text-slate-900 mb-3">
+              <h2 className="text-3xl font-black text-pink-100 mb-3">
                 Registration Successful! 🎉
               </h2>
-              <p className="text-slate-600 mb-6 leading-relaxed">
-                You have successfully registered as <strong>{getRoleTitle()}</strong> for <strong>{selectedMatch?.name}</strong>. Your application is under review.
+              <p className="text-pink-300/70 mb-6 leading-relaxed">
+                You have successfully registered as <strong className="text-pink-200">{getRoleTitle()}</strong> for <strong className="text-pink-200">{selectedMatch?.name}</strong>. Your application is under review.
               </p>
               <button
                 onClick={() => setShowSuccessModal(false)}
-                className="w-full px-8 py-4 gold-gradient text-white rounded-lg font-bold uppercase tracking-wider hover:brightness-110 transition-all shadow-lg"
+                className="w-full px-8 py-4 text-white rounded-lg font-bold uppercase tracking-wider hover:brightness-110 transition-all"
+                style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.4)' }}
               >
                 Close
               </button>
@@ -1104,6 +1229,17 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
           </div>
         </div>
       )}
-    </div>
+
+      {/* Support Footer */}
+      <div className="py-8 text-center" style={{ borderTop: '1px solid rgba(255, 0, 102, 0.1)' }}>
+        <p className="text-xs text-pink-300/50 font-medium">
+          Support{' '}
+          <span className="mx-2 text-pink-300/30">•</span>
+          <a href="mailto:hypehammer.mail@gmail.com" className="text-pink-400/70 hover:text-pink-400 transition-colors">
+            hypehammer.mail@gmail.com
+          </a>
+        </p>
+      </div>
+    </NeonPageWrapper>
   );
 };

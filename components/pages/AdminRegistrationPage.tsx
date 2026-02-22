@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { Trophy, Building2, Calendar, MapPin, Users, DollarSign, Upload, ArrowLeft, CheckCircle, X, AlertCircle } from 'lucide-react';
+import { Trophy, Building2, Calendar, MapPin, Users, DollarSign, Upload, ArrowLeft, CheckCircle, AlertCircle, User, Shield } from 'lucide-react';
 import { AuctionStatus, SportType } from '../../types';
 import { uploadProfilePictureViaAPI, uploadDocumentViaAPI } from '../../services/cloudFunctionUploadService';
+import { PhoneOtpVerification } from '../ui/PhoneOtpVerification';
+import { NeonDesignStyles, GlassCard, NeonButton, GradientHeading, NeonPageWrapper, NeonInput } from '../ui/NeonDesignSystem';
 
 interface AdminRegistrationPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -11,7 +13,8 @@ interface AdminRegistrationPageProps {
 export interface AdminFormData {
   // Organizer Details
   organizationName: string;
-  organizerType: 'College' | 'League' | 'Club' | 'Private' | '';
+  organizerType: 'College' | 'League' | 'Club' | 'Private' | 'Other' | '';
+  organizerTypeOther?: string; // Custom value when "Other" is selected
   designation: 'Organizer' | 'Coordinator' | 'Owner' | '';
   
   // Personal Details
@@ -24,6 +27,7 @@ export interface AdminFormData {
   // Season/Match Creation
   seasonName: string;
   sportType: SportType | '';
+  sportTypeCustom?: string; // Custom value when "Custom" is selected
   auctionDateTime: string;
   venueMode: 'Physical' | 'Online' | 'Hybrid' | '';
   venueLocation?: string;
@@ -39,12 +43,15 @@ export interface AdminFormData {
   governmentIdURL?: string;
   organizerProof?: File;
   organizerProofURL?: string;
+  // OTP Verification
+  phoneVerified: boolean;
 }
 
 export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ setStatus, onRegisterAdmin }) => {
   const [formData, setFormData] = useState<AdminFormData>({
     organizationName: '',
     organizerType: '',
+    organizerTypeOther: '',
     designation: '',
     fullName: '',
     email: '',
@@ -52,18 +59,23 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
     password: '',
     seasonName: '',
     sportType: '',
+    sportTypeCustom: '',
     auctionDateTime: '',
     venueMode: '',
     venueLocation: '',
     maxTeams: 8,
     maxPlayersPerTeam: 15,
     baseBudgetPerTeam: 10000000,
-    governmentId: ''
+    governmentId: '',
+    phoneVerified: false
   });
 
-  const [currentStep, setCurrentStep] = useState(1);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const passwordsMatch = !confirmPassword || formData.password === confirmPassword;
+  const passwordOk = !!(formData.password && confirmPassword && formData.password === confirmPassword);
+
   const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const totalSteps = 3;
   const [uploadProgress, setUploadProgress] = useState<{ photo?: number; govId?: number; proof?: number }>({});
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -87,8 +99,13 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
     setUploadErrors([]);
 
     try {
-      const photoURL = await uploadProfilePictureViaAPI(file, (progress) => {
-        setUploadProgress(prev => ({ ...prev, photo: progress }));
+      // Use season name as match name, with organization name as fallback
+      const matchName = formData.seasonName || formData.organizationName || 'AdminOrganizer';
+      const photoURL = await uploadProfilePictureViaAPI(file, {
+        onProgress: (progress) => {
+          setUploadProgress(prev => ({ ...prev, photo: progress }));
+        },
+        matchName
       });
       setFormData(prev => ({ ...prev, profilePhotoURL: photoURL }));
     } catch (error) {
@@ -109,8 +126,13 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
     setUploadErrors([]);
 
     try {
-      const docURL = await uploadDocumentViaAPI(file, (progress) => {
-        setUploadProgress(prev => ({ ...prev, govId: progress }));
+      // Use season name as match name, with organization name as fallback
+      const matchName = formData.seasonName || formData.organizationName || 'AdminOrganizer';
+      const docURL = await uploadDocumentViaAPI(file, {
+        onProgress: (progress) => {
+          setUploadProgress(prev => ({ ...prev, govId: progress }));
+        },
+        matchName
       });
       setFormData(prev => ({ ...prev, governmentIdURL: docURL }));
     } catch (error) {
@@ -131,8 +153,13 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
     setUploadErrors([]);
 
     try {
-      const docURL = await uploadDocumentViaAPI(file, (progress) => {
-        setUploadProgress(prev => ({ ...prev, proof: progress }));
+      // Use season name as match name, with organization name as fallback
+      const matchName = formData.seasonName || formData.organizationName || 'AdminOrganizer';
+      const docURL = await uploadDocumentViaAPI(file, {
+        onProgress: (progress) => {
+          setUploadProgress(prev => ({ ...prev, proof: progress }));
+        },
+        matchName
       });
       setFormData(prev => ({ ...prev, organizerProofURL: docURL }));
     } catch (error) {
@@ -144,22 +171,50 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
     }
   };
 
-  const isStepValid = (step: number): boolean => {
-    switch (step) {
-      case 1:
-        return !!(formData.fullName && formData.email && formData.phone && formData.password && formData.organizationName && formData.organizerType && formData.designation);
-      case 2:
-        return !!(formData.seasonName && formData.sportType && formData.auctionDateTime && formData.venueMode);
-      case 3:
-        return !!(formData.governmentId);
-      default:
-        return false;
+  const isFormValid = (): boolean => {
+    // Check if "Other" organizer type is selected but custom value is empty
+    if (formData.organizerType === 'Other' && !formData.organizerTypeOther?.trim()) {
+      return false;
     }
+    
+    // Check if "Custom" sport type is selected but custom value is empty
+    if (formData.sportType === 'Custom' && !formData.sportTypeCustom?.trim()) {
+      return false;
+    }
+    
+    const personalValid = !!(formData.fullName && formData.email && formData.phone && formData.password && formData.organizationName && formData.organizerType && formData.designation && phoneVerified && passwordOk);
+    const seasonValid = !!(formData.seasonName && formData.sportType && formData.auctionDateTime && formData.venueMode);
+    const verificationValid = !!(formData.governmentId);
+    return personalValid && seasonValid && verificationValid;
+  };
+
+  // Calculate form completion percentage
+  const getCompletionPercentage = (): number => {
+    const fields = [
+      formData.fullName,
+      formData.email,
+      formData.phone,
+      formData.password,
+      confirmPassword && passwordsMatch,
+      phoneVerified,
+      formData.organizationName,
+      formData.organizerType,
+      formData.organizerType === 'Other' ? formData.organizerTypeOther : true,
+      formData.designation,
+      formData.seasonName,
+      formData.sportType,
+      formData.sportType === 'Custom' ? formData.sportTypeCustom : true,
+      formData.auctionDateTime,
+      formData.venueMode,
+      formData.governmentId
+    ];
+    const filled = fields.filter(Boolean).length;
+    return Math.round((filled / fields.length) * 100);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isStepValid(3)) {
+    if (isFormValid()) {
       try {
         // Log all form fields before submission
         console.log('=' .repeat(80));
@@ -181,8 +236,8 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
         // Show loading state
         setShowSuccessModal(false);
         
-        // Call registration
-        await onRegisterAdmin(formData);
+        // Call registration (include phoneVerified flag in payload)
+        await onRegisterAdmin({ ...formData, phoneVerified: true });
         
         // Show success modal - onRegisterAdmin doesn't throw if successful
         setShowSuccessModal(true);
@@ -200,603 +255,647 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-white via-blue-50 to-orange-50 py-8 px-4">
-      {/* Header */}
-      <div className="mb-8">
-        {/* Back to Home + Title Row */}
-        <div className="flex items-center justify-between mb-8 px-8">
+    <NeonPageWrapper className="min-h-screen py-4 px-4">
+      <NeonDesignStyles />
+      {/* ── Header ──────────────────────────────────────────────────────────── */}
+      <div className="mb-6 sticky top-0 z-30 rounded-lg" style={{ background: 'linear-gradient(135deg, rgba(26, 10, 10, 0.95), rgba(45, 10, 10, 0.95))', border: '1px solid rgba(255, 0, 102, 0.3)' }}>
+        <div className="max-w-[1400px] mx-auto px-6 py-4 flex items-center justify-between">
           <button
             onClick={() => setStatus(AuctionStatus.HOME)}
-            className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-semibold transition-colors underline flex-shrink-0"
+            className="flex items-center gap-2 text-pink-400 hover:text-pink-300 font-semibold transition-colors"
           >
-            <ArrowLeft size={20} />
-            Back to Home
+            <ArrowLeft size={18} />
+            <span className="hidden sm:inline">Back to Home</span>
           </button>
 
-          {/* Centered Icon + Title + Subtitle */}
-          <div className="flex items-center gap-4 flex-1 justify-center">
-            <div className="w-12 h-12 rounded-full bg-gradient-to-r from-blue-500 to-orange-500 flex items-center justify-center flex-shrink-0">
-              <Trophy size={28} className="text-white" />
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.4)' }}>
+              <Trophy size={22} className="text-white" />
             </div>
-            <div className="text-center">
-              <h1 className="text-2xl md:text-3xl font-black text-slate-900">Season Organizer Registration</h1>
-              <p className="text-slate-600 text-sm">Create and manage your own sports auction event</p>
+            <div>
+              <h1 className="text-lg md:text-xl font-black text-pink-100 leading-tight">Season Organizer Registration</h1>
+              <p className="text-pink-300/70 text-xs hidden sm:block">Create and manage your own sports auction event</p>
             </div>
           </div>
 
-          {/* Spacer to balance layout */}
-          <div className="flex-shrink-0 w-32"></div>
-        </div>
-
-        {/* Progress Steps */}
-        <div className="flex items-center justify-center gap-2 mb-8 px-8">
-          {[1, 2, 3].map((step) => (
-            <React.Fragment key={step}>
-              <div className="flex flex-col items-center">
+          {/* Completion Badge */}
+          <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2 rounded-full px-3 py-1.5" style={{ background: 'rgba(255, 0, 102, 0.1)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+              <div className="w-20 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255, 0, 102, 0.15)' }}>
                 <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${
-                    step <= currentStep
-                      ? 'gold-gradient text-white'
-                      : 'bg-slate-200 text-slate-500'
-                  }`}
-                >
-                  {step < currentStep ? <CheckCircle size={20} /> : step}
-                </div>
-                <span className="text-xs mt-2 font-semibold text-slate-600">
-                  {step === 1 && 'Personal & Org'}
-                  {step === 2 && 'Season Details'}
-                  {step === 3 && 'Verification'}
-                </span>
-              </div>
-              {step < totalSteps && (
-                <div
-                  className={`flex-1 h-1 mx-2 max-w-xs transition-all ${
-                    step < currentStep ? 'bg-gradient-to-r from-blue-500 to-orange-500' : 'bg-slate-200'
-                  }`}
+                  className="h-full transition-all duration-300"
+                  style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)', width: `${getCompletionPercentage()}%` }}
                 />
-              )}
-            </React.Fragment>
-          ))}
+              </div>
+              <span className="text-xs font-bold text-pink-300">{getCompletionPercentage()}%</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Form */}
-      <div className="max-w-4xl mx-auto px-4">
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl p-8 border-2 border-slate-200">
-          {/* Step 1: Personal & Organization Details */}
-          {currentStep === 1 && (
-            <div className="space-y-6">
-              <h2 className="text-2xl font-black text-slate-900 mb-6">Personal & Organization Information</h2>
-              
-              {/* Upload Errors */}
-              {uploadErrors.length > 0 && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  {uploadErrors.map((error, idx) => (
-                    <div key={idx} className="flex items-start gap-2 text-red-700 text-sm mb-2">
-                      <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-                      <span>{error}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+      {/* ── Form Container ──────────────────────────────────────────────────── */}
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-8">
+        <form onSubmit={handleSubmit} className="space-y-8">
 
-              {/* Profile Photo on Left + Personal Info on Right */}
-              <div className="flex flex-col md:flex-row gap-6">
-                {/* Profile Photo - Top Left */}
-                <div className="flex-shrink-0">
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 w-full md:w-48">
-                    <label className="block text-sm font-bold text-slate-700 mb-3">
-                      <Upload size={16} className="inline mr-2" />
-                      Profile Photo
-                    </label>
-                    
-                    {/* Photo Preview */}
-                    <div className="w-32 h-32 mx-auto mb-3 rounded-lg border-2 border-dashed border-blue-300 flex items-center justify-center overflow-hidden bg-white">
-                      {formData.profilePhotoURL ? (
-                        <img 
-                          src={formData.profilePhotoURL} 
-                          alt="Profile" 
-                          className="w-full h-full object-cover rounded-lg"
-                        />
-                      ) : (
-                        <div className="text-center text-slate-400">
-                          <Upload size={24} className="mx-auto mb-1" />
-                          <span className="text-xs">No photo</span>
-                        </div>
-                      )}
-                    </div>
-                    
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleProfilePhotoUpload}
-                      disabled={uploading}
-                      className="w-full px-2 py-1 text-xs border border-blue-300 rounded-lg focus:border-blue-500 outline-none cursor-pointer disabled:opacity-50"
-                    />
-                    <p className="text-xs text-slate-600 mt-2">Max 50MB</p>
-                    
-                    {uploadProgress.photo !== undefined && (
-                      <div className="mt-2">
-                        <progress value={uploadProgress.photo} max={100} className="w-full h-2 rounded" />
-                        <p className="text-xs text-slate-600 mt-1">{Math.round(uploadProgress.photo)}%</p>
-                      </div>
-                    )}
-                    
-                    {formData.profilePhotoURL && (
-                      <div className="mt-2 flex items-center gap-1 text-green-700">
-                        <CheckCircle size={14} />
-                        <span className="text-xs">Uploaded</span>
+          {/* Upload Errors */}
+          {uploadErrors.length > 0 && (
+            <div className="rounded-xl p-4" style={{ background: 'rgba(248, 113, 113, 0.1)', border: '1px solid rgba(248, 113, 113, 0.3)' }}>
+              {uploadErrors.map((error, idx) => (
+                <div key={idx} className="flex items-start gap-2 text-red-400 text-sm mb-1 last:mb-0">
+                  <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                  <span>{error}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 1: Personal & Organization Information                      */}
+          {/* ════════════════════════════════════════════════════════════════════ */}
+          <GlassCard glow className="p-6 md:p-8">
+            <div className="flex items-center gap-3 mb-1">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)', boxShadow: '0 0 15px rgba(255, 0, 102, 0.3)' }}>
+                <User size={18} className="text-white" />
+              </div>
+              <h2 className="text-lg md:text-xl font-extrabold text-pink-100">Personal & Organization Information</h2>
+            </div>
+            <div className="h-px mb-6 mt-3" style={{ background: 'rgba(255, 0, 102, 0.2)' }} />
+
+            {/* Profile Photo (left) + Fields (right) */}
+            <div className="flex flex-col md:flex-row gap-6">
+              {/* Photo */}
+              <div className="flex-shrink-0 w-full md:w-48">
+                <div className="rounded-xl p-4" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
+                    <Upload size={14} className="inline mr-1.5 -mt-0.5" />
+                    Profile Photo
+                  </label>
+                  <div className="w-28 h-28 mx-auto mb-3 rounded-xl border-2 border-dashed flex items-center justify-center overflow-hidden" style={{ borderColor: 'rgba(255, 0, 102, 0.4)', background: 'rgba(255, 0, 102, 0.05)' }}>
+                    {formData.profilePhotoURL ? (
+                      <img src={formData.profilePhotoURL} alt="Profile" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="text-center text-pink-400/60">
+                        <Upload size={20} className="mx-auto mb-1" />
+                        <span className="text-[10px]">No photo</span>
                       </div>
                     )}
                   </div>
-                </div>
-
-                {/* Personal Information - Right Side */}
-                <div className="flex-1 space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        Full Name <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.fullName}
-                        onChange={(e) => handleInputChange('fullName', e.target.value)}
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                        placeholder="John Doe"
-                        required
-                      />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleProfilePhotoUpload}
+                    disabled={uploading}
+                    className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:cursor-pointer cursor-pointer disabled:opacity-50 text-pink-300"
+                    style={{ 
+                      '--file-text-color': '#f472b6',
+                      '--file-background': 'rgba(255, 0, 102, 0.15)',
+                    } as any}
+                  />
+                  {uploadProgress.photo !== undefined && (
+                    <div className="mt-2">
+                      <progress value={uploadProgress.photo} max={100} className="w-full h-1.5 rounded" style={{ accentColor: '#ff0066' }} />
+                      <p className="text-[10px] text-pink-300/60 mt-0.5">{Math.round(uploadProgress.photo)}%</p>
                     </div>
-
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        Email Address <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="email"
-                        value={formData.email}
-                        onChange={(e) => handleInputChange('email', e.target.value)}
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                        placeholder="john@example.com"
-                        required
-                      />
+                  )}
+                  {formData.profilePhotoURL && (
+                    <div className="mt-1.5 flex items-center gap-1 text-green-400 text-xs">
+                      <CheckCircle size={12} />
+                      <span>Uploaded</span>
                     </div>
-
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        Phone Number <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="tel"
-                        value={formData.phone}
-                        onChange={(e) => handleInputChange('phone', e.target.value)}
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                        placeholder="+91 9876543210"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        Password <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="password"
-                        value={formData.password}
-                        onChange={(e) => handleInputChange('password', e.target.value)}
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                        placeholder="••••••••"
-                        required
-                      />
-                    </div>
-                  </div>
+                  )}
                 </div>
               </div>
 
-              {/* Organization Details - Below */}
-              <div className="border-t-2 border-slate-100 pt-6 mt-6">
-                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                  <Building2 size={20} className="text-blue-600" />
-                  Organization Details
-                </h3>
-                
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Organization / Tournament Name <span className="text-red-500">*</span>
-                    </label>
-                    <div className="relative">
-                      <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              {/* Fields */}
+              <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                    Full Name <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.fullName}
+                    onChange={(e) => handleInputChange('fullName', e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                    placeholder="John Doe"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                    Email Address <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => handleInputChange('email', e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                    placeholder="john@example.com"
+                    required
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <PhoneOtpVerification
+                    phone={formData.phone}
+                    setPhone={(v) => handleInputChange('phone', v)}
+                    phoneVerified={phoneVerified}
+                    setPhoneVerified={setPhoneVerified}
+                    containerId="recaptcha-admin"
+                    compact
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                    Password <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => handleInputChange('password', e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                    placeholder="••••••••"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                    Re-enter Password <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none transition-colors"
+                    placeholder="••••••••"
+                    style={{ 
+                      background: 'rgba(255, 0, 102, 0.08)',
+                      border: confirmPassword 
+                        ? passwordsMatch 
+                          ? '1px solid rgba(34, 197, 94, 0.3)'
+                          : '1px solid rgba(239, 68, 68, 0.3)'
+                        : '1px solid rgba(255, 0, 102, 0.3)'
+                    }}
+                    required
+                  />
+                  {confirmPassword && (
+                    <p className={`mt-1 text-xs font-medium ${passwordsMatch ? 'text-green-400' : 'text-red-400'}`}>
+                      {passwordsMatch ? 'Passwords match' : 'Passwords do not match'}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Organization sub-section */}
+            <div className="mt-8 pt-6" style={{ borderTop: '1px solid rgba(255, 0, 102, 0.2)' }}>
+              <h3 className="text-base font-black uppercase text-pink-100 mb-4 flex items-center gap-2 tracking-wider">
+                <Building2 size={18} style={{ color: 'rgb(244, 114, 182)' }} />
+                Organization Details
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-x-5 gap-y-4">
+                <div className="md:col-span-3">
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                    Organization / Tournament Name <span className="text-red-400">*</span>
+                  </label>
+                  <div className="relative">
+                    <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 text-pink-400/60" size={18} />
+                    <input
+                      type="text"
+                      value={formData.organizationName}
+                      onChange={(e) => handleInputChange('organizationName', e.target.value)}
+                      className="w-full pl-11 pr-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                      placeholder="XYZ College Sports Committee"
+                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                    Organizer Type <span className="text-red-400">*</span>
+                  </label>
+                  <div className="flex gap-2 items-flex-start">
+                    <select
+                      value={formData.organizerType}
+                      onChange={(e) => handleInputChange('organizerType', e.target.value)}
+                      className="flex-1 px-4 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none"
+                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                      required
+                    >
+                      <option value="" className="bg-[#1a0a0a] text-pink-300">Select Type</option>
+                      <option value="College" className="bg-[#1a0a0a] text-pink-300">College</option>
+                      <option value="League" className="bg-[#1a0a0a] text-pink-300">League</option>
+                      <option value="Club" className="bg-[#1a0a0a] text-pink-300">Club</option>
+                      <option value="Private" className="bg-[#1a0a0a] text-pink-300">Private</option>
+                      <option value="Other" className="bg-[#1a0a0a] text-pink-300">Other</option>
+                    </select>
+                    
+                    {/* Conditional text input for "Other" option */}
+                    {formData.organizerType === 'Other' && (
                       <input
                         type="text"
-                        value={formData.organizationName}
-                        onChange={(e) => handleInputChange('organizationName', e.target.value)}
-                        className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                        placeholder="XYZ College Sports Committee"
+                        value={formData.organizerTypeOther || ''}
+                        onChange={(e) => handleInputChange('organizerTypeOther', e.target.value)}
+                        placeholder="Enter type"
+                        className="flex-1 px-4 py-2.5 rounded-lg text-sm focus:outline-none transition-colors text-pink-100 placeholder-pink-300/40"
+                        style={{ 
+                          background: formData.organizerTypeOther?.trim() 
+                            ? 'rgba(34, 197, 94, 0.08)' 
+                            : 'rgba(251, 113, 133, 0.08)',
+                          border: formData.organizerTypeOther?.trim()
+                            ? '1px solid rgba(34, 197, 94, 0.3)'
+                            : '1px solid rgba(251, 113, 133, 0.3)'
+                        }}
                         required
+                      />
+                    )}
+                  </div>
+                  {formData.organizerType === 'Other' && !formData.organizerTypeOther?.trim() && (
+                    <p className="text-xs text-red-400 mt-1 font-medium">Please enter organizer type</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                    Your Designation <span className="text-red-400">*</span>
+                  </label>
+                  <select
+                    value={formData.designation}
+                    onChange={(e) => handleInputChange('designation', e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                    required
+                  >
+                    <option value="" className="bg-[#1a0a0a] text-pink-300">Select Designation</option>
+                    <option value="Organizer" className="bg-[#1a0a0a] text-pink-300">Organizer</option>
+                    <option value="Coordinator" className="bg-[#1a0a0a] text-pink-300">Coordinator</option>
+                    <option value="Owner" className="bg-[#1a0a0a] text-pink-300">Owner</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </GlassCard>
+
+          {/* ════════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 2: Season / Match Details                                   */}
+          {/* ════════════════════════════════════════════════════════════════════ */}
+          <GlassCard glow className="p-6 md:p-8">
+            <div className="flex items-center gap-3 mb-1">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)', boxShadow: '0 0 15px rgba(255, 0, 102, 0.3)' }}>
+                <Trophy size={18} className="text-white" />
+              </div>
+              <h2 className="text-lg md:text-xl font-extrabold text-pink-100">Season / Match Details</h2>
+            </div>
+            <div className="h-px mb-6 mt-3" style={{ background: 'rgba(255, 0, 102, 0.2)' }} />
+
+            <div className="space-y-5">
+              <div>
+                <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                  Season / Match Name <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={formData.seasonName}
+                  onChange={(e) => handleInputChange('seasonName', e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                  placeholder="e.g., IPL 2026, Inter-College Cricket Championship"
+                  style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                  required
+                />
+                <p className="text-xs text-pink-300/60 mt-1">
+                  This will be displayed as the tournament/season name (NOT your personal name)
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                    Sport Type <span className="text-red-400">*</span>
+                  </label>
+                  <div className="flex gap-2 items-flex-start">
+                    <select
+                      value={formData.sportType}
+                      onChange={(e) => handleInputChange('sportType', e.target.value)}
+                      className="flex-1 px-4 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none"
+                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                      required
+                    >
+                      <option value="" className="bg-[#1a0a0a] text-pink-300">Select Sport</option>
+                      {Object.values(SportType).map((sport) => (
+                        <option key={sport} value={sport} className="bg-[#1a0a0a] text-pink-300">{sport}</option>
+                      ))}
+                    </select>
+                    
+                    {/* Conditional text input for "Custom" sport type */}
+                    {formData.sportType === 'Custom' && (
+                      <input
+                        type="text"
+                        value={formData.sportTypeCustom || ''}
+                        onChange={(e) => handleInputChange('sportTypeCustom', e.target.value)}
+                        placeholder="Enter sport"
+                        className={`flex-1 px-4 py-2.5 rounded-lg text-sm focus:outline-none transition-colors ${
+                          formData.sportTypeCustom?.trim()
+                            ? ''
+                            : ''
+                        }`}
+                        style={{ 
+                          background: formData.sportTypeCustom?.trim() 
+                            ? 'rgba(34, 197, 94, 0.08)' 
+                            : 'rgba(251, 113, 133, 0.08)',
+                          border: formData.sportTypeCustom?.trim()
+                            ? '1px solid rgba(34, 197, 94, 0.3)'
+                            : '1px solid rgba(251, 113, 133, 0.3)',
+                          color: 'rgb(244, 114, 182)'
+                        }}
+                        required
+                      />
+                    )}
+                  </div>
+                  {formData.sportType === 'Custom' && !formData.sportTypeCustom?.trim() && (
+                    <p className="text-xs text-red-400 mt-1 font-medium">Please enter sport name</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                    Auction Date <span className="text-red-400">*</span>
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-pink-400/60" size={18} />
+                    <input
+                      type="date"
+                      value={formData.auctionDateTime}
+                      onChange={(e) => handleInputChange('auctionDateTime', e.target.value)}
+                      className="w-full pl-11 pr-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                    Venue Mode <span className="text-red-400">*</span>
+                  </label>
+                  <select
+                    value={formData.venueMode}
+                    onChange={(e) => handleInputChange('venueMode', e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                    required
+                  >
+                    <option value="" className="bg-[#1a0a0a] text-pink-300">Select Mode</option>
+                    <option value="Physical" className="bg-[#1a0a0a] text-pink-300">Physical Venue</option>
+                    <option value="Online" className="bg-[#1a0a0a] text-pink-300">Online Only</option>
+                    <option value="Hybrid" className="bg-[#1a0a0a] text-pink-300">Hybrid (Both)</option>
+                  </select>
+                </div>
+
+                {formData.venueMode && formData.venueMode !== 'Online' && (
+                  <div>
+                    <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                      Venue Location
+                    </label>
+                    <div className="relative">
+                      <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-pink-400/60" size={18} />
+                      <input
+                        type="text"
+                        value={formData.venueLocation || ''}
+                        onChange={(e) => handleInputChange('venueLocation', e.target.value)}
+                        className="w-full pl-11 pr-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                        placeholder="Mumbai, Maharashtra"
+                        style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
                       />
                     </div>
                   </div>
+                )}
+              </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        Organizer Type <span className="text-red-500">*</span>
-                      </label>
-                      <select
-                        value={formData.organizerType}
-                        onChange={(e) => handleInputChange('organizerType', e.target.value)}
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                        required
-                      >
-                        <option value="">Select Type</option>
-                        <option value="College">College</option>
-                        <option value="League">League</option>
-                        <option value="Club">Club</option>
-                        <option value="Private">Private</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        Your Designation <span className="text-red-500">*</span>
-                      </label>
-                      <select
-                        value={formData.designation}
-                        onChange={(e) => handleInputChange('designation', e.target.value)}
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                        required
-                      >
-                        <option value="">Select Designation</option>
-                        <option value="Organizer">Organizer</option>
-                        <option value="Coordinator">Coordinator</option>
-                        <option value="Owner">Owner</option>
-                      </select>
+              {/* Auction Config */}
+              <div className="rounded-xl p-5 mt-2" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+                <h3 className="text-sm font-black uppercase text-pink-400 mb-3 flex items-center gap-2 tracking-wider">
+                  <Users size={16} className="text-pink-400" />
+                  Auction Configuration
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">Max Teams</label>
+                    <input
+                      type="number"
+                      value={formData.maxTeams}
+                      onChange={(e) => handleInputChange('maxTeams', parseInt(e.target.value) || 0)}
+                      className="w-full px-3 py-2 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                      min="2"
+                      max="32"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">Max Players/Team</label>
+                    <input
+                      type="number"
+                      value={formData.maxPlayersPerTeam}
+                      onChange={(e) => handleInputChange('maxPlayersPerTeam', parseInt(e.target.value) || 0)}
+                      className="w-full px-3 py-2 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                      min="5"
+                      max="50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">Budget per Team (₹)</label>
+                    <div className="relative">
+                      <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-pink-400/60" size={14} />
+                      <input
+                        type="number"
+                        value={formData.baseBudgetPerTeam}
+                        onChange={(e) => handleInputChange('baseBudgetPerTeam', parseInt(e.target.value) || 0)}
+                        className="w-full pl-9 pr-3 py-2 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                        style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                        step="1000000"
+                      />
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-          )}
+          </GlassCard>
 
-          {/* Step 2: Season/Match Details */}
-          {currentStep === 2 && (
-            <div className="space-y-6">
-              <h2 className="text-2xl font-black text-slate-900 mb-6">Season / Match Details</h2>
-              
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Season / Match Name <span className="text-red-500">*</span>
+          {/* ════════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 3: Verification                                            */}
+          {/* ════════════════════════════════════════════════════════════════════ */}
+          <GlassCard glow className="p-6 md:p-8">
+            <div className="flex items-center gap-3 mb-1">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)', boxShadow: '0 0 15px rgba(255, 0, 102, 0.3)' }}>
+                <Shield size={18} className="text-white" />
+              </div>
+              <h2 className="text-lg md:text-xl font-extrabold text-pink-100">Verification Documents</h2>
+            </div>
+            <div className="h-px mb-6 mt-3" style={{ background: 'rgba(255, 0, 102, 0.2)' }} />
+
+            <div className="space-y-5">
+              <div>
+                <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-1.5">
+                  Government ID Number <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={formData.governmentId}
+                  onChange={(e) => handleInputChange('governmentId', e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+                  style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+                  placeholder="Aadhaar / PAN / Driving License"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* Government ID Upload */}
+                <div className="rounded-xl p-5" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
+                    <Upload size={14} className="inline mr-1.5 -mt-0.5" />
+                    Government ID <span className="text-red-400">*</span>
                   </label>
                   <input
-                    type="text"
-                    value={formData.seasonName}
-                    onChange={(e) => handleInputChange('seasonName', e.target.value)}
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                    placeholder="e.g., IPL 2026, Inter-College Cricket Championship"
-                    required
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={handleGovIdUpload}
+                    disabled={uploading}
+                    className="w-full text-sm file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:cursor-pointer cursor-pointer disabled:opacity-50 text-pink-300"
+                    style={{ 
+                      '--file-text-color': '#f472b6',
+                      '--file-background': 'rgba(255, 0, 102, 0.15)',
+                    } as any}
                   />
-                  <p className="text-xs text-slate-500 mt-1">
-                    This will be displayed as the tournament/season name (NOT your personal name)
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Sport Type <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={formData.sportType}
-                      onChange={(e) => handleInputChange('sportType', e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    >
-                      <option value="">Select Sport</option>
-                      {Object.values(SportType).map((sport) => (
-                        <option key={sport} value={sport}>{sport}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Auction Date <span className="text-red-500">*</span>
-                    </label>
-                    <div className="relative">
-                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                      <input
-                        type="date"
-                        value={formData.auctionDateTime}
-                        onChange={(e) => handleInputChange('auctionDateTime', e.target.value)}
-                        className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                        required
-                      />
+                  <p className="text-xs text-pink-300/60 mt-2">PDF or Image — Passport, Aadhar, License (Max 50MB)</p>
+                  {uploadProgress.govId !== undefined && (
+                    <div className="mt-2">
+                      <progress value={uploadProgress.govId} max={100} className="w-full h-1.5 rounded" style={{ accentColor: '#ff0066' }} />
+                      <p className="text-[10px] text-pink-300/60 mt-0.5">{Math.round(uploadProgress.govId)}% uploaded</p>
                     </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                      Venue Mode <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={formData.venueMode}
-                      onChange={(e) => handleInputChange('venueMode', e.target.value)}
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                      required
-                    >
-                      <option value="">Select Mode</option>
-                      <option value="Physical">Physical Venue</option>
-                      <option value="Online">Online Only</option>
-                      <option value="Hybrid">Hybrid (Both)</option>
-                    </select>
-                  </div>
-
-                  {formData.venueMode && formData.venueMode !== 'Online' && (
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        Venue Location
-                      </label>
-                      <div className="relative">
-                        <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                        <input
-                          type="text"
-                          value={formData.venueLocation || ''}
-                          onChange={(e) => handleInputChange('venueLocation', e.target.value)}
-                          className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                          placeholder="Mumbai, Maharashtra"
-                        />
-                      </div>
+                  )}
+                  {formData.governmentIdURL && (
+                    <div className="mt-2 flex items-center gap-1.5 text-green-400 text-sm">
+                      <CheckCircle size={14} />
+                      <span>ID uploaded successfully</span>
                     </div>
                   )}
                 </div>
 
-                <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-6">
-                  <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
-                    <Users size={20} className="text-blue-600" />
-                    Auction Configuration
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-2">
-                        Max Teams
-                      </label>
-                      <input
-                        type="number"
-                        value={formData.maxTeams}
-                        onChange={(e) => handleInputChange('maxTeams', parseInt(e.target.value) || 0)}
-                        className="w-full px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                        min="2"
-                        max="32"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-2">
-                        Max Players/Team
-                      </label>
-                      <input
-                        type="number"
-                        value={formData.maxPlayersPerTeam}
-                        onChange={(e) => handleInputChange('maxPlayersPerTeam', parseInt(e.target.value) || 0)}
-                        className="w-full px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                        min="5"
-                        max="50"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-2">
-                        Budget per Team (₹)
-                      </label>
-                      <div className="relative">
-                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                        <input
-                          type="number"
-                          value={formData.baseBudgetPerTeam}
-                          onChange={(e) => handleInputChange('baseBudgetPerTeam', parseInt(e.target.value) || 0)}
-                          className="w-full pl-10 pr-4 py-2 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                          step="1000000"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Step 3: Verification */}
-          {currentStep === 3 && (
-            <div className="space-y-6">
-              <h2 className="text-2xl font-black text-slate-900 mb-6">Verification Documents</h2>
-              
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Government ID Number <span className="text-red-500">*</span>
+                {/* Organization Proof Upload */}
+                <div className="rounded-xl p-5" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
+                  <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
+                    <Upload size={14} className="inline mr-1.5 -mt-0.5" />
+                    Organization Proof (Optional)
                   </label>
                   <input
-                    type="text"
-                    value={formData.governmentId}
-                    onChange={(e) => handleInputChange('governmentId', e.target.value)}
-                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                    placeholder="Aadhaar / PAN / Driving License"
-                    required
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={handleProofUpload}
+                    disabled={uploading}
+                    className="w-full text-sm file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:cursor-pointer cursor-pointer disabled:opacity-50 text-pink-300"
+                    style={{ 
+                      '--file-text-color': '#f472b6',
+                      '--file-background': 'rgba(255, 0, 102, 0.15)',
+                    } as any}
                   />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Government ID Upload */}
-                  <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-6">
-                    <label className="block text-sm font-bold text-slate-700 mb-3">
-                      <Upload size={16} className="inline mr-2" />
-                      Government ID <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="file"
-                      accept=".pdf,.jpg,.jpeg,.png"
-                      onChange={handleGovIdUpload}
-                      disabled={uploading}
-                      className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:border-blue-500 outline-none cursor-pointer disabled:opacity-50"
-                    />
-                    <p className="text-xs text-slate-600 mt-2">PDF or Image - Passport, Aadhar, License (Max 50MB)</p>
-                    
-                    {uploadProgress.govId !== undefined && (
-                      <div className="mt-3">
-                        <progress value={uploadProgress.govId} max={100} className="w-full h-2 rounded" />
-                        <p className="text-xs text-slate-600 mt-1">{Math.round(uploadProgress.govId)}% uploaded</p>
-                      </div>
-                    )}
-                    
-                    {formData.governmentIdURL && (
-                      <div className="mt-3 flex items-center gap-2 text-green-700">
-                        <CheckCircle size={16} />
-                        <span className="text-sm">ID uploaded successfully</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Organization Proof Upload */}
-                  <div className="bg-orange-50 border-2 border-orange-200 rounded-lg p-6">
-                    <label className="block text-sm font-bold text-slate-700 mb-3">
-                      <Upload size={16} className="inline mr-2" />
-                      Organization Proof (Optional)
-                    </label>
-                    <input
-                      type="file"
-                      accept=".pdf,.jpg,.jpeg,.png"
-                      onChange={handleProofUpload}
-                      disabled={uploading}
-                      className="w-full px-4 py-2 border border-orange-300 rounded-lg focus:border-orange-500 outline-none cursor-pointer disabled:opacity-50"
-                    />
-                    <p className="text-xs text-slate-600 mt-2">Registration certificate, Incorporation documents, etc. (Max 50MB)</p>
-                    
-                    {uploadProgress.proof !== undefined && (
-                      <div className="mt-3">
-                        <progress value={uploadProgress.proof} max={100} className="w-full h-2 rounded" />
-                        <p className="text-xs text-slate-600 mt-1">{Math.round(uploadProgress.proof)}% uploaded</p>
-                      </div>
-                    )}
-                    
-                    {formData.organizerProofURL && (
-                      <div className="mt-3 flex items-center gap-2 text-green-700">
-                        <CheckCircle size={16} />
-                        <span className="text-sm">Proof uploaded successfully</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-yellow-50 border-2 border-yellow-200 rounded-lg p-4">
-                  <p className="text-sm text-yellow-800">
-                    <strong>Note:</strong> Your application will be reviewed by our team. You'll receive approval notification within 24-48 hours.
-                  </p>
+                  <p className="text-xs text-pink-300/60 mt-2">Registration certificate, Incorporation documents, etc. (Max 50MB)</p>
+                  {uploadProgress.proof !== undefined && (
+                    <div className="mt-2">
+                      <progress value={uploadProgress.proof} max={100} className="w-full h-1.5 rounded" style={{ accentColor: '#ff0066' }} />
+                      <p className="text-[10px] text-pink-300/60 mt-0.5">{Math.round(uploadProgress.proof)}% uploaded</p>
+                    </div>
+                  )}
+                  {formData.organizerProofURL && (
+                    <div className="mt-2 flex items-center gap-1.5 text-green-400 text-sm">
+                      <CheckCircle size={14} />
+                      <span>Proof uploaded successfully</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
-          )}
+          </GlassCard>
 
-          {/* Navigation Buttons */}
-          <div className="flex items-center justify-between mt-8 pt-6 border-t-2 border-slate-200">
-            <button
-              type="button"
-              onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
-              className={`px-6 py-3 rounded-lg font-bold transition-all ${
-                currentStep === 1
-                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-              }`}
-              disabled={currentStep === 1}
+          {/* ════════════════════════════════════════════════════════════════════ */}
+          {/* SUBMIT BUTTON                                                       */}
+          {/* ════════════════════════════════════════════════════════════════════ */}
+          <div className="mt-8 flex justify-center">
+            <NeonButton
+              onClick={() => {}}
+              disabled={!isFormValid()}
+              className="px-12 py-2.5 uppercase tracking-wide font-black"
             >
-              Previous
-            </button>
-
-            {currentStep < totalSteps ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (isStepValid(currentStep)) {
-                    setCurrentStep(prev => prev + 1);
-                  }
-                }}
-                className={`px-8 py-3 rounded-lg font-bold transition-all ${
-                  isStepValid(currentStep)
-                    ? 'gold-gradient text-white hover:brightness-110'
-                    : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                }`}
-                disabled={!isStepValid(currentStep)}
-              >
-                Next Step
-              </button>
-            ) : (
-              <button
-                type="submit"
-                className={`px-8 py-3 rounded-lg font-bold transition-all ${
-                  isStepValid(currentStep)
-                    ? 'gold-gradient text-white hover:brightness-110'
-                    : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                }`}
-                disabled={!isStepValid(currentStep)}
-              >
-                Submit Application
-              </button>
-            )}
+              Create Season
+            </NeonButton>
           </div>
         </form>
-      </div>
 
-      {/* Success Modal */}
+      {/* ── Success Modal ───────────────────────────────────────────────────── */}
       {showSuccessModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 animate-in zoom-in duration-300">
+          <GlassCard glow className="max-w-md w-full p-8">
             <div className="text-center">
-              {/* Success Icon */}
-              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-r from-green-400 to-green-600 flex items-center justify-center animate-bounce">
+              <div className="w-20 h-20 mx-auto mb-6 rounded-full flex items-center justify-center animate-bounce" 
+                style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)', boxShadow: '0 0 30px rgba(34, 197, 94, 0.4)' }}>
                 <CheckCircle size={48} className="text-white" />
               </div>
-              
-              {/* Success Message */}
-              <h2 className="text-3xl font-black text-slate-900 mb-3">
+              <h2 className="text-3xl font-black text-pink-100 mb-3">
                 Registration Successful! 🎉
               </h2>
-              <p className="text-slate-600 mb-6 leading-relaxed">
-                Your season <strong>"{formData.seasonName}"</strong> has been registered successfully. 
+              <p className="text-pink-300/80 mb-6 leading-relaxed">
+                Your season <strong>"{formData.seasonName}"</strong> has been registered successfully.
                 Your application is under review and will be approved within 24-48 hours.
               </p>
-              
-              {/* Details */}
-              <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-6 text-left">
+              <div className="rounded-lg p-4 mb-6 text-left" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-slate-600">Organization:</span>
-                    <span className="font-bold text-slate-900">{formData.organizationName}</span>
+                    <span className="text-pink-300/60">Organization:</span>
+                    <span className="font-bold text-pink-100">{formData.organizationName}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-600">Sport:</span>
-                    <span className="font-bold text-slate-900">{formData.sportType}</span>
+                    <span className="text-pink-300/60">Sport:</span>
+                    <span className="font-bold text-pink-100">{formData.sportType}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-600">Auction Date:</span>
-                    <span className="font-bold text-slate-900">
+                    <span className="text-pink-300/60">Auction Date:</span>
+                    <span className="font-bold text-pink-100">
                       {new Date(formData.auctionDateTime).toLocaleDateString()}
                     </span>
                   </div>
                 </div>
               </div>
-              
-              {/* Action Button */}
               <button
                 onClick={() => setStatus(AuctionStatus.ADMIN_DASHBOARD)}
-                className="w-full px-8 py-4 gold-gradient text-white rounded-lg font-bold uppercase tracking-wider hover:brightness-110 transition-all shadow-lg"
+                className="w-full px-8 py-4 rounded-lg font-bold uppercase tracking-wider transition-all shadow-lg text-white"
+                style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.4)' }}
               >
                 Go to Admin Dashboard
               </button>
             </div>
-          </div>
+          </GlassCard>
         </div>
       )}
+
+      {/* Support Footer */}
+      <div className="py-8 text-center mt-auto" style={{ borderTop: '1px solid rgba(255, 0, 102, 0.1)' }}>
+        <p className="text-xs text-pink-300/50 font-medium">
+          Support{' '}
+          <span className="mx-2 text-pink-300/30">•</span>
+          <a href="mailto:hypehammer.mail@gmail.com" className="text-pink-400/70 hover:text-pink-400 transition-colors">
+            hypehammer.mail@gmail.com
+          </a>
+        </p>
+      </div>
     </div>
+    </NeonPageWrapper>
   );
 };

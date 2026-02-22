@@ -5,7 +5,7 @@
 
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getFirestore, Firestore } from 'firebase/firestore';
-import { getAuth, Auth } from 'firebase/auth';
+import { getAuth, Auth, connectAuthEmulator } from 'firebase/auth';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 
 // Firebase configuration
@@ -38,6 +38,18 @@ try {
   firestore = getFirestore(app);
   auth = getAuth(app);
   storage = getStorage(app);
+  
+  // Connect to Auth Emulator on localhost for Phone OTP development
+  // Only connect if explicitly enabled via URL param: ?useEmulator=true
+  // This prevents connection errors when emulator isn't running
+  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const useEmulator = new URLSearchParams(window.location.search).get('useEmulator') === 'true';
+  if (isLocalhost && useEmulator && !auth.emulatorConfig) {
+    connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
+    console.log('🔧 Connected to Firebase Auth Emulator (localhost:9099)');
+  } else if (isLocalhost && !useEmulator) {
+    console.log('🔧 Auth Emulator disabled (add ?useEmulator=true to enable)');
+  }
   
   console.log('✅ Firestore, Auth, and Storage initialized');
 } catch (error) {
