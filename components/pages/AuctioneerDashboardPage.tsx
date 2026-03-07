@@ -1,22 +1,37 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { LogOut, Radio, ArrowLeft, Zap, Users, Trophy, Activity, Settings, Home, Play, ChevronRight, ChevronDown, ChevronUp, User, UserCheck, Wallet, Star, TrendingUp, FileText, BarChart3, Clock, CheckCircle, XCircle, AlertCircle, Square, Shield, Search, Download, Filter, X, IndianRupee, Target, History, Plus, Upload, Loader2, FileText as FileIcon, Image, Ban, Check } from 'lucide-react';
-import { AuctionStatus, MatchData, UserRole, Team, Player, ApprovalStatus } from '../../types';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { LogOut, Radio, ArrowLeft, Zap, Users, Trophy, Activity, Settings, Home, Play, ChevronRight, ChevronDown, ChevronUp, User, UserCheck, Wallet, Star, TrendingUp, FileText, BarChart3, Clock, CheckCircle, XCircle, AlertCircle, Square, Shield, Search, Download, Filter, X, IndianRupee, Target, History, Plus, Upload, Loader2, FileText as FileIcon, Image, Ban, Check, AlertTriangle, ExternalLink, Link2 } from 'lucide-react';
+import { AuctionStatus, MatchData, UserRole, Team, Player, ApprovalStatus, BidConfig, CurrencyUnit } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
 import { PlayersPage } from './PlayersPage';
 import { PlayerApplicationsPage } from './PlayerApplicationsPage';
 import { AuctionResultsPage } from './AuctionResultsPage';
 import { TeamSquadPage } from './TeamSquadPage';
 import { TeamHUDCard } from '../ui/TeamHUDCard';
+import { RoleBasedRegistrationPage } from './RoleBasedRegistrationPage';
 import { AuctionCountdown } from '../ui/AuctionCountdown';
 import { AuctionDateSettings } from '../ui/AuctionDateSettings';
 import { BackupRestoreSection } from '../ui/BackupRestoreSection';
+import { PreAuctionValidationModal, PreAuctionValidationData } from '../modals/PreAuctionValidationModal';
+import { useMatchData } from '../../hooks/useMatchData';
 import { socketService } from '../../services/socketService';
 import { registerTeam, registerPlayer } from '../../services/apiService';
 import { uploadTeamLogo, uploadDocument, uploadPlayerPhoto } from '../../services/firebaseStorageService';
 import { firestore } from '../../services/firebaseConfig';
 import { doc, getDoc } from 'firebase/firestore';
+import { formatIndianCurrencyShort } from '../../services/currencyUtils';
+import { 
+  subscribeToBidConfig, 
+  updateBidConfig, 
+  DEFAULT_BID_INCREMENTS, 
+  formatBidIncrementLabel,
+  lockBidConfig,
+  subscribeToCurrencyUnit,
+  DEFAULT_CURRENCY_UNIT
+} from '../../services/matchConfigService';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+
+const fmtCurrency = (amount?: number) => formatIndianCurrencyShort(amount || 0);
 
 // ─── Bidding History Page ────────────────────────────────────────────────────
 interface BidRecord {
@@ -55,7 +70,7 @@ const BiddingHistoryPage: React.FC<{
     fetchBids();
   }, [player.id, seasonId]);
 
-  const fmtCurrency = (v: number) => `₹${((v || 0) / 100000).toFixed(1)}L`;
+  const fmtCurrency = formatIndianCurrencyShort;
 
   const fmtTime = (ts: string) => {
     if (!ts) return '—';
@@ -303,8 +318,14 @@ const ReportSection: React.FC<{
   const [teamFilter, setTeamFilter] = React.useState('');
   const [expandedTeams, setExpandedTeams] = React.useState<Record<string, boolean>>({});
 
-  const fmtCurrency = (v: number) => `₹${((v || 0) / 100000).toFixed(1)}L`;
-  const fmtCr = (v: number) => `₹${((v || 0) / 10000000).toFixed(2)}Cr`;
+  const fmtCurrency = formatIndianCurrencyShort;
+  const fmtCr = (v: number) => {
+    const val = v || 0;
+    if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)}Cr`;
+    if (val >= 100000) return `₹${(val / 100000).toFixed(2)}L`;
+    if (val >= 1000) return `₹${(val / 1000).toFixed(2)}K`;
+    return `₹${val}`;
+  };
 
   const isLive = auctionStatus === 'LIVE' || auctionStatus === 'PAUSED';
   const isEnded = auctionStatus === 'ENDED';
@@ -343,6 +364,8 @@ const ReportSection: React.FC<{
       if (statusFilter === 'sold' && p.status !== 'SOLD') return false;
       if (statusFilter === 'unsold' && p.status !== 'UNSOLD') return false;
       if (statusFilter === 'available' && p.status !== 'AVAILABLE' && p.status !== 'PENDING') return false;
+      // Only show accepted players in available/pending filter
+      if (statusFilter === 'available' && p.approvalStatus !== 'accepted') return false;
       if (statusFilter === 'live' && (p.status as string) !== 'LIVE') return false;
       if (reportSearch) {
         const q = reportSearch.toLowerCase();
@@ -422,7 +445,7 @@ const ReportSection: React.FC<{
               ) : isEnded ? (
                 <><CheckCircle size={13} className="text-pink-400/60" /> Final Auction Report</>
               ) : (
-                <>{activeMatch?.name || 'Auction'} — Pre-Auction Overview</>
+                <>{currentMatch?.name || 'Auction'} — Pre-Auction Overview</>
               )}
             </p>
           </div>
@@ -616,6 +639,22 @@ const ReportSection: React.FC<{
                       <span className="text-sm text-red-300 font-black ml-auto">{fmtCurrency(highestPurchase.amount)}</span>
                     </div>
                   )}
+                  
+                  {/* Government ID Section for Team */}
+                  {(team.governmentId || team.governmentIdURL) && (
+                    <div className="px-5 py-3 flex items-center gap-3" style={{ background: 'rgba(236,72,153,0.05)' }}>
+                      <span className="text-xs text-pink-300/60 uppercase font-bold">Organization ID:</span>
+                      {team.governmentId && <span className="text-sm text-pink-300/80 font-semibold">{team.governmentId}</span>}
+                      {team.governmentIdURL && (
+                        <a href={team.governmentIdURL} target="_blank" rel="noopener noreferrer"
+                           className="text-xs text-pink-400 hover:text-pink-300 font-bold ml-auto flex items-center gap-1">
+                          <ExternalLink size={10} />
+                          View ID Proof
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  
                   {teamFilteredPlayers.length > 0 ? teamFilteredPlayers.map((player, pIdx) => {
                     const soldAmt = (player as any).soldAmount || (player as any).soldPrice || (player as any).currentBid || 0;
                     const role = (player as any).roleId || (player as any).role || '';
@@ -688,6 +727,8 @@ const ReportSection: React.FC<{
           if (statusFilter === 'sold' && p.status !== 'SOLD') return false;
           if (statusFilter === 'unsold' && p.status !== 'UNSOLD') return false;
           if (statusFilter === 'available' && p.status !== 'AVAILABLE' && p.status !== 'PENDING') return false;
+          // Only show accepted players in available/pending filter
+          if (statusFilter === 'available' && p.approvalStatus !== 'accepted') return false;
           if (statusFilter === 'live' && (p.status as string) !== 'LIVE') return false;
           if (teamFilter) {
             const pTeam = (p as any).soldTo || (p as any).teamId || (p as any).buyingTeamId || '';
@@ -771,6 +812,11 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   // ─── RESOLVED MATCH STATE (fallback fetch if currentMatch is null) ─────────────
   const [resolvedMatch, setResolvedMatch] = useState<MatchData | null>(currentMatch);
   const [matchLoading, setMatchLoading] = useState(!currentMatch);
+  const [auctioneerApprovalStatus, setAuctioneerApprovalStatus] = useState<string | null>(null);
+  const [auctioneerApprovalError, setAuctioneerApprovalError] = useState<string | null>(null);
+  
+  // ─── FETCH MATCH DATA (including budget from matchSettings.pursePerTeam) ─────
+  const { pursePerTeam } = useMatchData(resolvedMatch?.id || null);
   
   // Fallback: Fetch match directly if currentMatch prop is null
   useEffect(() => {
@@ -800,7 +846,21 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
           console.log('📡 Auctioneer API response:', auctioneerData);
           
           if (auctioneerData.success && auctioneerData.data && auctioneerData.data.length > 0) {
-            matchIdToFetch = auctioneerData.data[0].matchId;
+            const auctioneerInfo = auctioneerData.data[0];
+            const approvalStatus = auctioneerInfo.approvalStatus || 'PENDING';
+            
+            console.log('🔐 Auctioneer approval status:', approvalStatus);
+            setAuctioneerApprovalStatus(approvalStatus);
+            
+            // HARD BLOCK: Reject if not approved
+            if (approvalStatus !== 'APPROVED') {
+              console.warn('❌ AUCTIONEER NOT APPROVED: Status is', approvalStatus);
+              setAuctioneerApprovalError(`Your application is currently ${approvalStatus}. Waiting for admin approval.`);
+              setMatchLoading(false);
+              return;
+            }
+            
+            matchIdToFetch = auctioneerInfo.matchId;
             console.log('✅ Found auctioneer matchId:', matchIdToFetch);
             // Save to sessionStorage for consistency
             if (matchIdToFetch) {
@@ -808,9 +868,15 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
             }
           } else {
             console.warn('⚠️ No auctioneer registration found');
+            setAuctioneerApprovalError('No auctioneer registration found. Please register first.');
+            setMatchLoading(false);
+            return;
           }
         } catch (err) {
           console.error('❌ Error fetching auctioneer registration:', err);
+          setAuctioneerApprovalError('Error loading your profile. Please try again.');
+          setMatchLoading(false);
+          return;
         }
       }
       
@@ -853,8 +919,27 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   // Use resolvedMatch for all operations
   const activeMatch = resolvedMatch;
 
-  const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom' | 'teams' | 'players' | 'playerApplications' | 'settings' | 'report' | 'teamDetail' | 'history' | 'addTeam' | 'addPlayer' | 'results'>('dashboard');
-  const [activeNav, setActiveNav] = useState(0);
+  // 🔄 SESSION PERSISTENCE: Restore liveRoom state on mount
+  const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom' | 'teams' | 'players' | 'playerApplications' | 'settings' | 'report' | 'teamDetail' | 'history' | 'addTeam' | 'addPlayer' | 'results'>(() => {
+    // Check if we were in liveRoom before reload
+    const savedSection = sessionStorage.getItem('hypehammer_auctioneer_section');
+    const savedMatchId = sessionStorage.getItem('hypehammer_auctioneer_match_id');
+    
+    // Only restore if we have a saved liveRoom state for this match
+    if (savedSection === 'liveRoom' && savedMatchId && currentMatch?.id === savedMatchId) {
+      console.log('🔄 Restoring auctioneer to liveRoom after reload');
+      return 'liveRoom';
+    }
+    return 'dashboard';
+  });
+  const [activeNav, setActiveNav] = useState(() => {
+    const savedSection = sessionStorage.getItem('hypehammer_auctioneer_section');
+    const savedMatchId = sessionStorage.getItem('hypehammer_auctioneer_match_id');
+    if (savedSection === 'liveRoom' && savedMatchId && currentMatch?.id === savedMatchId) {
+      return 1; // Live Room nav index
+    }
+    return 0;
+  });
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [teamSearchQuery, setTeamSearchQuery] = useState('');
   const [historyPlayer, setHistoryPlayer] = useState<Player | null>(null);
@@ -880,6 +965,8 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   const [isDraggingLogo, setIsDraggingLogo] = useState(false);
   const [isDraggingAuth, setIsDraggingAuth] = useState(false);
   const [isDraggingGovId, setIsDraggingGovId] = useState(false);
+  
+  // Note: Using section navigation instead of modals for registration pages
 
   // Add Player Form State
   const [playerName, setPlayerName] = useState('');
@@ -910,6 +997,23 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   const [navSearchQuery, setNavSearchQuery] = useState('');
   const [navSearchFocused, setNavSearchFocused] = useState(false);
   
+  // Toast notifications
+  const [toastNotifications, setToastNotifications] = useState<Array<{
+    id: string;
+    message: string;
+    type: 'success' | 'error' | 'info';
+  }>>([]);
+  
+  const removeToast = (id: string) => {
+    setToastNotifications(prev => prev.filter(t => t.id !== id));
+  };
+  
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    const id = Math.random().toString(36);
+    setToastNotifications(prev => [...prev, { id, message, type }]);
+    setTimeout(() => removeToast(id), 3000);
+  };
+  
   // Real data states
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -919,6 +1023,34 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   // Auction status state
   const [liveAuctionStatus, setLiveAuctionStatus] = useState<'READY' | 'LIVE' | 'PAUSED' | 'ENDED'>('READY');
   const [startingAuction, setStartingAuction] = useState(false);
+  const [showValidationModal, setShowValidationModal] = useState(false);
+  const [validationData, setValidationData] = useState<PreAuctionValidationData | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+  
+  // Bid Config state (multi-increment bidding)
+  const [bidConfig, setBidConfig] = useState<BidConfig | null>(null);
+  const [bidConfigInputs, setBidConfigInputs] = useState<{ increments: string[]; custom: string }>({
+    increments: DEFAULT_BID_INCREMENTS.map(v => String(v / 100000)),
+    custom: '',
+  });
+  const [savingBidConfig, setSavingBidConfig] = useState(false);
+  const [bidConfigError, setBidConfigError] = useState('');
+  const [bidConfigSuccess, setBidConfigSuccess] = useState('');
+  const [currencyUnit, setCurrencyUnit] = useState<CurrencyUnit>(DEFAULT_CURRENCY_UNIT);
+
+  // 🔄 SESSION PERSISTENCE: Save/clear liveRoom state on section change
+  useEffect(() => {
+    if (activeSection === 'liveRoom' && activeMatch?.id) {
+      // Save session when entering liveRoom
+      sessionStorage.setItem('hypehammer_auctioneer_section', 'liveRoom');
+      sessionStorage.setItem('hypehammer_auctioneer_match_id', activeMatch.id);
+      console.log('💾 Saved auctioneer liveRoom session for match:', activeMatch.id);
+    } else if (activeSection !== 'liveRoom') {
+      // Clear session when explicitly navigating away from liveRoom
+      sessionStorage.removeItem('hypehammer_auctioneer_section');
+      sessionStorage.removeItem('hypehammer_auctioneer_match_id');
+    }
+  }, [activeSection, activeMatch?.id]);
   
   // Team moderation state
   type TeamModerationFilter = 'all' | 'accepted' | 'pending' | 'declined';
@@ -1063,12 +1195,60 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     return () => clearTimeout(timer);
   }, [currentUser?.email]);
 
+  /**
+   * CRITICAL FIX for Issue #2: After logout/login button shows "Start Auction" instead of "Enter Live Room"
+   * 
+   * Fetch the current auction status from the database on page load.
+   * This ensures that if an auction is already started, we show "Enter Live Room" instead of "Start Auction".
+   * 
+   * @param matchId - The match ID to check auction status for
+   */
+  const fetchAuctionStatusFromDB = async (matchId: string) => {
+    if (!matchId) return;
+    try {
+      console.log('🔍 [Dashboard] Fetching auction status from database for match:', matchId);
+      const response = await fetch(`${API_BASE}/matches/${matchId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const matchData = data.data || data;
+        
+        // Check if auction is already started
+        if (matchData?.auctionStatus) {
+          const normalizedStatus = String(matchData.auctionStatus).toUpperCase();
+          console.log('✅ [Dashboard] Found auction status in DB:', normalizedStatus);
+          
+          if (normalizedStatus === 'LIVE' || normalizedStatus === 'PAUSED' || normalizedStatus === 'ENDED') {
+            setLiveAuctionStatus(normalizedStatus as 'READY' | 'LIVE' | 'PAUSED' | 'ENDED');
+            console.log('✅ [Dashboard] Restored auction status:', normalizedStatus);
+          }
+        } else if (matchData?.status) {
+          // Alternative field name
+          const normalizedStatus = String(matchData.status).toUpperCase();
+          if (normalizedStatus === 'LIVE' || normalizedStatus === 'PAUSED' || normalizedStatus === 'READY' || normalizedStatus === 'ENDED') {
+            setLiveAuctionStatus(normalizedStatus as 'READY' | 'LIVE' | 'PAUSED' | 'ENDED');
+            console.log('✅ [Dashboard] Restored auction status (alt field):', normalizedStatus);
+          }
+        } else {
+          console.log('⚠️ [Dashboard] No auction status found in DB, keeping READY state');
+        }
+      } else {
+        console.warn('[Dashboard] Failed to fetch match data:', response.status);
+      }
+    } catch (error) {
+      console.error('[Dashboard] Error fetching auction status:', error);
+    }
+  };
+
   // Subscribe to auction status changes via Firebase
   useEffect(() => {
     if (!activeMatch?.id) return;
 
     // Initialize socket service with current season
     const seasonId = activeMatch.id;
+    
+    // CRITICAL FIX: Fetch current auction status from DB FIRST
+    // This ensures we detect if an auction was already started (e.g., after logout/login)
+    fetchAuctionStatusFromDB(seasonId);
     
     // Connect to Firebase
     socketService.connect();
@@ -1078,32 +1258,49 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
 
     const unsubscribers: (() => void)[] = [];
 
+    // Track last live player ID to prevent redundant state updates
+    let lastLivePlayerId: string | null = null;
+    
     // Listen to players collection for real-time updates
     unsubscribers.push(socketService.onPlayersUpdate(seasonId, (updatedPlayers) => {
-      console.log('[Auctioneer] Players updated:', updatedPlayers.length);
-      
       // ONLY consider players that are accepted — never show declined players in live card
       const acceptedPlayers = updatedPlayers.filter((p: any) => p.approvalStatus === 'accepted');
-      // Find the LIVE player among accepted players only
-      const livePlayer = acceptedPlayers.find((p: any) => p.status === 'LIVE' || p.status === 'PENDING');
+      // CRITICAL FIX: Only find players with status === 'LIVE' (NOT PENDING)
+      // PENDING means "waiting to be auctioned", LIVE means "currently being auctioned"
+      // Previously this was finding the first PENDING player which caused wrong player to show
+      const livePlayer = acceptedPlayers.find((p: any) => p.status === 'LIVE');
       if (livePlayer) {
-        console.log('[Auctioneer] Found live player:', livePlayer.name);
-        setCurrentBiddingPlayer(livePlayer);
+        // CRITICAL: Only update state if player actually changed (prevents infinite re-renders)
+        if (livePlayer.id !== lastLivePlayerId) {
+          console.log('[Auctioneer] Found NEW live player:', livePlayer.name);
+          lastLivePlayerId = livePlayer.id;
+          setCurrentBiddingPlayer(livePlayer);
+        }
+        // Always update bid amount for the current player (this is fine - same player, different values)
+        else {
+          setCurrentBiddingPlayer(prev => 
+            prev && prev.id === livePlayer.id 
+              ? { ...prev, currentBid: livePlayer.currentBid, currentTeamId: livePlayer.currentTeamId }
+              : livePlayer
+          );
+        }
       } else {
-        console.log('[Auctioneer] No LIVE/PENDING accepted player found');
-        setCurrentBiddingPlayer(null);
+        if (lastLivePlayerId !== null) {
+          console.log('[Auctioneer] No LIVE/PENDING accepted player found');
+          lastLivePlayerId = null;
+          setCurrentBiddingPlayer(null);
+        }
       }
       // Mark that we have received at least one snapshot — safe to render
       setLivePlayerResolved(true);
     }));
 
+    // Track last fetched player ID to prevent redundant API calls
+    let lastFetchedPlayerId: string | null = null;
+    
     // Listen for auction state updates (PRIMARY SOURCE - gets current status on mount)
     unsubscribers.push(socketService.onAuctionStateUpdate((data: any) => {
-      console.log('[Auctioneer] Auction state update:', data);
-      console.log('   → Status:', data.status);
-      console.log('   → Current Player ID:', data.currentPlayerId);
-      console.log('   → Bidding Active:', data.biddingActive);
-      
+      // Only log status changes, not every update (reduces console spam)
       if (data.status) {
         const normalizedStatus = (data.status || '').toUpperCase();
         if (normalizedStatus === 'LIVE' || normalizedStatus === 'PAUSED' || normalizedStatus === 'READY' || normalizedStatus === 'ENDED') {
@@ -1112,8 +1309,10 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       }
       
       // If auction is LIVE and we have a currentPlayerId, fetch the player data from API
-      if (data.status === 'LIVE' && data.biddingActive && data.currentPlayerId) {
-        console.log('   → Fetching player from API:', data.currentPlayerId);
+      // CRITICAL: Only fetch if player ID actually CHANGED to prevent infinite loops
+      if (data.status === 'LIVE' && data.biddingActive && data.currentPlayerId && data.currentPlayerId !== lastFetchedPlayerId) {
+        console.log('[Auctioneer] New player detected, fetching:', data.currentPlayerId);
+        lastFetchedPlayerId = data.currentPlayerId;
         fetch(`${API_BASE}/players/${data.currentPlayerId}`)
           .then(res => res.json())
           .then(playerData => {
@@ -1159,6 +1358,73 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     };
   }, [activeMatch?.id]);
 
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // BID CONFIG - Real-time subscription and state management
+  // ═══════════════════════════════════════════════════════════════════════════════
+  
+  // Subscribe to bidConfig updates from Firestore
+  useEffect(() => {
+    if (!activeMatch?.id) return;
+    
+    console.log('📊 [BidConfig] Subscribing to bid config for match:', activeMatch.id);
+    
+    const unsubscribe = subscribeToBidConfig(
+      activeMatch.id,
+      (config) => {
+        console.log('📊 [BidConfig] Received config update:', config);
+        setBidConfig(config);
+        
+        // Update input fields to reflect current config
+        if (config.increments && config.increments.length > 0) {
+          // Convert to lakhs for display (input is in lakhs)
+          const incrementsInLakhs = config.increments.map(v => {
+            // Handle both small and large values
+            if (v >= 100000) return String(v / 100000); // Convert to lakhs
+            if (v >= 1000) return String(v / 1000) + 'K'; // Already in thousands
+            return String(v);
+          });
+          
+          // Pad to 4 slots if needed
+          while (incrementsInLakhs.length < 4) {
+            incrementsInLakhs.push('');
+          }
+          
+          setBidConfigInputs({
+            increments: incrementsInLakhs.slice(0, 4),
+            custom: config.custom && config.custom > 0 
+              ? String(config.custom >= 100000 ? config.custom / 100000 : config.custom / 1000) 
+              : '',
+          });
+        }
+      },
+      (error) => {
+        console.error('📊 [BidConfig] Error subscribing:', error);
+      }
+    );
+    
+    return () => unsubscribe();
+  }, [activeMatch?.id]);
+
+  // Subscribe to currency unit updates from Firestore
+  useEffect(() => {
+    if (!activeMatch?.id) return;
+    
+    console.log('💱 [CurrencyUnit] Subscribing to currency unit for match:', activeMatch.id);
+    
+    const unsubscribe = subscribeToCurrencyUnit(
+      activeMatch.id,
+      (unit) => {
+        console.log('💱 [CurrencyUnit] Received update:', unit);
+        setCurrencyUnit(unit);
+      },
+      (error) => {
+        console.error('💱 [CurrencyUnit] Error subscribing:', error);
+      }
+    );
+    
+    return () => unsubscribe();
+  }, [activeMatch?.id]);
+
   /**
    * CRITICAL: Filter out declined players for all auction-related displays and stats
    * Declined players should ONLY appear in admin review sections
@@ -1176,6 +1442,34 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
   const eligibleTeams = useMemo(() => {
     return teams.filter(t => t.approvalStatus !== 'declined');
   }, [teams]);
+
+  // Share registration links for players and teams
+  const handleShareRegistrationLink = async (type: 'player' | 'team') => {
+    if (!activeMatch?.id) {
+      showToast('No match selected - cannot generate link', 'error');
+      return;
+    }
+
+    const rolePathMap = {
+      'player': 'player',
+      'team': 'team'
+    };
+    const rolePath = rolePathMap[type];
+    
+    const baseUrl = window.location.origin;
+    const registrationUrl = `${baseUrl}/register/${rolePath}/${activeMatch.id}`;
+    
+    const typeLabel = type === 'player' ? 'Player' : 'Team';
+    const shareText = `Register as ${typeLabel} for ${activeMatch.name}\n${registrationUrl}`;
+
+    try {
+      await navigator.clipboard.writeText(shareText);
+      showToast(`${typeLabel} Invite Link Copied!`, 'success');
+    } catch (err) {
+      console.error('Failed to copy link:', err);
+      showToast('Failed to copy link. Please try again.', 'error');
+    }
+  };
 
   // Handle Add Team submission
   const handleAddTeam = async () => {
@@ -1269,7 +1563,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         teamLogo: logoUrl,
         authorizationLetter: authLetterUrl,
         governmentId: governmentId,
-        governmentIdFile: govIdUrl,
+        governmentIdURL: govIdUrl,
         role: 'TEAM_REP'
       };
 
@@ -1538,7 +1832,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         role: 'PLAYER',
         seasonId: activeMatch.id,
         governmentId: playerGovId,
-        governmentIdFile: govIdUrl,
+        governmentIdURL: govIdUrl,
         dateOfBirth: '', // age-based
         age: parseInt(playerAge) || 25,
         gender: playerGender,
@@ -1671,22 +1965,236 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     setStatus(AuctionStatus.HOME);
   };
 
-  // Handle go to live room
+  // Handle go to live room - with validation
   const handleGoToLiveRoom = () => {
+    if (liveAuctionStatus !== 'LIVE') {
+      alert(`⚠️ Auction has not been started yet.\n\nCurrent Status: ${liveAuctionStatus}\n\nPlease click "Start Auction" to begin the auction.`);
+      return;
+    }
     setActiveSection('liveRoom');
   };
 
-  // Handle start auction - calls API and enters live room
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // BID CONFIG HANDLERS
+  // ═══════════════════════════════════════════════════════════════════════════════
+  
+  /**
+   * Parse bid increment input value based on currencyUnit
+   * K → 1000, L → 100000, Cr → 10000000
+   */
+  const parseBidIncrementInput = (value: string): number => {
+    if (!value || value.trim() === '') return 0;
+    
+    const cleaned = value.toString().trim().toUpperCase();
+    
+    // Handle explicit K suffix (thousands)
+    if (cleaned.endsWith('K')) {
+      const num = parseFloat(cleaned.slice(0, -1));
+      return isNaN(num) ? 0 : num * 1000;
+    }
+    
+    // Handle explicit L suffix (lakhs)
+    if (cleaned.endsWith('L')) {
+      const num = parseFloat(cleaned.slice(0, -1));
+      return isNaN(num) ? 0 : num * 100000;
+    }
+    
+    // Handle explicit CR suffix (crores)
+    if (cleaned.endsWith('CR')) {
+      const num = parseFloat(cleaned.slice(0, -2));
+      return isNaN(num) ? 0 : num * 10000000;
+    }
+    
+    // No suffix: use currencyUnit to determine multiplier
+    const num = parseFloat(cleaned);
+    if (isNaN(num)) return 0;
+    
+    const multiplier = currencyUnit === 'K' ? 1000 : currencyUnit === 'Cr' ? 10000000 : 100000;
+    return num * multiplier;
+  };
+
+  /**
+   * Save bid config to Firestore
+   */
+  const handleSaveBidConfig = async () => {
+    if (!activeMatch?.id || !currentUser?.id) return;
+    
+    setSavingBidConfig(true);
+    setBidConfigError('');
+    setBidConfigSuccess('');
+    
+    try {
+      // Parse increment values
+      const increments = bidConfigInputs.increments
+        .map(v => parseBidIncrementInput(v))
+        .filter(v => v > 0);
+      
+      if (increments.length === 0) {
+        setBidConfigError('At least one bid increment is required');
+        setSavingBidConfig(false);
+        return;
+      }
+      
+      // Sort and validate
+      const sortedIncrements = [...increments].sort((a, b) => a - b);
+      
+      // Check for duplicates
+      const uniqueIncrements = [...new Set(sortedIncrements)];
+      if (uniqueIncrements.length !== increments.length) {
+        setBidConfigError('Duplicate increment values are not allowed');
+        setSavingBidConfig(false);
+        return;
+      }
+      
+      // Parse custom increment
+      const custom = parseBidIncrementInput(bidConfigInputs.custom);
+      
+      // Save to Firestore
+      const result = await updateBidConfig(
+        activeMatch.id,
+        {
+          increments: sortedIncrements,
+          custom: custom > 0 ? custom : null, // Use null, not undefined (Firestore rejects undefined)
+        },
+        currentUser.id,
+        false // Not from Live Room
+      );
+      
+      if (result.success) {
+        setBidConfigSuccess('Bid increments saved successfully!');
+        setTimeout(() => setBidConfigSuccess(''), 3000);
+      } else {
+        setBidConfigError(result.message || 'Failed to save bid increments');
+      }
+    } catch (error) {
+      console.error('[BidConfig] Error saving:', error);
+      setBidConfigError(String(error));
+    } finally {
+      setSavingBidConfig(false);
+    }
+  };
+
+  /**
+   * Update individual increment input
+   */
+  const handleBidIncrementChange = (index: number, value: string) => {
+    setBidConfigInputs(prev => {
+      const newIncrements = [...prev.increments];
+      newIncrements[index] = value;
+      return { ...prev, increments: newIncrements };
+    });
+    // Clear any previous messages
+    setBidConfigError('');
+    setBidConfigSuccess('');
+  };
+
+  /**
+   * Update custom increment input
+   */
+  const handleCustomIncrementChange = (value: string) => {
+    setBidConfigInputs(prev => ({ ...prev, custom: value }));
+    setBidConfigError('');
+    setBidConfigSuccess('');
+  };
+
+  // Handle start auction - with pre-validation (shows modal)
   const handleStartAuction = async () => {
+    if (!activeMatch?.id || isValidating) return;
+    
+    setIsValidating(true);
+    setValidationData(null); // Clear any previous data before fetching
+    
+    try {
+      const matchId = activeMatch.id;
+      console.log('[Auctioneer] Clearing previous validation data');
+      console.log('[Auctioneer] Fetching pre-auction validation for match:', matchId);
+      
+      // Construct endpoint URL
+      const endpoint = `${API_BASE}/api/matches/${matchId}/pre-auction-validation?t=${Date.now()}`;
+      console.log('[Auctioneer] Validation endpoint:', endpoint);
+      
+      // Simple fetch without problematic CORS headers
+      const response = await fetch(endpoint);
+      
+      console.log('[Auctioneer] Validation API response status:', response.status);
+      
+      if (response.ok) {
+        const response_data = await response.json();
+        // Backend wraps response: { success: true, data: { canStart, hasWarning, ... } }
+        const data = response_data.data || response_data;
+        
+        console.log('[Auctioneer] Validation data received:', {
+          canStart: data.canStart,
+          hasError: data.hasError,
+          hasWarning: data.hasWarning,
+          warningMessage: data.warningMessage,
+          stats: data.stats
+        });
+        
+        setValidationData(data);
+        setShowValidationModal(true);
+      } else {
+        console.error('[Auctioneer] Validation API failed with status:', response.status);
+        // Show error - don't proceed without proper validation
+        alert(`⚠️ Validation Error (${response.status})\n\nFailed to validate auction requirements.\n\nPlease try again or contact support.`);
+      }
+    } catch (error) {
+      console.error('[Auctioneer] Error fetching validation:', error);
+      alert('⚠️ Network Error\n\nFailed to reach validation service.\n\nPlease check your connection and try again.');
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  // Handle confirm start auction after validation
+  const handleConfirmStartAuction = async () => {
     if (!activeMatch?.id || startingAuction) return;
     
+    setShowValidationModal(false);
     setStartingAuction(true);
+    
     try {
+      console.log('[Auctioneer] Starting auction...');
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // AUTO-SAVE BID CONFIG before starting auction
+      // ═══════════════════════════════════════════════════════════════════════
+      if (!bidConfig || !bidConfig.increments || bidConfig.increments.length === 0) {
+        console.log('[Auctioneer] Auto-saving bid config before start...');
+        
+        // Parse current inputs
+        const increments = bidConfigInputs.increments
+          .map(v => parseBidIncrementInput(v))
+          .filter(v => v > 0);
+        
+        if (increments.length === 0) {
+          // Use defaults if nothing is configured
+          console.log('[Auctioneer] No increments configured, using defaults');
+        }
+        
+        // Save to Firestore (will use defaults if empty)
+        const sortedIncrements = increments.length > 0 
+          ? [...increments].sort((a, b) => a - b)
+          : DEFAULT_BID_INCREMENTS;
+        
+        const custom = parseBidIncrementInput(bidConfigInputs.custom);
+        
+        await updateBidConfig(
+          activeMatch.id,
+          {
+            increments: sortedIncrements,
+            custom: custom > 0 ? custom : null, // Use null, not undefined (Firestore rejects undefined)
+          },
+          currentUser?.id || 'unknown',
+          false
+        );
+      }
+      
       // Start the auction
       const response = await fetch(`${API_BASE}/api/auction/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seasonId: activeMatch.id })
+        body: JSON.stringify({ matchId: activeMatch.id })
       });
       
       if (response.ok) {
@@ -1694,33 +2202,49 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         console.log('[Auctioneer] Auction started:', data);
         setLiveAuctionStatus('LIVE');
         
+        // Lock bid config now that auction is ONGOING
+        console.log('[Auctioneer] Locking bid config...');
+        await lockBidConfig(activeMatch.id);
+        
         // Get first APPROVED player in queue and start bidding
         // CRITICAL: Only select from players with approvalStatus === 'accepted' (or undefined for backwards compat)
+        // CRITICAL FIX: Include both AVAILABLE and PENDING statuses - players can have either before auction
         const availableApprovedPlayers = eligiblePlayers.filter(p => 
-          p.status === 'AVAILABLE' && 
+          (p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status) && 
           (p.approvalStatus === 'accepted' || p.approvalStatus === undefined || p.approvalStatus === null)
         );
         if (availableApprovedPlayers.length > 0) {
           const firstPlayer = availableApprovedPlayers[0];
-          // Start bidding for first player
-          await fetch(`${API_BASE}/api/auction/player/start`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              seasonId: activeMatch.id,
-              playerId: firstPlayer.id,
-              basePrice: firstPlayer.basePrice || 200000
-            })
+          // Start bidding for first player via DIRECT FIREBASE WRITE (no API latency)
+          console.log('[Auctioneer] Starting bidding via direct Firebase write for:', firstPlayer.name);
+          const result = await socketService.startPlayerBidding(activeMatch.id, {
+            id: firstPlayer.id,
+            name: firstPlayer.name,
+            basePrice: firstPlayer.basePrice || 200000
           });
+          if (!result.success) {
+            console.error('[Auctioneer] Failed to start bidding:', result.message);
+          } else {
+            console.log('[Auctioneer] ✅ Bidding started instantly via direct Firebase write');
+          }
         }
         
         // Navigate to live room
         setActiveSection('liveRoom');
       } else {
-        console.error('[Auctioneer] Failed to start auction');
+        const errorText = await response.text();
+        console.error('[Auctioneer] Failed to start auction - Status:', response.status);
+        console.error('[Auctioneer] Error response:', errorText);
+        try {
+          const errorData = JSON.parse(errorText);
+          alert(`Failed to start auction: ${errorData.message || errorData.error || 'Unknown error'}`);
+        } catch {
+          alert(`Failed to start auction (${response.status}): ${errorText}`);
+        }
       }
     } catch (error) {
       console.error('[Auctioneer] Error starting auction:', error);
+      alert('Error starting auction. Please try again.');
     } finally {
       setStartingAuction(false);
     }
@@ -1795,6 +2319,30 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
     return 'Good Evening';
   };
 
+  // HARD BLOCK: Show error if auctioneer not approved
+  if (auctioneerApprovalError) {
+    return (
+      <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="rounded-2xl max-w-md w-full p-8 text-center" style={{ background: 'linear-gradient(135deg, rgba(26, 10, 10, 0.98), rgba(45, 10, 10, 0.98))', border: '1px solid rgba(255, 100, 0, 0.4)' }}>
+          <AlertTriangle size={64} className="mx-auto mb-4 text-orange-400" />
+          <h2 className="text-2xl font-black text-orange-300 mb-3">⏳ Awaiting Approval</h2>
+          <p className="text-pink-300/70 mb-6  leading-relaxed">{auctioneerApprovalError}</p>
+          <p className="text-xs text-pink-300/50">You will receive an email once the admin approves your application.</p>
+          <button
+            onClick={() => {
+              sessionStorage.clear();
+              window.location.href = '/';
+            }}
+            className="w-full px-8 py-3 text-white rounded-lg font-bold uppercase tracking-wider hover:brightness-110 transition-all mt-6"
+            style={{ background: 'linear-gradient(135deg, #ff6400, #ff8c00)' }}
+          >
+            Go Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Global navigation search pages
   const navSearchPages = [
     { label: 'Home', section: 'dashboard' as const, navIdx: 0, icon: Home },
@@ -1838,7 +2386,8 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
           <PlayersPage
             onClose={() => setActiveSection('dashboard')}
             currentMatch={activeMatch}
-            onAddPlayer={() => { resetAddPlayerForm(); setActiveSection('addPlayer'); }}
+            onAddPlayer={() => setActiveSection('addPlayer')}
+            onShareLink={() => handleShareRegistrationLink('player')}
           />
         );
 
@@ -1917,7 +2466,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                 </div>
                 {/* Add Team Button */}
                 <button
-                  onClick={() => { resetAddTeamForm(); setActiveSection('addTeam'); }}
+                  onClick={() => setActiveSection('addTeam')}
                   className="px-5 py-2.5 rounded-full font-bold text-sm flex items-center gap-2 transition-all duration-300 hover:scale-105"
                   style={{
                     background: 'linear-gradient(135deg, #ec4899, #e11d48)',
@@ -1928,6 +2477,19 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                 >
                   <Plus size={16} />
                   Add Team
+                </button>
+                <button
+                  onClick={() => handleShareRegistrationLink('team')}
+                  className="px-5 py-2.5 rounded-full font-bold text-sm flex items-center gap-2 transition-all duration-300 hover:scale-105"
+                  style={{
+                    background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
+                    color: '#fff',
+                    boxShadow: '0 0 20px rgba(6, 182, 212, 0.35)',
+                    border: '1px solid rgba(6, 182, 212, 0.6)'
+                  }}
+                >
+                  <Link2 size={16} />
+                  Share Link
                 </button>
                 <button
                   onClick={() => setActiveSection('dashboard')}
@@ -2033,22 +2595,27 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
               </div>
             ) : processedTeams.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {processedTeams.map((team) => (
-                  <TeamHUDCard
-                    key={team.id}
-                    team={team}
-                    playerCount={getTeamPlayerCount(team.id)}
-                    maxPlayers={18}
-                    onClick={() => {
-                      setSelectedTeamId(team.id);
-                      setActiveSection('teamDetail');
-                    }}
-                    showModeration={true}
-                    onApprove={(teamId) => handleUpdateTeamApproval(teamId, 'accepted')}
-                    onDecline={(teamId) => handleUpdateTeamApproval(teamId, 'declined')}
-                    isUpdating={updatingTeamApproval === team.id}
-                  />
-                ))}
+                {processedTeams.map((team) => {
+                  // Calculate player count by filtering players sold to this team
+                  const teamPlayerCount = eligiblePlayers.filter(p => p.soldTo === team.id || p.teamId === team.id).length;
+                  return (
+                    <TeamHUDCard
+                      key={team.id}
+                      team={team}
+                      playerCount={teamPlayerCount}
+                      maxPlayers={activeMatch?.maxPlayersPerTeam || 18}
+                      onClick={() => {
+                        setSelectedTeamId(team.id);
+                        setActiveSection('teamDetail');
+                      }}
+                      showModeration={true}
+                      onApprove={(teamId) => handleUpdateTeamApproval(teamId, 'accepted')}
+                      onDecline={(teamId) => handleUpdateTeamApproval(teamId, 'declined')}
+                      isUpdating={updatingTeamApproval === team.id}
+                      basePurse={pursePerTeam}
+                    />
+                  );
+                })}
               </div>
             ) : (
               <div className="rounded-xl p-12 text-center" style={{ background: 'linear-gradient(145deg, rgba(20, 10, 25, 0.7), rgba(30, 15, 35, 0.6))', border: '1px dashed rgba(236, 72, 153, 0.25)' }}>
@@ -2833,6 +3400,161 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                 </div>
               )}
 
+              {/* ═══════════════════════════════════════════════════════════════════ */}
+              {/* BID INCREMENT SETTINGS */}
+              {/* ═══════════════════════════════════════════════════════════════════ */}
+              {activeMatch && (
+                <div className="glass-card rounded-2xl p-6 md:col-span-3">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                      <IndianRupee size={18} className="text-pink-400" />
+                      Bid Increment Settings
+                    </h3>
+                    {bidConfig?.isLocked && (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-400 text-xs font-bold">
+                        <Shield size={12} />
+                        Locked (Auction Live)
+                      </span>
+                    )}
+                  </div>
+                  
+                  <p className="text-pink-300/60 text-sm mb-2">
+                    Configure the bid increment buttons that will appear during the auction.
+                  </p>
+                  <div className="bg-pink-500/10 border border-pink-500/20 rounded-lg px-3 py-2 mb-4">
+                    <p className="text-pink-300/80 text-xs leading-relaxed">
+                      <span className="font-bold text-pink-400">Unit Conversion:</span> Values without suffix use the selected unit ({currencyUnit || 'L'}).<br/>
+                      <span className="text-pink-300/60">Examples: 1K = ₹1,000 | 1L = ₹1,00,000 | 1Cr = ₹1,00,00,000</span>
+                    </p>
+                  </div>
+                  
+                  {/* Increment Inputs */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    {[0, 1, 2, 3].map((idx) => (
+                      <div key={idx} className="space-y-1.5">
+                        <label className="text-pink-300/70 text-xs font-medium">
+                          Increment {idx + 1}
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-pink-400/60 text-sm">+₹</span>
+                          <input
+                            type="text"
+                            value={bidConfigInputs.increments[idx] || ''}
+                            onChange={(e) => handleBidIncrementChange(idx, e.target.value)}
+                            disabled={bidConfig?.isLocked || savingBidConfig}
+                            placeholder={idx === 0 ? '0.1 (10K)' : idx === 1 ? '0.25' : idx === 2 ? '0.5' : '1'}
+                            className={`w-full bg-black/30 border rounded-xl px-4 py-3 pl-9 text-white placeholder-pink-300/30 focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all ${
+                              bidConfig?.isLocked 
+                                ? 'border-pink-500/10 opacity-60 cursor-not-allowed' 
+                                : 'border-pink-500/20 hover:border-pink-500/40'
+                            }`}
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-pink-300/40 text-xs">{currencyUnit || 'L'}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Custom Increment */}
+                  <div className="flex flex-col md:flex-row md:items-end gap-4 mb-4">
+                    <div className="flex-1 space-y-1.5">
+                      <label className="text-pink-300/70 text-xs font-medium flex items-center gap-1">
+                        Custom Increment <span className="text-pink-400">★</span>
+                        <span className="text-pink-300/40 text-xs">(Optional)</span>
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-pink-400/60 text-sm">+₹</span>
+                        <input
+                          type="text"
+                          value={bidConfigInputs.custom}
+                          onChange={(e) => handleCustomIncrementChange(e.target.value)}
+                          disabled={bidConfig?.isLocked || savingBidConfig}
+                          placeholder="e.g. 0.15 or 15K"
+                          className={`w-full bg-black/30 border rounded-xl px-4 py-3 pl-9 text-white placeholder-pink-300/30 focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all ${
+                            bidConfig?.isLocked 
+                              ? 'border-pink-500/10 opacity-60 cursor-not-allowed' 
+                              : 'border-pink-500/20 hover:border-pink-500/40'
+                          }`}
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-pink-300/40 text-xs">{currencyUnit || 'L'}</span>
+                      </div>
+                    </div>
+                    
+                    {/* Save Button */}
+                    <button
+                      onClick={handleSaveBidConfig}
+                      disabled={bidConfig?.isLocked || savingBidConfig}
+                      className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${
+                        bidConfig?.isLocked
+                          ? 'bg-gray-600/30 border border-gray-500/20 text-gray-400 cursor-not-allowed'
+                          : 'bg-gradient-to-r from-pink-500 to-red-600 text-white hover:shadow-lg hover:shadow-pink-500/25'
+                      }`}
+                    >
+                      {savingBidConfig ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle size={16} />
+                          Save Increments
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  
+                  {/* Status Messages */}
+                  {bidConfigError && (
+                    <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                      <XCircle size={14} />
+                      {bidConfigError}
+                    </div>
+                  )}
+                  {bidConfigSuccess && (
+                    <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 text-sm">
+                      <CheckCircle size={14} />
+                      {bidConfigSuccess}
+                    </div>
+                  )}
+                  
+                  {/* Preview */}
+                  {bidConfig && bidConfig.increments && bidConfig.increments.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-pink-500/10">
+                      <p className="text-pink-300/50 text-xs uppercase tracking-wide mb-2">Preview: Bid Buttons</p>
+                      <div className="flex flex-wrap gap-2">
+                        {bidConfig.increments.map((amount, idx) => (
+                          <span
+                            key={idx}
+                            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-500/20 to-red-600/20 border border-pink-500/30 text-pink-300 text-sm font-bold"
+                          >
+                            {formatBidIncrementLabel(amount)}
+                          </span>
+                        ))}
+                        {bidConfig.custom && bidConfig.custom > 0 && (
+                          <span className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 text-yellow-300 text-sm font-bold">
+                            {formatBidIncrementLabel(bidConfig.custom)} ★
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Lock Warning */}
+                  {bidConfig?.isLocked && (
+                    <div className="mt-4 flex items-start gap-2 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm">
+                      <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">Bid increments are locked</p>
+                        <p className="text-yellow-300/70 text-xs mt-0.5">
+                          The auction is live. You can only edit bid increments from the Live Room (recovery mode).
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Quick Actions */}
               <div className="glass-card rounded-2xl p-6">
                 <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
@@ -2944,11 +3666,39 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
             </div>
           );
         }
+        
+        // 🔒 ROUTE PROTECTION: Check team approval status
+        const teamApprovalStatus = getTeamApprovalStatus(selectedTeam);
+        if (teamApprovalStatus !== 'accepted') {
+          return (
+            <div className="flex-1 p-6 flex items-center justify-center">
+              <div className="text-center max-w-md">
+                <Lock size={64} className="text-yellow-400/50 mx-auto mb-4" />
+                <h3 className="text-2xl font-bold text-white mb-3">
+                  {teamApprovalStatus === 'pending' ? 'Team Not Approved Yet' : 'Access Denied'}
+                </h3>
+                <p className="text-pink-300/60 mb-6">
+                  {teamApprovalStatus === 'pending' 
+                    ? 'This team must be approved before you can view their squad. Pending teams cannot access squad view until approved by an admin.'
+                    : 'This team has been declined and squad access is not available.'}
+                </p>
+                <button 
+                  onClick={() => setActiveSection('teams')}
+                  className="px-6 py-3 rounded-full bg-pink-500/20 border border-pink-500/30 text-pink-300 hover:bg-pink-500/30 transition-all"
+                >
+                  Back to Teams
+                </button>
+              </div>
+            </div>
+          );
+        }
+        
         return (
           <TeamSquadPage
             team={selectedTeam}
             players={eligiblePlayers}
             onBack={() => setActiveSection('teams')}
+            maxPlayers={activeMatch?.maxPlayersPerTeam || activeMatch?.config?.squadSize?.max || 12}
           />
         );
 
@@ -3175,10 +3925,10 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                         </div>
                         <h2 className="text-4xl font-black text-white mb-2">{activeMatch?.name || 'No Active Auction'}</h2>
                         <p className="text-pink-200/60 text-lg">{activeMatch?.year} Season</p>
-                        {activeMatch?.place && (
+                        {activeMatch?.venue && (
                           <p className="text-pink-300/50 text-sm mt-1.5 flex items-center gap-1.5">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-pink-400/60"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                            {activeMatch.place}
+                            {activeMatch.venue}
                           </p>
                         )}
                       </div>
@@ -3232,15 +3982,15 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                         </button>
                       </div>
 
-                      {/* Quick Stats */}
+                      {/* Quick Stats - APPROVED ONLY */}
                       <div className="flex gap-6">
                         <div className="text-right">
                           <p className="text-pink-400/60 text-xs uppercase tracking-wider">Teams</p>
-                          <p className="text-2xl font-black text-white">{loadingTeams ? '...' : teams.length}</p>
+                          <p className="text-2xl font-black text-white">{loadingTeams ? '...' : teams.filter(t => t.approvalStatus === 'accepted').length}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-pink-400/60 text-xs uppercase tracking-wider">Players</p>
-                          <p className="text-2xl font-black text-white">{loadingPlayers ? '...' : eligiblePlayers.length}</p>
+                          <p className="text-2xl font-black text-white">{loadingPlayers ? '...' : eligiblePlayers.filter(p => p.approvalStatus === 'accepted').length}</p>
                         </div>
                       </div>
                     </div>
@@ -3295,7 +4045,7 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                             {currentBiddingPlayer.name}
                           </h2>
                           <p className="text-pink-300 text-xs font-medium">
-                            Base Price: ₹{((currentBiddingPlayer.basePrice || 0) / 100000).toFixed(1)}L
+                            Base Price: {fmtCurrency(currentBiddingPlayer.basePrice)}
                           </p>
                         </div>
                       </div>
@@ -3523,13 +4273,13 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
                         <div className="flex items-center justify-center gap-1">
                           <Star size={12} className="text-pink-400" />
                           <span className="text-pink-300 text-xs font-medium">
-                            ₹{((player.basePrice || 0) / 100000).toFixed(0)}L
+                            {formatIndianCurrencyShort(player.basePrice || 0)}
                           </span>
                         </div>
                         {player.status === 'SOLD' && player.soldPrice && (
                           <div className="mt-2 flex items-center justify-center gap-1 text-green-400">
                             <TrendingUp size={12} />
-                            <span className="text-xs font-bold">₹{((player.soldPrice || (player as any).soldAmount || 0) / 100000).toFixed(0)}L</span>
+                            <span className="text-xs font-bold">{formatIndianCurrencyShort(player.soldPrice || (player as any).soldAmount || 0)}</span>
                           </div>
                         )}
                       </div>
@@ -3545,6 +4295,139 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
             </div>
           </div>
         );
+      
+      case 'addPlayer':
+        return (
+          <div className="flex-1 relative">
+            <RoleBasedRegistrationPage
+              setStatus={() => {}}
+              selectedRole={UserRole.PLAYER}
+              selectedMatch={activeMatch}
+              selectedSport={null}
+              matchId={activeMatch?.id}
+              onRegister={handleRegistration}
+              hideBackButton={true}
+            />
+            {/* Back button overlay */}
+            <button
+              onClick={() => setActiveSection('players')}
+              className="absolute top-40 right-8 z-50 px-6 py-3 rounded-full bg-white/5 border border-pink-500/25 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2.5 text-sm font-bold shadow-lg"
+              style={{ boxShadow: '0 0 12px rgba(255,0,102,0.1)' }}
+            >
+              <ArrowLeft size={20} />
+              Back to Players
+            </button>
+          </div>
+        );
+      
+      case 'addTeam':
+        return (
+          <div className="flex-1 relative">
+            <RoleBasedRegistrationPage
+              setStatus={() => {}}
+              selectedRole={UserRole.TEAM_REP}
+              selectedMatch={activeMatch}
+              selectedSport={null}
+              matchId={activeMatch?.id}
+              onRegister={handleRegistration}
+              hideBackButton={true}
+            />
+            {/* Back button overlay */}
+            <button
+              onClick={() => setActiveSection('teams')}
+              className="absolute top-40 right-8 z-50 px-6 py-3 rounded-full bg-white/5 border border-pink-500/25 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2.5 text-sm font-bold shadow-lg"
+              style={{ boxShadow: '0 0 12px rgba(255,0,102,0.1)' }}
+            >
+              <ArrowLeft size={20} />
+              Back to Teams
+            </button>
+          </div>
+        );
+    }
+  };
+
+  // ─── UNIFIED REGISTRATION HANDLER ──────────────────────────────────────────
+  const handleRegistration = async (registrationData: any) => {
+    try {
+      console.log('🎯 Auctioneer Dashboard Registration Handler - Start');
+      console.log('   Role:', registrationData.role);
+      
+      const finalSeasonId = registrationData.seasonId || activeMatch?.id;
+      
+      if (!finalSeasonId) {
+        alert('No match selected. Unable to register.');
+        return false;
+      }
+      
+      registrationData.seasonId = finalSeasonId;
+      const processedData = { ...registrationData };
+      
+      const matchName = activeMatch?.name || registrationData.seasonId || 'Default_Match';
+      
+      // Upload files to Firebase Storage
+      try {
+        if (registrationData.teamLogo && registrationData.teamLogo instanceof File) {
+          console.log('📤 Uploading team logo...');
+          const logoUrl = await uploadTeamLogo(registrationData.teamLogo, `team_${Date.now()}`, matchName);
+          processedData.teamLogo = logoUrl;
+        }
+        
+        if (registrationData.playerPhoto && registrationData.playerPhoto instanceof File) {
+          console.log('📤 Uploading player photo...');
+          const photoUrl = await uploadPlayerPhoto(registrationData.playerPhoto, `player_${Date.now()}`, matchName);
+          processedData.imageUrl = photoUrl;
+          delete processedData.playerPhoto;
+        }
+        
+        if (registrationData.governmentIdFile && registrationData.governmentIdFile instanceof File) {
+          console.log('📤 Uploading government ID...');
+          const govIdUrl = await uploadDocument(registrationData.governmentIdFile, `gov_id_${Date.now()}`, matchName);
+          processedData.governmentIdURL = govIdUrl;
+          delete processedData.governmentIdFile;
+        }
+        
+        if (registrationData.authorizationLetter && registrationData.authorizationLetter instanceof File) {
+          console.log('📤 Uploading authorization letter...');
+          const authUrl = await uploadDocument(registrationData.authorizationLetter, `auth_letter_${Date.now()}`, matchName);
+          processedData.authorizationLetterURL = authUrl;
+          delete processedData.authorizationLetter;
+        }
+      } catch (uploadError) {
+        console.error('❌ File upload error:', uploadError);
+        alert('File upload failed. Please try again.');
+        return false;
+      }
+      
+      // Call the appropriate registration API
+      let result;
+      switch (registrationData.role) {
+        case UserRole.TEAM_REP:
+          result = await registerTeam(processedData);
+          if (result) {
+            console.log('✅ Team registered successfully from dashboard');
+            return true;
+          }
+          break;
+          
+        case UserRole.PLAYER:
+          result = await registerPlayer(processedData);
+          if (result && result.playerId) {
+            console.log('✅ Player registered successfully from dashboard');
+            return true;
+          }
+          break;
+          
+        default:
+          console.error('Unknown role:', registrationData.role);
+          return false;
+      }
+      
+      alert('Registration failed. The email may already be registered or there was a server error.');
+      return false;
+    } catch (error: any) {
+      console.error('❌ Registration error:', error);
+      alert(error.message || 'An error occurred during registration');
+      return false;
     }
   };
 
@@ -3767,6 +4650,32 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
         }
       `}</style>
 
+      {/* Global Toast Notifications */}
+      <div className="fixed top-6 right-6 z-[100] space-y-3 max-w-md pointer-events-none">
+        {toastNotifications.map((toast) => (
+          <div
+            key={toast.id}
+            className={`pointer-events-auto animate-in slide-in-from-right duration-300 shadow-2xl rounded-xl overflow-hidden ${
+              toast.type === 'success' ? 'bg-gradient-to-r from-green-500 to-emerald-600' :
+              toast.type === 'error' ? 'bg-gradient-to-r from-red-500 to-rose-600' :
+              'bg-gradient-to-r from-pink-500 to-rose-600'
+            }`}
+          >
+            <div className="p-3 flex items-center gap-3">
+              <div className="flex-1">
+                <p className="text-white font-bold text-sm">{toast.message}</p>
+              </div>
+              <button
+                onClick={() => removeToast(toast.id)}
+                className="flex-shrink-0 w-6 h-6 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-all"
+              >
+                <X size={14} className="text-white" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
       {/* Ambient Glow Effects */}
       <div className="hero-glow" style={{ top: '10%', right: '20%' }}></div>
       <div className="hero-glow" style={{ bottom: '20%', left: '10%', opacity: 0.5 }}></div>
@@ -3835,6 +4744,34 @@ export const AuctioneerDashboardPage: React.FC<AuctioneerDashboardPageProps> = (
       <div className="ml-28 min-h-screen flex flex-col">
         {renderContent()}
       </div>
+
+      {/* Pre-Auction Validation Modal */}
+      {validationData && (
+        <PreAuctionValidationModal
+          isOpen={showValidationModal}
+          onClose={() => setShowValidationModal(false)}
+          onStartAuction={handleConfirmStartAuction}
+          onGoToTeams={() => {
+            setShowValidationModal(false);
+            setActiveSection('teams');
+            setActiveNav(2);
+          }}
+          onGoToPlayers={() => {
+            setShowValidationModal(false);
+            setActiveSection('players');
+            setActiveNav(3);
+          }}
+          validationData={validationData}
+          isLoading={isValidating}
+          bidConfigInputs={bidConfigInputs}
+          onBidIncrementChange={handleBidIncrementChange}
+          onCustomIncrementChange={handleCustomIncrementChange}
+          currencyUnit={currencyUnit || 'L'}
+          bidConfig={bidConfig}
+        />
+      )}
+      
+
     </div>
   );
 };

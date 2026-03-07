@@ -32,7 +32,9 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
     isOverseas: false,
     imageUrl: '',
     bio: '',
-    stats: ''
+    stats: '',
+    governmentId: '',
+    governmentIdURL: ''
   });
   const [uploadProgress, setUploadProgress] = useState<{ photo?: number; document?: number }>({});
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
@@ -125,8 +127,8 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
         },
         matchName
       });
-      // Store document URL in a new field
-      setPlayerData(prev => ({ ...prev, documentUrl: documentURL }));
+      // Store document URL in governmentIdURL field
+      setPlayerData(prev => ({ ...prev, governmentIdURL: documentURL }));
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Document upload failed';
       setUploadErrors(prev => [...prev, `Document: ${msg}`]);
@@ -397,6 +399,21 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                   />
                 </div>
 
+                <div>
+                  <label className="block text-sm font-semibold mb-2 text-gray-300">
+                    Government ID Number <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={playerData.governmentId}
+                    onChange={(e) => setPlayerData(prev => ({ ...prev, governmentId: e.target.value }))}
+                    placeholder="e.g., Aadhar, Passport, PAN number"
+                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg text-white focus:border-blue-500 outline-none"
+                    required
+                  />
+                  <p className="text-xs text-gray-600 mt-1">Your government-issued ID number for verification</p>
+                </div>
+
                 {/* Upload Errors */}
                 {uploadErrors.length > 0 && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -443,7 +460,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                 <div className="bg-orange-50 border border-orange-200 rounded-lg p-6">
                   <label className="block text-sm font-semibold mb-3 text-gray-700">
                     <Upload size={16} className="inline mr-2" />
-                    Authorization Document (PDF) <span className="text-red-500">*</span>
+                    Government ID Proof (PDF) <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="file"
@@ -452,7 +469,7 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                     disabled={uploading}
                     className="w-full px-4 py-2 border border-orange-300 rounded-lg focus:border-orange-500 outline-none cursor-pointer disabled:opacity-50"
                   />
-                  <p className="text-xs text-gray-600 mt-2">PDF only - Authorization letter or government ID (Max 50MB)</p>
+                  <p className="text-xs text-gray-600 mt-2">PDF only - Copy of your government ID (Aadhar, Passport, PAN, etc.) (Max 50MB)</p>
                   
                   {uploadProgress.document !== undefined && (
                     <div className="mt-3">
@@ -461,10 +478,10 @@ export const PlayerRegistrationPage: React.FC<PlayerRegistrationPageProps> = ({
                     </div>
                   )}
                   
-                  {playerData.documentUrl && (
+                  {playerData.governmentIdURL && (
                     <div className="mt-3 flex items-center gap-2 text-green-700">
                       <CheckCircle size={16} />
-                      <span className="text-sm">Document uploaded successfully</span>
+                      <span className="text-sm">ID proof uploaded successfully</span>
                     </div>
                   )}
                 </div>

@@ -1,13 +1,12 @@
 /**
- * PhoneOtpVerification — Reusable Firebase Phone OTP verification component
+ * PhoneOtpVerification — Third-Party OTP Verification Component
  *
  * Props:
  *   phone          – current phone value (controlled)
  *   setPhone       – setter for phone
  *   phoneVerified  – boolean flag
- *   setPhoneVerified – setter for flag
- *   containerId    – unique DOM id for the invisible reCAPTCHA div
- *                    (must be unique per page instance)
+ *   setPhoneVerified – setter for flag (called when OTP verified)
+ *   onTokenReceived – callback when chatbot token is received
  *   disabled       – optional; disables all inputs
  *   compact        – optional; renders a tighter layout
  */
@@ -17,9 +16,9 @@ import { CheckCircle, RefreshCw, ShieldCheck, Loader2, X, ChevronDown } from 'lu
 import {
   sendOtp,
   verifyOtp,
-  initRecaptcha,
   getOtpErrorMessage,
-} from '../../services/otpService';
+  storeChatbotToken,
+} from '../../services/thirdPartyOtpService';
 
 // ─── Country codes ─────────────────────────────────────────────────────────
 
@@ -52,7 +51,7 @@ export interface PhoneOtpVerificationProps {
   setPhone: (v: string) => void;
   phoneVerified: boolean;
   setPhoneVerified: (v: boolean) => void;
-  containerId?: string;
+  onTokenReceived?: (token: string) => void;
   disabled?: boolean;
   compact?: boolean;
 }
@@ -69,7 +68,7 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
   setPhone,
   phoneVerified,
   setPhoneVerified,
-  containerId = 'recaptcha-container',
+  onTokenReceived,
   disabled = false,
   compact = false,
 }) => {
@@ -77,7 +76,8 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
   const [countryCode, setCountryCode] = useState('+91');
   const [localNumber, setLocalNumber] = useState('');
 
-  // OTP digits – stored as array for individual inputs
+  // OTP session
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [otpSent, setOtpSent] = useState(false);
 
@@ -98,16 +98,7 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
   // Sync full E.164 to parent whenever code or local number changes
   useEffect(() => {
     setPhone(localNumber ? e164 : '');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countryCode, localNumber]);
-
-  // ── reCAPTCHA: init once on mount — never cleared on unmount.
-  // window.recaptchaVerifier persists across React re-renders and Vite HMR.
-  // On any sendOtp failure the service auto-resets the verifier so retries
-  // always get a fresh reCAPTCHA token (avoids auth/invalid-app-credential).
-  useEffect(() => {
-    initRecaptcha(containerId);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Toast helper ──────────────────────────────────────────────────────────
 
@@ -136,9 +127,8 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      // reCAPTCHA teardown is handled by the separate mount useEffect above.
     };
-  }, [containerId]);
+  }, []);
 
   // ── Country change
   const handleCountryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -169,7 +159,8 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
 
     setSendingOtp(true);
     try {
-      await sendOtp(e164, containerId);
+      const response = await sendOtp(e164);
+      setSessionId(response.sessionId);
       setOtpSent(true);
       setOtp(Array(OTP_LENGTH).fill(''));
       startResendTimer();
@@ -190,12 +181,27 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
       showToast('Please enter all 6 digits of the OTP.', 'error');
       return;
     }
+    if (!sessionId) {
+      showToast('Session expired. Please request OTP again.', 'error');
+      return;
+    }
 
     setVerifyingOtp(true);
     try {
-      await verifyOtp(code);
+      const response = await verifyOtp(sessionId, code);
+      
+      // Store chatbot token
+      storeChatbotToken(response.chatbotToken);
+      
+      // Update UI state
       setPhoneVerified(true);
       showToast('Phone verified successfully! ✓', 'success');
+      
+      // Notify parent component about token
+      if (onTokenReceived) {
+        onTokenReceived(response.chatbotToken);
+      }
+      
       if (timerRef.current) clearInterval(timerRef.current);
     } catch (err) {
       showToast(getOtpErrorMessage(err), 'error');
@@ -259,9 +265,6 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
 
   return (
     <div className="space-y-3">
-      {/* reCAPTCHA anchor: visible checkbox on localhost, invisible in production */}
-      <div id={containerId} className="mb-2" />
-
       {/* ── Toast ─────────────────────────────────────────────── */}
       {toastMsg && (
         <div

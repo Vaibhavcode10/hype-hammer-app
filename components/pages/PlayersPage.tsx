@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { Users, TrendingUp, TrendingDown, User, Download, ArrowLeft, Search, Filter, X as FilterX, Shield, Trophy, Target, IndianRupee, Plus } from 'lucide-react';
+import { Users, TrendingUp, TrendingDown, User, Download, ArrowLeft, Search, Filter, X as FilterX, Shield, Trophy, Target, IndianRupee, Plus, FileText, ExternalLink, Link2 } from 'lucide-react';
 import type { MatchData, Player as AppPlayer, Team as AppTeam } from '../../types';
+import { formatIndianCurrencyShort } from '../../services/currencyUtils';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
@@ -17,9 +18,10 @@ interface PlayersPageProps {
   onClose: () => void;
   currentMatch: MatchData | null;
   onAddPlayer?: () => void;
+  onShareLink?: () => void;
 }
 
-export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch, onAddPlayer }) => {
+export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch, onAddPlayer, onShareLink }) => {
   const [players, setPlayers] = useState<Player[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
@@ -109,8 +111,6 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
     return (player.soldAt as unknown) ?? (player.soldTimestamp as unknown) ?? (player.updatedAt as unknown) ?? (player.createdAt as unknown);
   };
 
-  const formatCurrency = (amount: number) => `₹${((amount || 0) / 100000).toFixed(1)}L`;
-
   const formatDate = (value?: unknown) => {
     if (!value) return 'N/A';
 
@@ -160,12 +160,14 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
     });
   };
 
-  const soldPlayers = useMemo(() => players.filter(p => p.status === 'SOLD'), [players]);
-  const unsoldPlayers = useMemo(() => players.filter(p => p.status === 'UNSOLD'), [players]);
-  const availablePlayers = useMemo(() => players.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status), [players]);
+  const acceptedPlayers = useMemo(() => players.filter(p => p.approvalStatus === 'accepted'), [players]);
+  const soldPlayers = useMemo(() => acceptedPlayers.filter(p => p.status === 'SOLD'), [acceptedPlayers]);
+  const unsoldPlayers = useMemo(() => acceptedPlayers.filter(p => p.status === 'UNSOLD'), [acceptedPlayers]);
+  const availablePlayers = useMemo(() => acceptedPlayers.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status), [acceptedPlayers]);
+  const playersNeeded = (currentMatch?.maxTeams || 0) * (currentMatch?.matchSettings?.maxPlayersPerTeam || currentMatch?.maxPlayersPerTeam || 0);
 
-  // Apply search and team filters
-  const filteredAllPlayers = players.filter(p => {
+  // Apply search and team filters - only ACCEPTED players
+  const filteredAllPlayers = acceptedPlayers.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                          p.email?.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
@@ -294,7 +296,7 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
           </div>
           <div>
             <h1 className="text-xl font-black text-white">Players</h1>
-            <p className="text-pink-400/50 text-xs">{currentMatch?.name || 'Current Season'} — {players.length} registered</p>
+            <p className="text-pink-400/50 text-xs">{currentMatch?.name || 'Current Season'} — {acceptedPlayers.length} accepted</p>
           </div>
         </div>
 
@@ -337,6 +339,21 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
               Add Player
             </button>
           )}
+          {onShareLink && (
+            <button
+              onClick={onShareLink}
+              className="px-5 py-2.5 rounded-full font-bold text-sm flex items-center gap-2 transition-all duration-300 hover:scale-105"
+              style={{
+                background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
+                color: '#fff',
+                boxShadow: '0 0 20px rgba(6, 182, 212, 0.35)',
+                border: '1px solid rgba(6, 182, 212, 0.6)'
+              }}
+            >
+              <Link2 size={16} />
+              Share Link
+            </button>
+          )}
           <button
             onClick={onClose}
             className="px-5 py-2.5 rounded-full bg-white/5 border border-pink-500/20 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2 text-sm font-semibold"
@@ -352,7 +369,7 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
 
       {/* Stats Bar */}
       <div className="mb-4">
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-5 gap-4">
           <div 
             className="rounded-xl p-4"
             style={{
@@ -366,8 +383,27 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                 <Users size={20} className="text-pink-400" />
               </div>
               <div>
-                <p className="text-[10px] text-pink-400/50 uppercase font-bold">Total Players</p>
-                <p className="text-xl font-black text-white">{players.length}</p>
+                <p className="text-[10px] text-pink-400/50 uppercase font-bold">Accepted</p>
+                <p className="text-xl font-black text-pink-300">{acceptedPlayers.length}</p>
+              </div>
+            </div>
+          </div>
+          
+          <div 
+            className="rounded-xl p-4"
+            style={{
+              background: 'linear-gradient(145deg, rgba(20, 10, 25, 0.95), rgba(30, 15, 35, 0.9))',
+              border: '1px solid rgba(236, 72, 153, 0.2)',
+              borderLeft: '3px solid rgba(59, 130, 246, 0.6)'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-r from-blue-600/30 to-cyan-600/30 flex items-center justify-center border border-blue-500/20">
+                <Target size={20} className="text-blue-400" />
+              </div>
+              <div>
+                <p className="text-[10px] text-pink-400/50 uppercase font-bold">Players Needed</p>
+                <p className="text-xl font-black text-blue-300">{playersNeeded}</p>
               </div>
             </div>
           </div>
@@ -454,7 +490,7 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
               boxShadow: '0 0 12px rgba(236, 72, 153, 0.15)'
             } : {}}
           >
-            All ({players.length})
+            All ({acceptedPlayers.length})
           </button>
           <button
             onClick={() => setActiveTab('sold')}
@@ -673,7 +709,7 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                           <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Base</span>
                         </div>
                         <span className="text-base font-black text-pink-200">
-                          {basePrice > 0 ? formatCurrency(basePrice) : '—'}
+                          {basePrice > 0 ? formatIndianCurrencyShort(basePrice) : '—'}
                         </span>
                       </div>
 
@@ -685,8 +721,33 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                             <span className="text-[10px] font-semibold text-green-400/50 uppercase">Sold</span>
                           </div>
                           <span className="text-base font-black text-green-200">
-                            {formatCurrency(getSoldAmount(player))}
+                            {formatIndianCurrencyShort(getSoldAmount(player))}
                           </span>
+                        </div>
+                      )}
+
+                      {/* Government ID Section */}
+                      {(player.governmentId || player.governmentIdURL) && (
+                        <div className="mt-3 pt-3 border-t border-pink-500/20 space-y-1.5">
+                          {player.governmentId && (
+                            <div className="flex items-start gap-1.5">
+                              <FileText size={11} className="text-pink-400/50 mt-0.5" />
+                              <span className="text-[9px] text-pink-400/50 uppercase font-bold">ID:</span>
+                              <span className="text-[9px] text-pink-300 font-semibold truncate">{player.governmentId}</span>
+                            </div>
+                          )}
+                          {player.governmentIdURL && (
+                            <a
+                              href={player.governmentIdURL}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-1.5 text-[9px] font-bold text-pink-400 hover:text-pink-300 transition-colors"
+                            >
+                              <ExternalLink size={10} />
+                              View ID Proof
+                            </a>
+                          )}
                         </div>
                       )}
                     </div>
@@ -810,7 +871,7 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                             <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Price</span>
                           </div>
                           <span className="text-base font-black text-pink-200">
-                            {soldAmount > 0 ? formatCurrency(soldAmount) : '—'}
+                            {soldAmount > 0 ? formatIndianCurrencyShort(soldAmount) : '—'}
                           </span>
                         </div>
                         {/* Base Price */}
@@ -820,10 +881,35 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                             <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Base</span>
                           </div>
                           <span className="text-sm font-bold text-pink-300/70">
-                            {basePrice > 0 ? formatCurrency(basePrice) : '—'}
+                            {basePrice > 0 ? formatIndianCurrencyShort(basePrice) : '—'}
                           </span>
                         </div>
                       </div>
+
+                      {/* Government ID Section */}
+                      {(player.governmentId || player.governmentIdURL) && (
+                        <div className="mt-3 pt-3 border-t border-pink-500/20 space-y-1.5">
+                          {player.governmentId && (
+                            <div className="flex items-start gap-1.5">
+                              <FileText size={11} className="text-pink-400/50 mt-0.5" />
+                              <span className="text-[9px] text-pink-400/50 uppercase font-bold">ID:</span>
+                              <span className="text-[9px] text-pink-300 font-semibold truncate">{player.governmentId}</span>
+                            </div>
+                          )}
+                          {player.governmentIdURL && (
+                            <a
+                              href={player.governmentIdURL}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-1.5 text-[9px] font-bold text-pink-400 hover:text-pink-300 transition-colors"
+                            >
+                              <ExternalLink size={10} />
+                              View ID Proof
+                            </a>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -916,9 +1002,34 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                           <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Base</span>
                         </div>
                         <span className="text-base font-black text-pink-200">
-                          {basePrice > 0 ? formatCurrency(basePrice) : '—'}
+                          {basePrice > 0 ? formatIndianCurrencyShort(basePrice) : '—'}
                         </span>
                       </div>
+
+                      {/* Government ID Section */}
+                      {(player.governmentId || player.governmentIdURL) && (
+                        <div className="mt-3 pt-3 border-t border-pink-500/20 space-y-1.5">
+                          {player.governmentId && (
+                            <div className="flex items-start gap-1.5">
+                              <FileText size={11} className="text-pink-400/50 mt-0.5" />
+                              <span className="text-[9px] text-pink-400/50 uppercase font-bold">ID:</span>
+                              <span className="text-[9px] text-pink-300 font-semibold truncate">{player.governmentId}</span>
+                            </div>
+                          )}
+                          {player.governmentIdURL && (
+                            <a
+                              href={player.governmentIdURL}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-1.5 text-[9px] font-bold text-pink-400 hover:text-pink-300 transition-colors"
+                            >
+                              <ExternalLink size={10} />
+                              View ID Proof
+                            </a>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -1025,9 +1136,34 @@ export const PlayersPage: React.FC<PlayersPageProps> = ({ onClose, currentMatch,
                           <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Base</span>
                         </div>
                         <span className="text-base font-black text-pink-200">
-                          {basePrice > 0 ? formatCurrency(basePrice) : '—'}
+                          {basePrice > 0 ? formatIndianCurrencyShort(basePrice) : '—'}
                         </span>
                       </div>
+
+                      {/* Government ID Section */}
+                      {(player.governmentId || player.governmentIdURL) && (
+                        <div className="mt-3 pt-3 border-t border-pink-500/20 space-y-1.5">
+                          {player.governmentId && (
+                            <div className="flex items-start gap-1.5">
+                              <FileText size={11} className="text-pink-400/50 mt-0.5" />
+                              <span className="text-[9px] text-pink-400/50 uppercase font-bold">ID:</span>
+                              <span className="text-[9px] text-pink-300 font-semibold truncate">{player.governmentId}</span>
+                            </div>
+                          )}
+                          {player.governmentIdURL && (
+                            <a
+                              href={player.governmentIdURL}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-1.5 text-[9px] font-bold text-pink-400 hover:text-pink-300 transition-colors"
+                            >
+                              <ExternalLink size={10} />
+                              View ID Proof
+                            </a>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

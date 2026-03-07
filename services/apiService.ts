@@ -31,6 +31,15 @@ async function apiCall<T = any>(
       },
     };
 
+    // Add Authorization header if chatbotToken exists
+    const chatbotToken = sessionStorage.getItem('chatbotToken');
+    if (chatbotToken) {
+      options.headers = {
+        ...options.headers,
+        'Authorization': `Bearer ${chatbotToken}`,
+      };
+    }
+
     if (body) {
       options.body = JSON.stringify(body);
     }
@@ -39,8 +48,11 @@ async function apiCall<T = any>(
     
     if (!response.ok) {
       console.warn(`API Error: ${method} ${path} - Status ${response.status}`);
+      const errorBody = await response.text().catch(() => '');
+      console.error(`Response body:`, errorBody);
       const error: any = new Error(`API Error: ${response.status}`);
       error.status = response.status;
+      error.details = errorBody;
       throw error;
     }
 
@@ -67,11 +79,19 @@ async function apiCall<T = any>(
  */
 async function get<T = any>(path: string): Promise<ApiResponse<T>> {
   try {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    
+    // Add Authorization header if chatbotToken exists
+    const chatbotToken = sessionStorage.getItem('chatbotToken');
+    if (chatbotToken) {
+      headers['Authorization'] = `Bearer ${chatbotToken}`;
+    }
+    
     const response = await fetch(`${API_ENDPOINT}${path}`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
     });
 
     const data: ApiResponse<T> = await response.json();
@@ -87,11 +107,19 @@ async function get<T = any>(path: string): Promise<ApiResponse<T>> {
  */
 async function post<T = any>(path: string, body?: any): Promise<ApiResponse<T>> {
   try {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    
+    // Add Authorization header if chatbotToken exists
+    const chatbotToken = sessionStorage.getItem('chatbotToken');
+    if (chatbotToken) {
+      headers['Authorization'] = `Bearer ${chatbotToken}`;
+    }
+    
     const response = await fetch(`${API_ENDPOINT}${path}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(body)
     });
 
@@ -108,11 +136,19 @@ async function post<T = any>(path: string, body?: any): Promise<ApiResponse<T>> 
  */
 async function put<T = any>(path: string, body?: any): Promise<ApiResponse<T>> {
   try {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    
+    // Add Authorization header if chatbotToken exists
+    const chatbotToken = sessionStorage.getItem('chatbotToken');
+    if (chatbotToken) {
+      headers['Authorization'] = `Bearer ${chatbotToken}`;
+    }
+    
     const response = await fetch(`${API_ENDPOINT}${path}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(body)
     });
 
@@ -129,11 +165,19 @@ async function put<T = any>(path: string, body?: any): Promise<ApiResponse<T>> {
  */
 async function del<T = any>(path: string): Promise<ApiResponse<T>> {
   try {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    
+    // Add Authorization header if chatbotToken exists
+    const chatbotToken = sessionStorage.getItem('chatbotToken');
+    if (chatbotToken) {
+      headers['Authorization'] = `Bearer ${chatbotToken}`;
+    }
+    
     const response = await fetch(`${API_ENDPOINT}${path}`, {
       method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
     });
 
     const data: ApiResponse<T> = await response.json();

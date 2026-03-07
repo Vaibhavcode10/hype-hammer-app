@@ -15,7 +15,7 @@
  */
 
 import { storage } from './firebaseConfig';
-import { ref, uploadBytes, getDownloadURL, deleteObject, listAll } from 'firebase/storage';
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject, listAll } from 'firebase/storage';
 
 // Storage folder structure (without match prefix)
 export const STORAGE_FOLDERS = {
@@ -54,7 +54,8 @@ export async function uploadFileToStorage(
   file: File,
   folder: string,
   fileName?: string,
-  matchName?: string
+  matchName?: string,
+  onProgress?: (progress: number) => void
 ): Promise<string> {
   try {
     // Generate file name with timestamp for uniqueness
@@ -65,15 +66,29 @@ export async function uploadFileToStorage(
     // Create storage reference
     const fileRef = ref(storage, storagePath);
 
-    // Upload file
+    // Upload file (resumable so we can report progress when needed)
     console.log(`📤 Uploading ${file.name} to Firebase Storage (${storagePath})...`);
-    const snapshot = await uploadBytes(fileRef, file);
+    const uploadTask = uploadBytesResumable(fileRef, file);
+
+    const snapshot = await new Promise<any>((resolve, reject) => {
+      uploadTask.on(
+        'state_changed',
+        (taskSnapshot) => {
+          if (!onProgress) return;
+          const total = taskSnapshot.totalBytes || 0;
+          const transferred = taskSnapshot.bytesTransferred || 0;
+          const percent = total > 0 ? (transferred / total) * 100 : 0;
+          onProgress(percent);
+        },
+        (error) => reject(error),
+        () => resolve(uploadTask.snapshot)
+      );
+    });
+
     console.log(`✅ File uploaded: ${snapshot.ref.fullPath}`);
-
-    // Get download URL
     const downloadURL = await getDownloadURL(snapshot.ref);
+    onProgress?.(100);
     console.log(`✅ Download URL obtained`);
-
     return downloadURL;
   } catch (error) {
     console.error('❌ Firebase Storage upload failed:', error);

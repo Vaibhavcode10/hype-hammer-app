@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Users, TrendingUp, TrendingDown, User, ArrowLeft, Search, Filter, X as FilterX, Shield, Trophy, Target, IndianRupee } from 'lucide-react';
 import type { MatchData, Player as AppPlayer, Team as AppTeam } from '../../types';
+import { formatIndianCurrencyShort } from '../../services/currencyUtils';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
@@ -36,25 +37,29 @@ export const GuestPlayersPage: React.FC<GuestPlayersPageProps> = ({ onClose, cur
     
     try {
       setLoading(true);
+      // CRITICAL: Guest views must ONLY see ACCEPTED players and teams
+      // Use API-level filter for efficiency - no client-side filtering needed
+      const approvedQuery = `matchId=${currentMatch.id}&approvalStatus=accepted`;
+      
+      console.log('📊 GuestPlayersPage: Fetching APPROVED data only for match:', currentMatch.id);
+      
       const [playersRes, teamsRes] = await Promise.all([
-        fetch(`${API_BASE}/players?matchId=${currentMatch.id}`),
-        fetch(`${API_BASE}/teams?matchId=${currentMatch.id}`)
+        fetch(`${API_BASE}/players?${approvedQuery}`),
+        fetch(`${API_BASE}/teams?${approvedQuery}`)
       ]);
 
       if (playersRes.ok) {
         const playersData = await playersRes.json();
-        // CRITICAL: Filter out declined players - they should NOT appear on main Players Page
-        // Declined players are only visible in Admin's Applied Players / Review section
-        const allPlayers = playersData.data || [];
-        const eligiblePlayers = allPlayers.filter((p: Player) => 
-          p.approvalStatus !== 'declined'
-        );
-        setPlayers(eligiblePlayers);
+        const approvedPlayers = playersData.data || [];
+        console.log('📊 GuestPlayersPage: Approved players:', approvedPlayers.length);
+        setPlayers(approvedPlayers);
       }
 
       if (teamsRes.ok) {
         const teamsData = await teamsRes.json();
-        setTeams(teamsData.data || []);
+        const approvedTeams = teamsData.data || [];
+        console.log('📊 GuestPlayersPage: Approved teams:', approvedTeams.length);
+        setTeams(approvedTeams);
       }
     } catch (error) {
       console.error('Failed to fetch data:', error);
@@ -94,8 +99,6 @@ export const GuestPlayersPage: React.FC<GuestPlayersPageProps> = ({ onClose, cur
     if (explicitName) return explicitName;
     return getTeamName(getSoldTeamId(player));
   };
-
-  const formatCurrency = (amount: number) => `₹${((amount || 0) / 100000).toFixed(1)}L`;
 
   const soldPlayers = useMemo(() => players.filter(p => p.status === 'SOLD'), [players]);
   const unsoldPlayers = useMemo(() => players.filter(p => p.status === 'UNSOLD'), [players]);
@@ -503,7 +506,7 @@ export const GuestPlayersPage: React.FC<GuestPlayersPageProps> = ({ onClose, cur
                           <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Base</span>
                         </div>
                         <span className="text-base font-black text-pink-200">
-                          {basePrice > 0 ? formatCurrency(basePrice) : '—'}
+                          {basePrice > 0 ? formatIndianCurrencyShort(basePrice) : '—'}
                         </span>
                       </div>
 
@@ -514,7 +517,7 @@ export const GuestPlayersPage: React.FC<GuestPlayersPageProps> = ({ onClose, cur
                             <span className="text-[10px] font-semibold text-green-400/50 uppercase">Sold</span>
                           </div>
                           <span className="text-base font-black text-green-200">
-                            {formatCurrency(getSoldAmount(player))}
+                            {formatIndianCurrencyShort(getSoldAmount(player))}
                           </span>
                         </div>
                       )}
@@ -621,7 +624,7 @@ export const GuestPlayersPage: React.FC<GuestPlayersPageProps> = ({ onClose, cur
                             <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Price</span>
                           </div>
                           <span className="text-base font-black text-pink-200">
-                            {soldAmount > 0 ? formatCurrency(soldAmount) : '—'}
+                            {soldAmount > 0 ? formatIndianCurrencyShort(soldAmount) : '—'}
                           </span>
                         </div>
                         <div className="flex items-center justify-between">
@@ -630,7 +633,7 @@ export const GuestPlayersPage: React.FC<GuestPlayersPageProps> = ({ onClose, cur
                             <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Base</span>
                           </div>
                           <span className="text-sm font-bold text-pink-300/70">
-                            {basePrice > 0 ? formatCurrency(basePrice) : '—'}
+                            {basePrice > 0 ? formatIndianCurrencyShort(basePrice) : '—'}
                           </span>
                         </div>
                       </div>
@@ -714,7 +717,7 @@ export const GuestPlayersPage: React.FC<GuestPlayersPageProps> = ({ onClose, cur
                           <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Base</span>
                         </div>
                         <span className="text-base font-black text-pink-200">
-                          {basePrice > 0 ? formatCurrency(basePrice) : '—'}
+                          {basePrice > 0 ? formatIndianCurrencyShort(basePrice) : '—'}
                         </span>
                       </div>
                     </div>
@@ -806,7 +809,7 @@ export const GuestPlayersPage: React.FC<GuestPlayersPageProps> = ({ onClose, cur
                           <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Base</span>
                         </div>
                         <span className="text-base font-black text-pink-200">
-                          {basePrice > 0 ? formatCurrency(basePrice) : '—'}
+                          {basePrice > 0 ? formatIndianCurrencyShort(basePrice) : '—'}
                         </span>
                       </div>
                     </div>

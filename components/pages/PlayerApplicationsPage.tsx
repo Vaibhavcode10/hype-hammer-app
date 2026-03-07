@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { Users, User, ArrowLeft, Search, Filter, X as FilterX, Shield, Check, X, Clock, Ban, Mail, Phone, Calendar, Globe, Star, Briefcase, MapPin } from 'lucide-react';
+import { Users, User, ArrowLeft, Search, Filter, X as FilterX, Shield, Check, X, Clock, Ban, Mail, Phone, Calendar, Globe, Star, Briefcase, MapPin, FileText, ExternalLink } from 'lucide-react';
 import type { MatchData, Player as AppPlayer, ApprovalStatus } from '../../types';
+import { formatIndianCurrencyShort } from '../../services/currencyUtils';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
@@ -152,8 +153,6 @@ export const PlayerApplicationsPage: React.FC<PlayerApplicationsPageProps> = ({ 
       setUpdatingApproval(null);
     }
   };
-
-  const formatCurrency = (amount: number) => `₹${((amount || 0) / 100000).toFixed(1)}L`;
 
   const formatDate = (value?: unknown) => {
     if (!value) return 'N/A';
@@ -318,7 +317,7 @@ export const PlayerApplicationsPage: React.FC<PlayerApplicationsPageProps> = ({ 
             {basePrice > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-pink-400/60">Base Price:</span>
-                <span className="font-bold text-pink-200">{formatCurrency(basePrice)}</span>
+                <span className="font-bold text-pink-200">{formatIndianCurrencyShort(basePrice)}</span>
               </div>
             )}
 
@@ -336,6 +335,28 @@ export const PlayerApplicationsPage: React.FC<PlayerApplicationsPageProps> = ({ 
                 <span className="text-pink-400/60">Availability:</span>
                 <span className="font-semibold text-emerald-300">{player.availability}</span>
               </div>
+            )}
+
+            {/* Government ID Section */}
+            {(player.governmentId || player.governmentIdURL) && (
+              <>
+                {player.governmentId && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-pink-400/60">Gov ID:</span>
+                    <span className="font-semibold text-pink-300/80 text-right truncate">{player.governmentId}</span>
+                  </div>
+                )}
+                {player.governmentIdURL && (
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-pink-400/60">ID Proof:</span>
+                    <a href={player.governmentIdURL} target="_blank" rel="noopener noreferrer"
+                       className="flex items-center gap-1 text-pink-400 hover:text-pink-300 transition-colors">
+                      <ExternalLink size={10} />
+                      <span className="text-[9px] font-bold">View</span>
+                    </a>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Stats - Truncate if too long */}

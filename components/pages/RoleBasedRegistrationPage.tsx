@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
-import { Gavel, Users, User, Upload, ArrowLeft, CheckCircle, X, Info, AlertTriangle } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { Gavel, Users, User, Upload, ArrowLeft, CheckCircle, X, Info, AlertTriangle, Loader2 } from 'lucide-react';
 import { AuctionStatus, UserRole, SportType, MatchData, SportData } from '../../types';
 import { useMatchSettings } from '../../hooks/useMatchSettings';
 import { formatIndianCurrency } from '../../services/currencyUtils';
 import { PhoneOtpVerification } from '../ui/PhoneOtpVerification';
 import { NeonDesignStyles, GlassCard, NeonButton, GradientHeading, NeonPageWrapper, NeonInput } from '../ui/NeonDesignSystem';
+import { getMatchById } from '../../services/apiService';
 
 interface RoleBasedRegistrationPageProps {
   setStatus: (status: AuctionStatus) => void;
@@ -12,6 +13,8 @@ interface RoleBasedRegistrationPageProps {
   selectedMatch: MatchData | null;
   selectedSport: SportData | null;
   onRegister: (registrationData: any) => Promise<boolean | void>;
+  matchId?: string; // For deep link support - matchId from URL
+  hideBackButton?: boolean; // Hide back button when used in dashboard context
 }
 
 export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps> = ({
@@ -19,9 +22,70 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   selectedRole,
   selectedMatch,
   selectedSport,
-  onRegister
+  onRegister,
+  matchId: urlMatchId,
+  hideBackButton = false
 }) => {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Deep link support - fetch match data if not provided
+  const [fetchedMatch, setFetchedMatch] = useState<MatchData | null>(null);
+  // Start loading if we have a URL matchId but no selectedMatch (deep link scenario)
+  const [matchLoading, setMatchLoading] = useState<boolean>(!selectedMatch && !!urlMatchId);
+  const [matchError, setMatchError] = useState<string | null>(null);
+
+  // Effective match: use selectedMatch if available, otherwise use fetched match
+  const effectiveMatch = selectedMatch || fetchedMatch;
+  const effectiveMatchId = effectiveMatch?.id || urlMatchId || null;
+
+  // Fetch match data when accessed via deep link (no selectedMatch but have urlMatchId)
+  useEffect(() => {
+    const fetchMatchForDeepLink = async () => {
+      // Only fetch if we don't have a match but we have a matchId from URL
+      if (!selectedMatch && urlMatchId && !fetchedMatch) {
+        console.log('🔗 Deep link detected - fetching match:', urlMatchId);
+        setMatchLoading(true);
+        setMatchError(null);
+        
+        try {
+          const response = await getMatchById(urlMatchId);
+          console.log('📦 Match fetch response:', response);
+          
+          // apiCall returns data directly (not wrapped in {success, data})
+          // So response IS the match data if successful, or null if failed
+          if (response && response.id) {
+            setFetchedMatch(response as MatchData);
+            console.log('✅ Match fetched successfully:', response.name);
+          } else if (response && (response as any).success && (response as any).data) {
+            // Handle case where response is wrapped (backward compatibility)
+            setFetchedMatch((response as any).data);
+            console.log('✅ Match fetched successfully (wrapped):', (response as any).data.name);
+          } else {
+            setMatchError('Invalid or expired registration link');
+            console.error('❌ Match not found or invalid response:', urlMatchId, response);
+          }
+        } catch (error: any) {
+          console.error('❌ Error fetching match:', error);
+          setMatchError('Invalid or expired registration link');
+        } finally {
+          setMatchLoading(false);
+        }
+      }
+    };
+
+    fetchMatchForDeepLink();
+  }, [selectedMatch, urlMatchId, fetchedMatch]);
+
+  // Auto-close success modal after 3 seconds
+  useEffect(() => {
+    if (showSuccessModal) {
+      const timer = setTimeout(() => {
+        setShowSuccessModal(false);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [showSuccessModal]);
   
   // Common fields
   const [fullName, setFullName] = useState('');
@@ -50,7 +114,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const [teamLogoPreview, setTeamLogoPreview] = useState<string | null>(null);
   const [homeCity, setHomeCity] = useState('');
   const [roleInTeam, setRoleInTeam] = useState('');
-  const [authorizationLetter, setAuthorizationLetter] = useState<File | null>(null);
 
   // Player fields
   const [dateOfBirth, setDateOfBirth] = useState('');
@@ -74,7 +137,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const [isDragging, setIsDragging] = useState(false);
 
   // ─── PURSE INTELLIGENCE HOOK ───────────────────────────────────────────
-  const matchId = selectedMatch?.id || null;
+  // Use effective matchId (from selectedMatch or URL)
+  const matchIdForSettings = effectiveMatchId;
   
   const {
     matchSettings,
@@ -87,11 +151,12 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
     shortAvgValue,
     validatePlayerBasePrice,
     isLocked
-  } = useMatchSettings(matchId);
+  } = useMatchSettings(matchIdForSettings);
 
   // DEBUG: Log matchSettings state
   console.log('🔍 [PURSE INTELLIGENCE DEBUG]');
-  console.log('   matchId:', matchId);
+  console.log('   matchId:', matchIdForSettings);
+  console.log('   effectiveMatch:', effectiveMatch?.name);
   console.log('   matchSettings:', matchSettings);
   console.log('   settingsLoading:', settingsLoading);
 
@@ -229,6 +294,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSubmitting(true);
     
     console.log('================== FORM SUBMISSION DEBUG ==================');
     console.log('1️⃣ Form submit initiated for role:', selectedRole);
@@ -241,9 +307,14 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
       return;
     }
 
-    // HARD BLOCK: Password must match
-    if (!password || !passwordOk) {
-      alert('Please set and confirm your password before submitting.');
+    // Password validation - required for all roles that need backend auth
+    if (selectedRole === UserRole.AUCTIONEER && !password) {
+      alert('Please enter a password.');
+      return;
+    }
+    
+    if (selectedRole === UserRole.AUCTIONEER && password !== confirmPassword) {
+      alert('Passwords do not match.');
       return;
     }
 
@@ -280,14 +351,15 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
       email,
       phone,
       phoneVerified: true,
-      password,
+      password,  // Include password in payload
       role: selectedRole,
-      seasonId: selectedMatch?.id,
+      seasonId: effectiveMatchId, // Use effectiveMatchId for deep link support
       governmentId: finalGovernmentId,
       governmentIdFile: finalGovernmentIdFile
     };
     console.log('   - baseData.governmentId:', baseData.governmentId);
     console.log('   - baseData.governmentIdFile:', baseData.governmentIdFile);
+    console.log('   - baseData.seasonId:', baseData.seasonId);
 
     let roleSpecificData = {};
 
@@ -303,13 +375,19 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
         break;
       
       case UserRole.TEAM_REP:
+        // Get budget from match settings (set by admin)
+        const budgetFromMatch = matchSettings?.pursePerTeam || 0;
+        if (!budgetFromMatch || budgetFromMatch <= 0) {
+          alert('Match budget is not configured. Please contact the admin.');
+          return;
+        }
         roleSpecificData = {
           teamName,
           teamShortCode,
           teamLogo,
           homeCity,
           roleInTeam,
-          authorizationLetter
+          budget: budgetFromMatch  // Automatically from match settings
         };
         break;
       
@@ -319,7 +397,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
           gender,
           nationality,
           playerPhoto,
-          sport: selectedSport?.sportType,
+          sport: selectedSport?.sportType || effectiveMatch?.sportType || effectiveMatch?.sport,
           playingRole,
           battingStyle,
           bowlingStyle,
@@ -335,6 +413,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
     }
 
     const success = await onRegister({ ...baseData, ...roleSpecificData });
+    setIsSubmitting(false);
     if (success !== false) {
       setShowSuccessModal(true);
     }
@@ -360,6 +439,60 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
   const Icon = getRoleIcon();
 
+  // Helper function to get dynamic header text
+  const getHeaderText = () => {
+    const matchName = effectiveMatch?.name || 'this auction';
+    switch (selectedRole) {
+      case UserRole.AUCTIONEER: return `Register as an Auctioneer for ${matchName}`;
+      case UserRole.TEAM_REP: return `Register as a Team for ${matchName}`;
+      case UserRole.PLAYER: return `Register as a Player for ${matchName}`;
+      default: return `Register for ${matchName}`;
+    }
+  };
+
+  // Show error state for invalid deep link
+  if (matchError) {
+    return (
+      <NeonPageWrapper className="min-h-screen flex items-center justify-center py-4 px-4">
+        <NeonDesignStyles />
+        <GlassCard glow className="p-8 max-w-md text-center">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/20 flex items-center justify-center">
+            <AlertTriangle size={32} className="text-red-400" />
+          </div>
+          <h2 className="text-2xl font-black text-pink-100 mb-2">Invalid Registration Link</h2>
+          <p className="text-pink-300/70 mb-6">
+            This registration link is invalid or has expired. Please request a new link from the match organizer.
+          </p>
+          <NeonButton
+            onClick={() => setStatus(AuctionStatus.MARKETPLACE)}
+            className="w-full uppercase tracking-wider font-black text-sm py-2.5"
+          >
+            <ArrowLeft size={18} className="mr-2" />
+            Go to Marketplace
+          </NeonButton>
+        </GlassCard>
+      </NeonPageWrapper>
+    );
+  }
+
+  // Show loading state while fetching match data for deep link
+  if (matchLoading) {
+    return (
+      <NeonPageWrapper className="min-h-screen flex items-center justify-center py-4 px-4">
+        <NeonDesignStyles />
+        <GlassCard glow className="p-8 max-w-md text-center">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-pink-500/20 flex items-center justify-center">
+            <Loader2 size={32} className="text-pink-400 animate-spin" />
+          </div>
+          <h2 className="text-2xl font-black text-pink-100 mb-2">Loading Registration</h2>
+          <p className="text-pink-300/70">
+            Fetching match details...
+          </p>
+        </GlassCard>
+      </NeonPageWrapper>
+    );
+  }
+
   return (
     <NeonPageWrapper className="min-h-screen py-4 px-4">
       <NeonDesignStyles />
@@ -368,23 +501,36 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
       <div className="w-full mb-6">
         {/* Horizontal row with back button on left, centered heading */}
         <div className="flex items-center justify-between px-8">
-          {/* Left: Back Button */}
-          <button
-            onClick={() => setStatus(AuctionStatus.ROLE_SELECTION)}
-            className="text-pink-400 hover:text-pink-300 font-semibold transition-colors flex items-center gap-2 whitespace-nowrap"
-          >
-            <ArrowLeft size={18} />
-            Back to Role Selection
-          </button>
+          {/* Left: Back Button - adaptive based on how user arrived (hidden in dashboard mode) */}
+          {!hideBackButton && (
+            <button
+              onClick={() => {
+                // If came via deep link (no selectedMatch), go to marketplace
+                // Otherwise go to role selection as normal
+                if (!selectedMatch && urlMatchId) {
+                  setStatus(AuctionStatus.MARKETPLACE);
+                } else {
+                  setStatus(AuctionStatus.ROLE_SELECTION);
+                }
+              }}
+              className="text-pink-400 hover:text-pink-300 font-semibold transition-colors flex items-center gap-2 whitespace-nowrap"
+            >
+              <ArrowLeft size={18} />
+              {!selectedMatch && urlMatchId ? 'Go to Marketplace' : 'Back to Role Selection'}
+            </button>
+          )}
+          
+          {/* Left spacer when back button is hidden */}
+          {hideBackButton && <div className="w-[140px]" />}
 
           {/* Center: Title and Match Info */}
           <div className="flex-1 flex flex-col items-center">
             <div className="w-12 h-12 mb-2 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)', boxShadow: '0 0 20px rgba(255, 0, 102, 0.4)' }}>
               <Icon size={24} className="text-white" />
             </div>
-            <GradientHeading size="xl">{getRoleTitle()} Registration</GradientHeading>
+            <GradientHeading size="xl">{getRoleTitle().toUpperCase()} REGISTRATION</GradientHeading>
             <p className="text-sm text-pink-300/70 mt-1">
-              Register for <strong className="text-pink-300">{selectedMatch?.name}</strong>
+              {getHeaderText()}
             </p>
           </div>
 
@@ -396,6 +542,19 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
       {/* Form */}
       <div className="max-w-7xl mx-auto">
         <GlassCard glow className="p-8 space-y-4">
+          {/* Loading/Error Alert when match is not available */}
+          {!effectiveMatch && !matchLoading && (
+            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 mb-6 flex items-start gap-3">
+              <AlertTriangle size={20} className="text-yellow-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-yellow-200 font-semibold">Loading match data...</p>
+                <p className="text-yellow-200/70 text-sm mt-1">
+                  The match information is being loaded. Please wait or refresh the page if this persists.
+                </p>
+              </div>
+            </div>
+          )}
+          
           <form onSubmit={handleSubmit} className="space-y-4">
           {/* Common personal info block removed - each role now has its own integrated layout */}
 
@@ -491,7 +650,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         setPhone={setPhone}
                         phoneVerified={phoneVerified}
                         setPhoneVerified={setPhoneVerified}
-                        containerId="recaptcha-role-reg"
                         compact
                       />
                     </div>
@@ -635,7 +793,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                     </div>
                     <div className="rounded-lg p-3" style={{ background: 'rgba(255, 0, 102, 0.1)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
                       <p className="text-xs text-pink-400/70 uppercase font-medium">Players to Buy</p>
-                      <p className="text-lg font-bold text-pink-200">{matchSettings.playersPerTeam}</p>
+                      <p className="text-lg font-bold text-pink-200">{matchSettings.maxPlayersPerTeam}</p>
                     </div>
                     <div className="rounded-lg p-3" style={{ background: 'rgba(255, 0, 102, 0.1)', border: '1px solid rgba(255, 0, 102, 0.2)' }}>
                       <p className="text-xs text-pink-400/70 uppercase font-medium">Avg Value/Player</p>
@@ -646,6 +804,12 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       <p className="text-lg font-bold text-purple-400">{formattedMaxBasePrice}</p>
                     </div>
                   </div>
+                  {matchSettings && !matchSettings.avgPlayerValue ? (
+                    <p className="text-xs text-orange-300/80 mt-2 bg-orange-500/10 border border-orange-500/30 rounded px-2 py-1">
+                      ℹ️ Purse information is being calculated. Please refresh the page if values don't update shortly.
+                    </p>
+                  ) : null
+                  }
                 </div>
               )}
 
@@ -700,7 +864,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         setPhone={setPhone}
                         phoneVerified={phoneVerified}
                         setPhoneVerified={setPhoneVerified}
-                        containerId="recaptcha-role-reg"
                         compact
                       />
                     </div>
@@ -708,7 +871,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                 </div>
               </div>
 
-              {/* Password Row */}
+              {/* Password Row - COMMENTED OUT FOR TEAMS */}
+              {/* 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 <div>
                   <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Password <span className="text-red-400">*</span></label>
@@ -724,6 +888,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                   )}
                 </div>
               </div>
+              */}
 
               {/* Row 2: Team Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
@@ -754,17 +919,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                 </div>
               </div>
 
-              {/* Row 4: Authorization Letter */}
-              <div className="mb-4">
-                <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Authorization Letter <span className="text-red-400">*</span></label>
-                <div className="border-2 border-dashed border-pink-500/30 rounded-lg p-3 text-center hover:border-pink-400 transition-colors cursor-pointer" style={{ background: 'rgba(255, 0, 102, 0.08)' }}>
-                  <Upload className="mx-auto text-pink-400/50 mb-2" size={20} />
-                  <input type="file" onChange={(e) => setAuthorizationLetter(e.target.files?.[0] || null)} className="hidden" id="authLetter" accept=".pdf" required />
-                  <label htmlFor="authLetter" className="cursor-pointer">
-                    <span className="text-xs text-pink-300/70">{authorizationLetter ? authorizationLetter.name : 'Upload PDF'}</span>
-                  </label>
-                </div>
-              </div>
             </div>
           )}
 
@@ -816,9 +970,15 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       <p className="text-lg font-bold text-purple-400">{formattedMaxBasePrice}</p>
                     </div>
                   </div>
-                  <p className="text-xs text-green-300/70 mt-2">
-                    Set your base price between the recommended minimum and maximum allowed values.
-                  </p>
+                  {matchSettings && !matchSettings.avgPlayerValue ? (
+                    <p className="text-xs text-orange-300/80 mt-2 bg-orange-500/10 border border-orange-500/30 rounded px-2 py-1">
+                      ℹ️ Base price guidelines are being calculated. Please refresh the page if values don't update shortly. (Purse: {matchSettings.pursePerTeam}, Players: {matchSettings.maxPlayersPerTeam})
+                    </p>
+                  ) : (
+                    <p className="text-xs text-green-300/70 mt-2">
+                      Set your base price between the recommended minimum and maximum allowed values.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -873,7 +1033,6 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         setPhone={setPhone}
                         phoneVerified={phoneVerified}
                         setPhoneVerified={setPhoneVerified}
-                        containerId="recaptcha-role-reg"
                         compact
                       />
                     </div>
@@ -881,7 +1040,8 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                 </div>
               </div>
 
-              {/* Password Row */}
+              {/* Password Row - COMMENTED OUT FOR PLAYERS */}
+              {/* 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 <div>
                   <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Password <span className="text-red-400">*</span></label>
@@ -897,6 +1057,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                   )}
                 </div>
               </div>
+              */}
 
               {/* Row 2: Basic Player Info */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
@@ -951,7 +1112,12 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                     </select>
                   </div>
                 </div>
-                {(selectedSport?.sportType === SportType.CRICKET || selectedSport?.sportType === 'Cricket') && (
+                {/* Show cricket-specific fields based on sport type */}
+                {(selectedSport?.sportType === SportType.CRICKET || 
+                  selectedSport?.sportType === 'Cricket' ||
+                  effectiveMatch?.sportType === SportType.CRICKET ||
+                  effectiveMatch?.sportType === 'Cricket' ||
+                  effectiveMatch?.sport === 'Cricket') && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                     <div>
                       <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">
@@ -1173,36 +1339,56 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
 
           {/* Submit Button */}
           <div className="pt-4 space-y-3" style={{ borderTop: '1px solid rgba(255, 0, 102, 0.2)' }}>
-            {(!phoneVerified || !passwordOk) && (
+            {!phoneVerified && (
               <p className="text-center text-xs text-amber-300 rounded-lg px-4 py-2 font-medium" style={{ background: 'rgba(251, 191, 36, 0.1)', border: '1px solid rgba(251, 191, 36, 0.3)' }}>
-                {!phoneVerified
-                  ? '⚠ Please verify your phone number before submitting.'
-                  : '⚠ Please set and confirm your password before submitting.'}
+                ⚠ Please verify your phone number before submitting.
               </p>
             )}
             <button
               type="submit"
-              disabled={!phoneVerified || !passwordOk}
+              disabled={!phoneVerified || isSubmitting}
               className={`w-full py-3 rounded-lg font-bold uppercase tracking-wider transition-all text-sm ${
-                phoneVerified && passwordOk
+                phoneVerified && !isSubmitting
                   ? 'text-white hover:brightness-110'
                   : 'text-pink-300/40 cursor-not-allowed'
               }`}
               style={{
-                background: phoneVerified && passwordOk 
+                background: phoneVerified && !isSubmitting
                   ? 'linear-gradient(135deg, #ff0066, #ff4d94)' 
                   : 'rgba(255, 0, 102, 0.2)',
-                boxShadow: phoneVerified && passwordOk 
+                boxShadow: phoneVerified && !isSubmitting
                   ? '0 0 20px rgba(255, 0, 102, 0.4)' 
                   : 'none'
               }}
             >
-              Submit Registration
+              {isSubmitting ? (
+                <>
+                  <span className="inline-block mr-2">⏳</span>
+                  Submitting Application...
+                </>
+              ) : (
+                'Submit Registration'
+              )}
             </button>
           </div>
         </form>
         </GlassCard>
       </div>
+
+      {/* Loading Modal - Submitting Application */}
+      {isSubmitting && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-40 p-4">
+          <div className="rounded-2xl max-w-md w-full p-8" style={{ background: 'linear-gradient(135deg, rgba(26, 10, 10, 0.98), rgba(45, 10, 10, 0.98))', border: '1px solid rgba(255, 0, 102, 0.4)', boxShadow: '0 0 40px rgba(255, 0, 102, 0.3)' }}>
+            <div className="text-center">
+              <div className="w-16 h-16 mx-auto mb-6 rounded-full flex items-center justify-center animate-spin" style={{ background: 'linear-gradient(135deg, rgba(255,0,102,0.3), rgba(200,50,120,0.2))', border: '2px solid rgba(255, 0, 102, 0.5)' }}>
+                <div className="w-12 h-12 rounded-full" style={{ background: 'linear-gradient(135deg, #ff0066, #ff4d94)' }}></div>
+              </div>
+              <h3 className="text-xl font-black text-pink-100 mb-3">Submitting Application</h3>
+              <p className="text-pink-300/70 text-sm">Please wait while we process your registration...</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Success Modal */}
       {showSuccessModal && (
@@ -1212,11 +1398,14 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
               <div className="w-20 h-20 mx-auto mb-6 rounded-full flex items-center justify-center animate-bounce" style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)', boxShadow: '0 0 20px rgba(34, 197, 94, 0.4)' }}>
                 <CheckCircle size={48} className="text-white" />
               </div>
-              <h2 className="text-3xl font-black text-pink-100 mb-3">
-                Registration Successful! 🎉
+              <h2 className="text-2xl font-black text-green-300 mb-2">
+                ✓ Submitted Successfully!
               </h2>
+              <h3 className="text-xl font-bold text-pink-100 mb-4">
+                Registration Successful! 🎉
+              </h3>
               <p className="text-pink-300/70 mb-6 leading-relaxed">
-                You have successfully registered as <strong className="text-pink-200">{getRoleTitle()}</strong> for <strong className="text-pink-200">{selectedMatch?.name}</strong>. Your application is under review.
+                You have successfully registered as <strong className="text-pink-200">{getRoleTitle()}</strong> for <strong className="text-pink-200">{effectiveMatch?.name || 'this auction'}</strong>. Your application is under review.
               </p>
               <button
                 onClick={() => setShowSuccessModal(false)}

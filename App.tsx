@@ -196,7 +196,7 @@ const AppContent: React.FC = () => {
   }, [currentSportData, currentMatchId]);
 
   // Log status on every render
-  console.log('🔄 App render - status:', status, 'currentUser.role:', currentUser.role, 'currentMatch:', currentMatch?.id);
+  console.log('🔄 App render - status:', status, 'currentUser.role:', currentUser?.role, 'currentMatch:', currentMatch?.id);
 
   // Current match state (for active auction)
   const [config, setConfig] = useState<AuctionConfig>(INITIAL_CONFIG);
@@ -358,6 +358,27 @@ const AppContent: React.FC = () => {
       setPendingDashboardStatus(null);
     }
   }, [pendingDashboardStatus, currentMatch]);
+
+  // Auto-populate currentSport when we have currentMatchId and allSports are loaded (for direct registration URLs)
+  useEffect(() => {
+    if (currentMatchId && !currentSport && allSports.length > 0) {
+      console.log('🔍 Searching for sport containing matchId:', currentMatchId);
+      
+      // Find the sport that contains this match
+      const matchingSport = allSports.find(sport => 
+        sport.matches && sport.matches.some(m => m.id === currentMatchId)
+      );
+      
+      if (matchingSport) {
+        const sportIdentifier = matchingSport.customSportName || matchingSport.sportType || 'Cricket';
+        console.log('✅ Found sport for matchId:', sportIdentifier);
+        setCurrentSport(sportIdentifier);
+        sessionStorage.setItem('hypehammer_current_sport', sportIdentifier);
+      } else {
+        console.warn('⚠️ No sport found for matchId:', currentMatchId);
+      }
+    }
+  }, [currentMatchId, currentSport, allSports]);
 
   // Auto-navigate logged-in users to their dashboards on app load
   useEffect(() => {
@@ -1195,14 +1216,36 @@ const AppContent: React.FC = () => {
       let matchId: string | null = null;
       
       if (user.role === UserRole.AUCTIONEER) {
-        // Fetch auctioneer registration to get matchId
+        // Fetch auctioneer registration to get matchId and approvalStatus
         const response = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/auctioneers?email=${encodeURIComponent(user.email)}`);
         const data = await response.json();
         
         if (data.success && data.data && data.data.length > 0) {
           const auctioneer = data.data[0]; // Get first (should be only one per email due to duplicate check)
           matchId = auctioneer.matchId;
-          console.log('✅ Found auctioneer matchId:', matchId);
+          
+          // CRITICAL: Handle both 'status' and 'approvalStatus' fields
+          // Backend may use either field, normalize to uppercase for comparison
+          const rawStatus = auctioneer.approvalStatus || auctioneer.status || 'PENDING';
+          const normalizedStatus = rawStatus.toUpperCase();
+          
+          console.log('🔍 AUCTIONEER AUTH DEBUG:', {
+            email: user.email,
+            matchId: matchId,
+            rawApprovalStatus: auctioneer.approvalStatus,
+            rawStatus: auctioneer.status,
+            normalizedStatus: normalizedStatus,
+            fullAuctioneerDoc: auctioneer
+          });
+          
+          // Update currentUser with normalized approvalStatus from backend
+          setCurrentUser(prev => ({
+            ...prev,
+            approvalStatus: normalizedStatus,
+            auctioneerId: auctioneer.id || auctioneer.auctioneerId
+          }));
+          
+          console.log('✅ Found auctioneer matchId:', matchId, 'approvalStatus:', normalizedStatus);
         } else {
           console.warn('⚠️ No auctioneer registration found for:', user.email);
         }
@@ -1310,6 +1353,7 @@ const AppContent: React.FC = () => {
       setStatus={setStatus}
       selectedMatch={currentMatch}
       selectedSport={currentSportData}
+      matchId={currentMatchId || undefined}
       onRoleSelected={(role) => {
         setSelectedRoleForRegistration(role);
         setStatus(AuctionStatus.ROLE_REGISTRATION);
@@ -1323,6 +1367,7 @@ const AppContent: React.FC = () => {
       selectedRole={selectedRoleForRegistration || UserRole.PLAYER}
       selectedMatch={currentMatch}
       selectedSport={currentSportData}
+      matchId={currentMatchId || undefined}
       onRegister={async (registrationData) => {
         try {
           console.log('================== REGISTRATION HANDLER START ==================');
@@ -1332,10 +1377,16 @@ const AppContent: React.FC = () => {
           console.log('   - governmentIdFile:', registrationData.governmentIdFile);
           console.log('   - Keys in registrationData:', Object.keys(registrationData));
           
-          if (!registrationData.seasonId) {
+          // Use seasonId from form, or fallback to currentMatchId from URL
+          const finalSeasonId = registrationData.seasonId || currentMatchId;
+          
+          if (!finalSeasonId) {
             alert('No match selected. Please select a match first.');
             return false;
           }
+          
+          // Update registration data with resolved seasonId
+          registrationData.seasonId = finalSeasonId;
           
           // Upload files to Firebase Storage and get download URLs
           const processedData = { ...registrationData };
@@ -1373,13 +1424,7 @@ const AppContent: React.FC = () => {
               console.log('✅ Auctioneer photo uploaded:', auctioneerPhotoUrl);
             }
             
-            // Upload documents
-            if (registrationData.authorizationLetter && registrationData.authorizationLetter instanceof File) {
-              console.log('📤 Uploading authorization letter...');
-              const letterUrl = await uploadDocument(registrationData.authorizationLetter, 'authorization-letters', `doc_${Date.now()}`, matchName);
-              processedData.authorizationLetter = letterUrl;
-              console.log('✅ Authorization letter uploaded:', letterUrl);
-            }
+            // Authorization letter removed - no longer required for teams
             
             console.log('🔍 Before government ID upload check:');
             console.log('   - registrationData.governmentIdFile:', registrationData.governmentIdFile);
@@ -1388,7 +1433,8 @@ const AppContent: React.FC = () => {
             if (registrationData.governmentIdFile && registrationData.governmentIdFile instanceof File) {
               console.log('📤 ✅ Uploading government ID...');
               const idUrl = await uploadDocument(registrationData.governmentIdFile, 'government-ids', `govid_${Date.now()}`, matchName);
-              processedData.governmentIdFile = idUrl;
+              processedData.governmentIdURL = idUrl;  // Rename to correct field name
+              delete processedData.governmentIdFile;  // Remove old field name
               console.log('✅ Government ID uploaded:', idUrl);
             } else {
               console.log('⚠️ Government ID file not found or not a File instance');
@@ -1401,9 +1447,30 @@ const AppContent: React.FC = () => {
           
           console.log('================== BEFORE API CALL ==================');
           console.log('processedData keys:', Object.keys(processedData));
-          console.log('   - governmentId:', processedData.governmentId);
-          console.log('   - governmentIdFile:', processedData.governmentIdFile);
+          console.log('   - fullName:', processedData.fullName);
+          console.log('   - email:', processedData.email);
+          console.log('   - phone:', processedData.phone);
+          console.log('   - seasonId:', processedData.seasonId);
           console.log('   - role:', processedData.role);
+          console.log('   - governmentId:', processedData.governmentId);
+          console.log('   - governmentIdURL:', processedData.governmentIdURL);
+          
+          if (processedData.role === UserRole.TEAM_REP) {
+            console.log('   TEAM_REP Fields:');
+            console.log('     - teamName:', processedData.teamName);
+            console.log('     - teamLogo:', typeof processedData.teamLogo === 'string' ? 'URL' : 'FILE (ERROR!)');
+            console.log('     - teamShortCode:', processedData.teamShortCode);
+            console.log('     - homeCity:', processedData.homeCity);
+            console.log('     - roleInTeam:', processedData.roleInTeam);
+            console.log('     - budget:', processedData.budget, `(from match settings, type: ${typeof processedData.budget})`);
+          }
+          
+          // 🚨 CRITICAL: Validate budget for TEAM_REP before API call
+          if (processedData.role === UserRole.TEAM_REP && (!processedData.budget || processedData.budget <= 0)) {
+            console.error('❌ TEAM_REP budget is missing or invalid:', processedData.budget);
+            alert('Match budget is not configured by admin');
+            return false;
+          }
           
           let result = null;
           
@@ -1429,7 +1496,9 @@ const AppContent: React.FC = () => {
                   role: UserRole.AUCTIONEER
                 });
                 setCurrentMatchId(processedData.seasonId);
-                setPendingDashboardStatus(AuctionStatus.AUCTIONEER_DASHBOARD);
+                // 🚨 CRITICAL: Do NOT auto-redirect auctioneers - show approval waiting screen instead
+                // Auctioneer must wait for admin approval before accessing dashboard
+                setStatus(AuctionStatus.AUCTIONEER_PENDING_APPROVAL);
                 return true;
               }
               break;
@@ -1446,6 +1515,9 @@ const AppContent: React.FC = () => {
                 setCurrentMatchId(processedData.seasonId);
                 setPendingDashboardStatus(AuctionStatus.TEAM_REP_DASHBOARD);
                 return true;
+              } else {
+                console.error('Team registration failed with no response');
+                return false;
               }
               break;
               
@@ -1476,8 +1548,13 @@ const AppContent: React.FC = () => {
           return false;
         } catch (error: any) {
           console.error('❌ Registration error:', error);
+          if (error.details) {
+            console.error('Backend error response:', error.details);
+          }
           if (error.status === 409) {
             alert('This email is already registered. Please use a different email or sign in.');
+          } else if (error.status === 400) {
+            alert(`Registration failed: ${error.details || 'Invalid data submitted'}`);
           } else {
             alert('Registration failed. Please try again or contact support.');
           }
@@ -1509,17 +1586,60 @@ const AppContent: React.FC = () => {
         // Register admin to Cloud Function first
         let adminRegistrationSuccess = false;
         try {
+          // ✅ ENSURE ALL REQUIRED FIELDS ARE PRESENT
+          // Validate auction configuration BEFORE API call
+          if (!adminData.maxTeams || adminData.maxTeams < 2) {
+            throw new Error('maxTeams is required and must be at least 2 teams');
+          }
+          if (!adminData.maxPlayersPerTeam || adminData.maxPlayersPerTeam < 1) {
+            throw new Error('maxPlayersPerTeam is required and must be at least 1 player');
+          }
+          if (!adminData.baseBudgetPerTeam || adminData.baseBudgetPerTeam <= 0) {
+            throw new Error('baseBudgetPerTeam is required and must be greater than 0');
+          }
+          
+          // Default bidIncrement to 100000 if not provided
+          const bidIncrement = adminData.bidIncrement || 100000;
+          
+          // Handle sport type
+          let sportType = adminData.sportType || '';
+          if (sportType === 'Custom' && adminData.sportTypeCustom) {
+            sportType = adminData.sportTypeCustom;
+          }
+          
+          // Handle organizer type
+          let organizationType = adminData.organizerType || '';
+          if (organizationType === 'Other' && adminData.organizerTypeOther) {
+            organizationType = adminData.organizerTypeOther;
+          }
+          
           const adminPayload = {
             fullName: adminData.fullName,
             email: adminData.email,
             password: adminData.password,
             phone: adminData.phone || '',
             organizationName: adminData.organizationName || '',
-            organizationType: adminData.organizerType || ''
+            organizationType: organizationType,
+            // 🚨 REQUIRED AUCTION CONFIGURATION
+            maxTeams: adminData.maxTeams,
+            maxPlayersPerTeam: adminData.maxPlayersPerTeam,
+            baseBudgetPerTeam: adminData.baseBudgetPerTeam,
+            bidIncrement: bidIncrement,
+            sportType: sportType,
+            // Additional fields
+            auctionDateTime: adminData.auctionDateTime || '',
+            venueLocation: adminData.venueLocation || '',
+            organizerTypeOther: adminData.organizerTypeOther,
+            sportTypeCustom: adminData.sportTypeCustom,
+            designation: adminData.designation || ''
           };
           
           console.log('\n1️⃣ Sending admin registration to /register/admin endpoint...');
           console.log(`   Fields: ${Object.keys(adminPayload).length}`);
+          console.log(`   maxTeams TYPE: ${typeof adminPayload.maxTeams} = ${adminPayload.maxTeams}`);
+          console.log(`   maxPlayersPerTeam TYPE: ${typeof adminPayload.maxPlayersPerTeam} = ${adminPayload.maxPlayersPerTeam}`);
+          console.log(`   baseBudgetPerTeam TYPE: ${typeof adminPayload.baseBudgetPerTeam} = ${adminPayload.baseBudgetPerTeam}`);
+          console.log(`   bidIncrement TYPE: ${typeof adminPayload.bidIncrement} = ${adminPayload.bidIncrement}`);
           console.log(`   Payload: ${JSON.stringify(adminPayload, null, 2)}`);
           
           const response = await fetch('https://us-central1-axilam.cloudfunctions.net/auction/register/admin', {
@@ -1531,8 +1651,11 @@ const AppContent: React.FC = () => {
           if (!response.ok) {
             const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
             console.error('Admin registration error:', errorData);
-            alert(`Registration error: ${errorData.error || 'Failed to register admin'}`);
-            throw new Error(errorData.error || 'Registration failed');
+            // More detailed error message
+            const errorMsg = errorData.error || errorData.message || 'Failed to register admin';
+            console.error(`❌ Backend error: ${errorMsg}`);
+            alert(`Registration error: ${errorMsg}`);
+            throw new Error(errorMsg);
           }
           
           adminRegistrationSuccess = true;
@@ -1556,12 +1679,35 @@ const AppContent: React.FC = () => {
         
         // Create the new season/match immediately
         const newMatchId = `match-${Date.now()}`;
+        // 🚨 SYNC VENUE FIELDS: place, venue, and venueLocation must all be identical
+        const venueSynced = adminData.venueLocation || (adminData.venueMode === 'Online' ? 'Online' : 'TBD');
+        const bidIncrementValue = adminData.bidIncrement || 100000;
+        
+        // Calculate purse intelligence values for matchSettings
+        const pursePerTeam = adminData.baseBudgetPerTeam;
+        const maxBasePrice = Math.floor(pursePerTeam * 0.1); // 10% of purse as max base price
+        const avgPlayerValue = Math.floor(pursePerTeam / adminData.maxPlayersPerTeam);
+        const recommendedMinBase = Math.floor(avgPlayerValue / 10); // avg value / 10
+        
         const newMatch: MatchData = {
           id: newMatchId,
           name: adminData.seasonName,
           createdAt: Date.now(),
           matchDate: new Date(adminData.auctionDateTime).getTime(),
-          place: adminData.venueLocation || (adminData.venueMode === 'Online' ? 'Online' : 'TBD'),
+          place: venueSynced,
+          venue: venueSynced,
+          venueLocation: venueSynced,
+          // 🚨 CRITICAL: matchSettings with pursePerTeam is required by backend
+          matchSettings: {
+            pursePerTeam: pursePerTeam,
+            maxPlayersPerTeam: adminData.maxPlayersPerTeam,
+            numberOfTeams: adminData.maxTeams,
+            avgPlayerValue: avgPlayerValue,
+            maxBasePrice: maxBasePrice,
+            recommendedMinBase: recommendedMinBase,
+            isLocked: false,
+            createdAt: Date.now()
+          },
           config: {
             sport: adminData.sportType as SportType,
             type: AuctionType.OPEN,
@@ -1587,11 +1733,11 @@ const AppContent: React.FC = () => {
           sportType: adminData.sportType,
           auctionDateTime: adminData.auctionDateTime,
           venueMode: adminData.venueMode,
-          venueLocation: adminData.venueLocation,
           // Configuration fields
           maxTeams: adminData.maxTeams,
           maxPlayersPerTeam: adminData.maxPlayersPerTeam,
           baseBudgetPerTeam: adminData.baseBudgetPerTeam,
+          bidIncrement: bidIncrementValue,
           // Organizer details
           organizerPhone: adminData.phone,
           designation: adminData.designation,
@@ -1632,6 +1778,7 @@ const AppContent: React.FC = () => {
         // Save to localStorage for persistence
         localStorage.setItem('hypehammer_sports', JSON.stringify(updatedSports));
         localStorage.setItem('hypehammer_cache_version', '2');
+        console.log('✅ Match saved to localStorage:', newMatchId);
         
         // Save to Firebase in background (don't await - this was causing the delay)
         saveSportsData(updatedSports).catch(err => {
@@ -1744,6 +1891,107 @@ const AppContent: React.FC = () => {
         </div>
       );
     }
+
+    // Check if auctioneer is approved
+    if (currentUser?.approvalStatus && currentUser.approvalStatus !== 'APPROVED') {
+      return (
+        <div className="w-full h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 50%, #0a0505 100%)' }}>
+          <div className="max-w-md w-full mx-4">
+            <div className="text-center">
+              <div className="w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(180, 50, 120, 0.1))', border: '2px solid rgba(236, 72, 153, 0.5)' }}>
+                <svg className="w-10 h-10 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4v.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              
+              <h2 className="text-3xl font-black text-pink-300 mb-3">Waiting for Approval</h2>
+              
+              <div className="rounded-xl p-6 mb-6" style={{ background: 'linear-gradient(145deg, rgba(20, 10, 25, 0.7), rgba(30, 15, 35, 0.6))', border: '1px solid rgba(236, 72, 153, 0.25)' }}>
+                <p className="text-pink-200 text-base mb-4">
+                  Your auctioneer registration has been received and is pending approval from the admin.
+                </p>
+                
+                <div className="space-y-3">
+                  <div className="flex items-start gap-3 text-sm">
+                    <div className="w-6 h-6 rounded-full bg-pink-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-pink-300 text-xs font-bold">1</span>
+                    </div>
+                    <p className="text-pink-300/70">Admin reviews your application</p>
+                  </div>
+                  
+                  <div className="flex items-start gap-3 text-sm">
+                    <div className="w-6 h-6 rounded-full bg-pink-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-pink-300 text-xs font-bold">2</span>
+                    </div>
+                    <p className="text-pink-300/70">Verifies your credentials & experience</p>
+                  </div>
+                  
+                  <div className="flex items-start gap-3 text-sm">
+                    <div className="w-6 h-6 rounded-full bg-pink-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-pink-300 text-xs font-bold">3</span>
+                    </div>
+                    <p className="text-pink-300/70">We will call you when you're approved</p>
+                  </div>
+                </div>
+              </div>
+              
+              <p className="text-pink-300/50 text-sm">
+                This usually takes 2-4 hours. We'll send you an email notification as soon as you're approved.
+              </p>
+              
+              <div className="flex gap-3 mt-6">
+                <button 
+                  onClick={async () => {
+                    // Refresh approval status from backend
+                    try {
+                      const response = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/auctioneers?email=${encodeURIComponent(currentUser.email)}`);
+                      const data = await response.json();
+                      if (data.success && data.data && data.data.length > 0) {
+                        const auctioneer = data.data[0];
+                        
+                        // CRITICAL: Handle both 'status' and 'approvalStatus' fields, normalize to uppercase
+                        const rawStatus = auctioneer.approvalStatus || auctioneer.status || 'PENDING';
+                        const normalizedStatus = rawStatus.toUpperCase();
+                        
+                        console.log('🔍 CHECK STATUS DEBUG:', {
+                          email: currentUser.email,
+                          rawApprovalStatus: auctioneer.approvalStatus,
+                          rawStatus: auctioneer.status,
+                          normalizedStatus: normalizedStatus
+                        });
+                        
+                        setCurrentUser(prev => ({
+                          ...prev,
+                          approvalStatus: normalizedStatus
+                        }));
+                        if (normalizedStatus === 'APPROVED') {
+                          setStatus(AuctionStatus.AUCTIONEER_DASHBOARD);
+                        } else {
+                          alert(`Still awaiting admin approval... (Current status: ${normalizedStatus})`);
+                        }
+                      }
+                    } catch (err) {
+                      console.error('Error checking approval status:', err);
+                      alert('Failed to check status. Please try again.');
+                    }
+                  }}
+                  className="flex-1 px-6 py-2 rounded-lg bg-pink-600 text-white font-bold text-sm transition-all hover:bg-pink-700"
+                >
+                  Check Status
+                </button>
+                <button 
+                  onClick={() => setStatus(AuctionStatus.HOME)}
+                  className="flex-1 px-6 py-2 rounded-lg bg-gradient-to-r from-pink-600 to-red-600 text-white font-bold text-sm transition-all hover:shadow-lg"
+                >
+                  Back to Home
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     console.log('🎨 Rendering AUCTIONEER_DASHBOARD, currentMatch:', currentMatch?.id);
     // Always render dashboard - it will handle approval states and loading
     return <AuctioneerDashboardPage 
@@ -1751,6 +1999,101 @@ const AppContent: React.FC = () => {
       currentMatch={currentMatch}
       currentUser={currentUser}
     />;
+  }
+
+  // Show approval waiting screen for newly registered auctioneers
+  if (status === AuctionStatus.AUCTIONEER_PENDING_APPROVAL) {
+    return (
+      <div className="w-full h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 50%, #0a0505 100%)' }}>
+        <div className="max-w-md w-full mx-4">
+          <div className="text-center">
+            <div className="w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(180, 50, 120, 0.1))', border: '2px solid rgba(236, 72, 153, 0.5)' }}>
+              <svg className="w-10 h-10 text-pink-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4v.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            
+            <h2 className="text-3xl font-black text-pink-300 mb-3">✌️ Registration Complete!</h2>
+            
+            <div className="rounded-xl p-6 mb-6" style={{ background: 'linear-gradient(145deg, rgba(20, 10, 25, 0.7), rgba(30, 15, 35, 0.6))', border: '1px solid rgba(236, 72, 153, 0.25)' }}>
+              <p className="text-pink-200 text-base mb-4">
+                Thank you for registering as an auctioneer! Your application is now under review.
+              </p>
+              
+              <div className="space-y-3">
+                <div className="flex items-start gap-3 text-sm">
+                  <div className="w-6 h-6 rounded-full bg-green-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-green-300 text-xs">✓</span>
+                  </div>
+                  <p className="text-pink-300/70">Your credentials have been submitted</p>
+                </div>
+                
+                <div className="flex items-start gap-3 text-sm">
+                  <div className="w-6 h-6 rounded-full bg-pink-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-pink-300 text-xs font-bold">⏳</span>
+                  </div>
+                  <p className="text-pink-300/70">Admin will review and verify your details</p>
+                </div>
+                
+                <div className="flex items-start gap-3 text-sm">
+                  <div className="w-6 h-6 rounded-full bg-pink-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-pink-300 text-xs font-bold">📧</span>
+                  </div>
+                  <p className="text-pink-300/70">You'll get an email when approved</p>
+                </div>
+              </div>
+            </div>
+            
+            <p className="text-pink-300/50 text-sm mb-6">
+              Approval typically takes 2-4 hours. You can check your email for updates or return to check status anytime.
+            </p>
+            
+            <div className="flex gap-3">
+              <button 
+                onClick={async () => {
+                  try {
+                    const response = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/auctioneers?email=${encodeURIComponent(currentUser.email)}`);
+                    const data = await response.json();
+                    if (data.success && data.data && data.data.length > 0) {
+                      const auctioneer = data.data[0];
+                      const rawStatus = auctioneer.approvalStatus || auctioneer.status || 'PENDING';
+                      const normalizedStatus = rawStatus.toUpperCase();
+                      
+                      if (normalizedStatus === 'APPROVED') {
+                        setCurrentUser(prev => ({
+                          ...prev,
+                          approvalStatus: normalizedStatus
+                        }));
+                        setStatus(AuctionStatus.AUCTIONEER_DASHBOARD);
+                      } else {
+                        alert(`Your application status: ${normalizedStatus}. Please wait for admin approval.`);
+                      }
+                    }
+                  } catch (err) {
+                    alert('Could not check status. Please try again.');
+                  }
+                }}
+                className="flex-1 px-6 py-3 rounded-lg bg-pink-600 text-white font-bold text-sm transition-all hover:bg-pink-700"
+              >
+                Check Approval Status
+              </button>
+              <button 
+                onClick={() => {
+                  // Clear user state and match when going home
+                  setCurrentUser(null);
+                  setCurrentMatchId(null);
+                  sessionStorage.removeItem('hypehammer_current_match_id');
+                  setStatus(AuctionStatus.HOME);
+                }}
+                className="flex-1 px-6 py-3 rounded-lg bg-gray-700 text-white font-bold text-sm transition-all hover:bg-gray-600"
+              >
+                Go Home
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // Team Rep Dashboard and Player Dashboard have been removed.
@@ -1954,6 +2297,7 @@ const AppContent: React.FC = () => {
         viewingSquadTeamId={viewingSquadTeamId}
         teams={teams}
         players={players}
+        maxPlayers={currentMatch?.maxPlayersPerTeam || currentMatch?.config?.squadSize?.max || 12}
       />
 
       {/* Settings Sidebar */}

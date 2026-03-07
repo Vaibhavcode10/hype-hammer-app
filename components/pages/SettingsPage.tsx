@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Save, RotateCcw, Download, Upload, Trash2, AlertCircle, CheckCircle2, Gavel, DollarSign, TrendingUp, Users, Trophy, Shield, Database, Activity } from 'lucide-react';
-import { AuctionStatus, AuctionConfig, Player, Team, SportType, AuctionType } from '../../types';
-import { subscribeToMatchConfig, updateMatchConfig, MatchConfig, validateMatchConfig, ValidationResult } from '../../services/matchConfigService';
+import { AuctionStatus, AuctionConfig, Player, Team, SportType, AuctionType, CurrencyUnit } from '../../types';
+import { subscribeToMatchConfig, updateMatchConfig, MatchConfig, validateMatchConfig, ValidationResult, subscribeToCurrencyUnit, updateCurrencyUnit, DEFAULT_CURRENCY_UNIT } from '../../services/matchConfigService';
 
 interface SettingsPageProps {
   config: AuctionConfig;
@@ -29,6 +29,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [matchConfig, setMatchConfig] = useState<MatchConfig | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [currencyUnit, setCurrencyUnit] = useState<CurrencyUnit>(DEFAULT_CURRENCY_UNIT);
 
   // Subscribe to real-time config updates from Firebase
   useEffect(() => {
@@ -67,6 +68,27 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
     return () => {
       console.log('🔌 Unsubscribing from match config');
+      unsubscribe();
+    };
+  }, [matchId]);
+
+  // Subscribe to currency unit changes
+  useEffect(() => {
+    if (!matchId) return;
+
+    const unsubscribe = subscribeToCurrencyUnit(
+      matchId,
+      (unit) => {
+        console.log('💱 Currency unit updated:', unit);
+        setCurrencyUnit(unit);
+      },
+      (error) => {
+        console.error('❌ Currency unit subscription error:', error);
+      }
+    );
+
+    return () => {
+      console.log('🔌 Unsubscribing from currency unit');
       unsubscribe();
     };
   }, [matchId]);
@@ -185,6 +207,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       ...localConfig,
       roles: localConfig.roles.filter(r => r.id !== roleId)
     });
+  };
+
+  const handleCurrencyUnitChange = async (unit: CurrencyUnit) => {
+    if (!matchId) return;
+    
+    setCurrencyUnit(unit);
+    try {
+      await updateCurrencyUnit(matchId, unit);
+      setSaveNotification(`✅ Currency unit changed to ${unit}`);
+      setTimeout(() => setSaveNotification(null), 2000);
+    } catch (error) {
+      console.error('Failed to update currency unit:', error);
+      setSaveNotification('❌ Failed to update currency unit');
+      setTimeout(() => setSaveNotification(null), 3000);
+    }
   };
 
   return (
@@ -383,6 +420,55 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     onChange={(e) => setLocalConfig({...localConfig, minBidIncrement: Number(e.target.value) || 0})}
                   />
                   <p className="text-sm text-emerald-400/60 mt-2 font-mono">₹{localConfig.minBidIncrement.toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* CURRENCY SETTINGS CARD */}
+          <div className="settings-hud-card rounded-2xl overflow-hidden">
+            <div className="p-10">
+              <div className="flex items-center gap-4 mb-10">
+                <div className="w-14 h-14 rounded-xl flex items-center justify-center bg-emerald-500/20 border border-emerald-500/30">
+                  <DollarSign size={28} className="text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-pink-100 uppercase tracking-wider">Currency Display</h3>
+                  <p className="text-xs text-pink-400/40 uppercase tracking-widest mt-1">How Amounts Are Shown</p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <label className="text-sm font-black uppercase text-pink-400/60 tracking-wider block mb-4">Select Currency Unit</label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {(['K', 'L', 'Cr'] as const).map((unit: CurrencyUnit) => (
+                      <button
+                        key={unit}
+                        onClick={() => handleCurrencyUnitChange(unit)}
+                        className={`py-4 px-3 rounded-xl font-black text-lg uppercase transition-all ${
+                          currencyUnit === unit
+                            ? 'bg-emerald-500/30 border-2 border-emerald-400 text-emerald-100 shadow-lg shadow-emerald-500/20'
+                            : 'bg-pink-900/20 border-2 border-pink-500/20 text-pink-300/60 hover:border-emerald-400/40 hover:text-emerald-300'
+                        }`}
+                      >
+                        {unit}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-pink-900/15 border border-pink-500/15 rounded-xl p-6">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle size={20} className="text-pink-400/60 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-black uppercase text-pink-400/60 mb-2">Current Setting</p>
+                      <p className="text-2xl font-black text-emerald-400 font-mono">{currencyUnit}</p>
+                      <p className="text-xs text-pink-300/50 mt-2 leading-relaxed">
+                        All monetary values will display with this currency unit. Changes apply instantly across all auction views.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

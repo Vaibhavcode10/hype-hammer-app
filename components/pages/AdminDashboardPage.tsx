@@ -9,26 +9,30 @@ import {
   Home, Radio, Lock, Unlock, RotateCcw, Plus, Save, RefreshCw,
   AlertTriangle, CheckCircle, XCircle, Info, History,
   Layers, Gauge, BarChart, TrendingDown, Star, ChevronDown, ChevronUp,
-  Wallet, Square, IndianRupee, Upload, Loader2, FileText as FileIcon, Image, Ban
+  Wallet, Square, IndianRupee, Upload, Loader2, FileText as FileIcon, Image, Ban, ExternalLink, Link2
 } from 'lucide-react';
-import { AuctionStatus, MatchData, UserRole, Player, Team, ApprovalStatus } from '../../types';
+import { AuctionStatus, MatchData, UserRole, Player, Team, ApprovalStatus, BidConfig, CurrencyUnit } from '../../types';
 import { LiveAuctionPage } from './LiveAuctionPage';
 import { PlayersPage } from './PlayersPage';
 import { PlayerApplicationsPage } from './PlayerApplicationsPage';
 import { TeamSquadPage } from './TeamSquadPage';
 import { TeamHUDCard } from '../ui/TeamHUDCard';
+import { RoleBasedRegistrationPage } from './RoleBasedRegistrationPage';
 import { socketService } from '../../services/socketService';
-import { registerTeam, registerPlayer } from '../../services/apiService';
+import { registerTeam, registerPlayer, updateUser } from '../../services/apiService';
 import { uploadTeamLogo, uploadDocument, uploadPlayerPhoto, uploadProfilePicture } from '../../services/firebaseStorageService';
 import { firestore } from '../../services/firebaseConfig';
 import { doc, getDoc } from 'firebase/firestore';
 import { useMatchSettings } from '../../hooks/useMatchSettings';
+import { useMatchData } from '../../hooks/useMatchData';
 import { formatIndianCurrency, formatIndianCurrencyShort } from '../../services/currencyUtils';
 import { AuctionCountdown } from '../ui/AuctionCountdown';
 import { AuctionDateSettings } from '../ui/AuctionDateSettings';
 import { BackupRestoreSection } from '../ui/BackupRestoreSection';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
+
+const fmtCurrency = (amount?: number) => formatIndianCurrencyShort(amount || 0);
 
 // ─── Bidding History Page ────────────────────────────────────────────────────
 interface BidRecord {
@@ -67,7 +71,7 @@ const BiddingHistoryPage: React.FC<{
     fetchBids();
   }, [player.id, seasonId]);
 
-  const fmtCurrency = (v: number) => `₹${((v || 0) / 100000).toFixed(1)}L`;
+  const fmtCurrency = formatIndianCurrencyShort;
 
   const fmtTime = (ts: string) => {
     if (!ts) return '—';
@@ -315,7 +319,7 @@ const ReportSection: React.FC<{
   const [teamFilter, setTeamFilter] = React.useState('');
   const [expandedTeams, setExpandedTeams] = React.useState<Record<string, boolean>>({});
 
-  const fmtCurrency = (v: number) => `₹${((v || 0) / 100000).toFixed(1)}L`;
+  const fmtCurrency = formatIndianCurrencyShort;
   const fmtCr = (v: number) => `₹${((v || 0) / 10000000).toFixed(2)}Cr`;
 
   const isLive = auctionStatus === 'LIVE' || auctionStatus === 'PAUSED';
@@ -608,6 +612,22 @@ const ReportSection: React.FC<{
                       <span className="text-sm text-red-300 font-black ml-auto">{fmtCurrency(highestPurchase.amount)}</span>
                     </div>
                   )}
+                  
+                  {/* Government ID Section for Team */}
+                  {(team.governmentId || team.governmentIdURL) && (
+                    <div className="px-5 py-3 flex items-center gap-3" style={{ background: 'rgba(236,72,153,0.05)' }}>
+                      <span className="text-xs text-pink-300/60 uppercase font-bold">Organization ID:</span>
+                      {team.governmentId && <span className="text-sm text-pink-300/80 font-semibold">{team.governmentId}</span>}
+                      {team.governmentIdURL && (
+                        <a href={team.governmentIdURL} target="_blank" rel="noopener noreferrer"
+                           className="text-xs text-pink-400 hover:text-pink-300 font-bold ml-auto flex items-center gap-1">
+                          <ExternalLink size={10} />
+                          View ID Proof
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  
                   {teamFilteredPlayers.length > 0 ? teamFilteredPlayers.map((player, pIdx) => {
                     const soldAmt = (player as any).soldAmount || (player as any).soldPrice || (player as any).currentBid || 0;
                     const role = (player as any).roleId || (player as any).role || '';
@@ -791,6 +811,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     loading: matchSettingsLoading,
   } = useMatchSettings(matchId);
   
+  // ─── FETCH MATCH DATA (including budget from matchSettings.pursePerTeam) ─────
+  const { pursePerTeam } = useMatchData(matchId);
+  
   // Data states
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -816,6 +839,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     baseTeamBudget: 10000000,
   });
   
+  // Bid config state for admin settings (multi-increment bidding)
+  const [bidConfigInputs, setBidConfigInputs] = useState({ 
+    increments: ['0.1', '0.25', '0.5', '1'], 
+    custom: '' 
+  });
+  const [savingBidConfig, setSavingBidConfig] = useState(false);
+  
   // Account settings edit state
   const [editingAccount, setEditingAccount] = useState(false);
   const [accountSettings, setAccountSettings] = useState({
@@ -825,6 +855,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     organizationName: '',
     organizationType: '',
     designation: '',
+    role: '',
+    venue: '',
   });
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'account' | 'platform' | 'media'>('account');
@@ -874,6 +906,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   // ─── Team/Player Registration State (copied from Auctioneer) ──────────────
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [teamSearchQuery, setTeamSearchQuery] = useState('');
+  
+  // Note: Using section navigation instead of modals for registration pages
+
   
   // Team moderation state
   type TeamModerationFilter = 'all' | 'accepted' | 'pending' | 'declined';
@@ -952,7 +987,31 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     // currentMatch is null — try to fetch the SPECIFIC match from sessionStorage matchId
     const savedMatchId = sessionStorage.getItem('hypehammer_current_match_id');
     if (savedMatchId) {
-      console.log('🔒 currentMatch is null but sessionStorage has matchId:', savedMatchId, '— fetching it directly');
+      console.log('🔒 currentMatch is null but sessionStorage has matchId:', savedMatchId, '— looking in localStorage first');
+      
+      // Check localStorage first (for recently created matches)
+      const localStorageData = localStorage.getItem('hypehammer_sports');
+      if (localStorageData) {
+        try {
+          const allSportsData = JSON.parse(localStorageData);
+          // Search all sports for this match
+          for (const sport of allSportsData) {
+            const foundMatch = sport.matches?.find((m: any) => m.id === savedMatchId);
+            if (foundMatch) {
+              console.log('🔒 ✅ Found match in localStorage:', foundMatch.name, savedMatchId);
+              setResolvedMatch(foundMatch);
+              setMatchResolved(true);
+              setLoading(false);
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('⚠️ Failed to parse localStorage data:', err);
+        }
+      }
+      
+      // Not found in localStorage, try API fetch
+      console.log('🔒 Match not in localStorage, fetching from API:', `${API_BASE}/matches/${savedMatchId}`);
       const fetchSpecificMatch = async () => {
         setLoading(true);
         try {
@@ -1118,6 +1177,59 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     setLiveNotifications(prev => prev.filter(n => n.id !== notificationId));
   };
 
+  // Share registration links for players and teams
+  const handleShareRegistrationLink = async (type: 'player' | 'team') => {
+    // Use resolvedMatch or currentMatch as fallback
+    const matchToShare = resolvedMatch || currentMatch;
+    
+    if (!matchToShare?.id) {
+      console.error('❌ Share Link Error: No match available', { resolvedMatch, currentMatch });
+      setLiveNotifications(prev => [...prev, {
+        id: Math.random().toString(36),
+        message: 'No match selected - cannot generate link',
+        type: 'info',
+        timestamp: Date.now()
+      }]);
+      return;
+    }
+
+    const rolePathMap = {
+      'player': 'player',
+      'team': 'team'
+    };
+    const rolePath = rolePathMap[type];
+    
+    const baseUrl = window.location.origin;
+    const registrationUrl = `${baseUrl}/register/${rolePath}/${matchToShare.id}`;
+    
+    const typeLabel = type === 'player' ? 'Player' : 'Team';
+    const shareText = `Register as ${typeLabel} for ${matchToShare.name}\n${registrationUrl}`;
+
+    console.log('📋 Share Link Generated:', { type, url: registrationUrl, matchName: matchToShare.name });
+
+    try {
+      await navigator.clipboard.writeText(shareText);
+      const notificationId = Math.random().toString(36);
+      setLiveNotifications(prev => [...prev, {
+        id: notificationId,
+        message: `${typeLabel} Invite Link Copied!`,
+        type: 'info',
+        timestamp: Date.now()
+      }]);
+      setTimeout(() => removeLiveNotification(notificationId), 3000);
+    } catch (err) {
+      console.error('❌ Failed to copy link:', err);
+      const notificationId = Math.random().toString(36);
+      setLiveNotifications(prev => [...prev, {
+        id: notificationId,
+        message: 'Failed to copy link',
+        type: 'info',
+        timestamp: Date.now()
+      }]);
+      setTimeout(() => removeLiveNotification(notificationId), 3000);
+    }
+  };
+
   // Fetch bid history for current player to get actual current bid and leading team
   const fetchBidHistoryForCurrentPlayer = async (playerId: string) => {
     if (!activeMatch?.id || !playerId) return;
@@ -1205,6 +1317,100 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       message: 'Lock season settings? This will prevent further edits until auction ends.'
     });
     setShowConfirmation(true);
+  };
+  
+  // ── BID CONFIG HANDLERS ──────────────────────────────────────────────────
+  
+  /**
+   * Parse bid increment input with K/L/Cr suffix support
+   * - "1" with currencyUnit "L" = 100000 (1 Lakh)
+   * - "10K" = 10000 (ignores currencyUnit, uses suffix)
+   * - "1.5L" = 150000
+   * - "0.5Cr" = 5000000
+   */
+  const parseBidIncrementInput = (input: string): number | null => {
+    const cleanInput = input.replace(/[₹,\s]/g, '').trim();
+    if (!cleanInput) return null;
+    
+    // Check for explicit suffix: K, L, Cr
+    const suffixMatch = cleanInput.match(/^([0-9.]+)\s*(K|L|Cr)$/i);
+    if (suffixMatch) {
+      const num = parseFloat(suffixMatch[1]);
+      const suffix = suffixMatch[2].toUpperCase();
+      if (isNaN(num)) return null;
+      
+      const suffixMultiplier = suffix === 'K' ? 1000 : suffix === 'L' ? 100000 : 10000000;
+      return Math.round(num * suffixMultiplier);
+    }
+    
+    // No suffix - use currencyUnit from match config
+    const num = parseFloat(cleanInput);
+    if (isNaN(num)) return null;
+    
+    const unitFromMatch = resolvedMatch?.currencyUnit || currentMatch?.currencyUnit || 'L';
+    const unitMultiplier = unitFromMatch === 'K' ? 1000 : unitFromMatch === 'L' ? 100000 : 10000000;
+    return Math.round(num * unitMultiplier);
+  };
+  
+  const handleBidIncrementChange = (index: number, value: string) => {
+    setBidConfigInputs(prev => {
+      const newIncrements = [...prev.increments];
+      newIncrements[index] = value;
+      return { ...prev, increments: newIncrements };
+    });
+  };
+  
+  const handleCustomIncrementChange = (value: string) => {
+    setBidConfigInputs(prev => ({ ...prev, custom: value }));
+  };
+  
+  const handleSaveBidConfig = async () => {
+    const matchId = resolvedMatch?.id || currentMatch?.id;
+    if (!matchId) {
+      alert('No match/season selected');
+      return;
+    }
+    
+    setSavingBidConfig(true);
+    try {
+      // Parse all increments
+      const parsedIncrements = bidConfigInputs.increments
+        .map(parseBidIncrementInput)
+        .filter((v): v is number => v !== null && v > 0);
+      
+      const parsedCustom = parseBidIncrementInput(bidConfigInputs.custom);
+      
+      if (parsedIncrements.length === 0) {
+        alert('Please enter at least one valid bid increment');
+        setSavingBidConfig(false);
+        return;
+      }
+      
+      const bidConfig: BidConfig = {
+        increments: parsedIncrements,
+        custom: parsedCustom,
+        isLocked: false
+      };
+      
+      const response = await fetch(`${API_BASE}/matches/${matchId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bidConfig })
+      });
+      
+      if (response.ok) {
+        addSystemLog('admin', 'Bid increment settings saved');
+        alert('Bid increment settings saved!');
+      } else {
+        throw new Error('Failed to save bid config');
+      }
+    } catch (error) {
+      console.error('Save bid config error:', error);
+      addSystemLog('error', 'Failed to save bid config');
+      alert('Failed to save bid increment settings');
+    } finally {
+      setSavingBidConfig(false);
+    }
   };
   
   // Emergency controls
@@ -1543,9 +1749,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         organizationName: activeMatch.organizationName || '',
         organizationType: activeMatch.organizationType || '',
         designation: activeMatch.designation || '',
+        role: currentUser.role || '',
+        venue: activeMatch.venue || '',
       });
     }
-  }, [activeMatch]);
+  }, [activeMatch, currentUser.name, currentUser.email, currentUser.role]);
 
   // Profile photo upload handler
   const handleProfilePhotoUpload = async (file: File) => {
@@ -1590,24 +1798,31 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
           organizationName: accountSettings.organizationName,
           organizationType: accountSettings.organizationType,
           designation: accountSettings.designation,
+          venue: accountSettings.venue,
         }),
       });
-      if (res.ok) {
-        setResolvedMatch(prev => prev ? {
-          ...prev,
-          organizerName: accountSettings.name,
-          organizerEmail: accountSettings.email,
-          organizerPhone: accountSettings.phone,
-          organizationName: accountSettings.organizationName,
-          organizationType: accountSettings.organizationType,
-          designation: accountSettings.designation as any,
-        } : null);
-        addSystemLog('admin', 'Account settings updated');
-        alert('Account settings saved!');
-        setEditingAccount(false);
-      } else {
-        throw new Error('Failed to save');
+      if (!res.ok) {
+        throw new Error('Failed to save match settings');
       }
+      
+      // If role is being changed, save it to the user
+      if (accountSettings.role && accountSettings.role !== currentUser.role) {
+        await updateUser(currentUser.id || '', { role: accountSettings.role });
+      }
+      
+      setResolvedMatch(prev => prev ? {
+        ...prev,
+        organizerName: accountSettings.name,
+        organizerEmail: accountSettings.email,
+        organizerPhone: accountSettings.phone,
+        organizationName: accountSettings.organizationName,
+        organizationType: accountSettings.organizationType,
+        designation: accountSettings.designation as any,
+        venue: accountSettings.venue,
+      } : null);
+      addSystemLog('admin', 'Account settings updated');
+      alert('Account settings saved!');
+      setEditingAccount(false);
     } catch (err) {
       console.error('Save account settings error:', err);
       alert('Failed to save account settings');
@@ -1835,9 +2050,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   }, [currentUser?.email, activeMatch?.id]);
 
   // Calculate season-specific KPIs - USE eligiblePlayers (not raw players) for auction stats
-  const totalTeams = teams.length;
+  const totalTeams = teams.filter(t => t.approvalStatus === 'accepted').length;
   const approvedTeams = teams.filter(t => t.squadSize !== undefined && t.squadSize > 0).length;
-  const totalPlayers = eligiblePlayers.length;
+  const totalPlayers = eligiblePlayers.filter(p => p.approvalStatus === 'accepted').length;
   const soldPlayers = eligiblePlayers.filter(p => p.status === 'SOLD').length;
   const unsoldPlayers = eligiblePlayers.filter(p => p.status === 'UNSOLD').length;
   const pendingPlayers = eligiblePlayers.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING').length;
@@ -2036,7 +2251,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         fullName: ownerName, email: teamEmail, password: teamPassword, phone: teamPhone,
         seasonId: matchRef.id, teamName, teamShortCode, homeCity, roleInTeam,
         teamLogo: logoUrl, authorizationLetter: authLetterUrl,
-        governmentId, governmentIdFile: govIdUrl, role: 'TEAM_REP'
+        governmentId, governmentIdURL: govIdUrl, role: 'TEAM_REP'
       };
 
       const result = await registerTeam(registrationData);
@@ -2235,7 +2450,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
       const registrationData = {
         fullName: playerName, email: playerEmail, phone: playerPhone, password: playerPassword,
-        role: 'PLAYER', seasonId: matchRef.id, governmentId: playerGovId, governmentIdFile: govIdUrl,
+        role: 'PLAYER', seasonId: matchRef.id, governmentId: playerGovId, governmentIdURL: govIdUrl,
         dateOfBirth: '', age: parseInt(playerAge) || 25, gender: playerGender, nationality: playerNationality,
         playerPhoto: photoUrl, imageUrl: photoUrl, sport: matchRef.config?.sport || 'CRICKET',
         playingRole: playerRoleId, roleId: playerRoleId, battingStyle: playerBattingStyle,
@@ -2326,6 +2541,97 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   const unsoldPlayersCount = eligiblePlayers.filter(p => p.status === 'UNSOLD').length;
   const pendingPlayersCount = eligiblePlayers.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING').length;
   const totalAmountSpent = eligiblePlayers.filter(p => p.status === 'SOLD').reduce((sum, p) => sum + ((p as any).soldAmount || (p as any).soldPrice || (p as any).currentBid || 0), 0);
+
+  // ─── UNIFIED REGISTRATION HANDLER ──────────────────────────────────────────
+  const handleRegistration = async (registrationData: any) => {
+    try {
+      console.log('🎯 Admin Dashboard Registration Handler - Start');
+      console.log('   Role:', registrationData.role);
+      
+      const finalSeasonId = registrationData.seasonId || (resolvedMatch || currentMatch)?.id;
+      
+      if (!finalSeasonId) {
+        alert('No match selected. Unable to register.');
+        return false;
+      }
+      
+      registrationData.seasonId = finalSeasonId;
+      const processedData = { ...registrationData };
+      
+      const matchName = (resolvedMatch || currentMatch)?.name || registrationData.seasonId || 'Default_Match';
+      
+      // Upload files to Firebase Storage
+      try {
+        if (registrationData.teamLogo && registrationData.teamLogo instanceof File) {
+          console.log('📤 Uploading team logo...');
+          const logoUrl = await uploadTeamLogo(registrationData.teamLogo, `team_${Date.now()}`, matchName);
+          processedData.teamLogo = logoUrl;
+        }
+        
+        if (registrationData.playerPhoto && registrationData.playerPhoto instanceof File) {
+          console.log('📤 Uploading player photo...');
+          const photoUrl = await uploadPlayerPhoto(registrationData.playerPhoto, `player_${Date.now()}`, matchName);
+          processedData.imageUrl = photoUrl;
+          delete processedData.playerPhoto;
+        }
+        
+        if (registrationData.governmentIdFile && registrationData.governmentIdFile instanceof File) {
+          console.log('📤 Uploading government ID...');
+          const govIdUrl = await uploadDocument(registrationData.governmentIdFile, `gov_id_${Date.now()}`, matchName);
+          processedData.governmentIdURL = govIdUrl;
+          delete processedData.governmentIdFile;
+        }
+        
+        if (registrationData.authorizationLetter && registrationData.authorizationLetter instanceof File) {
+          console.log('📤 Uploading authorization letter...');
+          const authUrl = await uploadDocument(registrationData.authorizationLetter, `auth_letter_${Date.now()}`, matchName);
+          processedData.authorizationLetterURL = authUrl;
+          delete processedData.authorizationLetter;
+        }
+      } catch (uploadError) {
+        console.error('❌ File upload error:', uploadError);
+        alert('File upload failed. Please try again.');
+        return false;
+      }
+      
+      // Call the appropriate registration API
+      let result;
+      switch (registrationData.role) {
+        case UserRole.TEAM_REP:
+          result = await registerTeam(processedData);
+          if (result) {
+            console.log('✅ Team registered successfully from dashboard');
+            return true;
+          }
+          break;
+          
+        case UserRole.PLAYER:
+          result = await registerPlayer(processedData);
+          if (result && result.playerId) {
+            console.log('✅ Player registered successfully from dashboard');
+            return true;
+          }
+          break;
+          
+        default:
+          console.error('Unknown role:', registrationData.role);
+          return false;
+      }
+      
+      alert('Registration failed. The email may already be registered or there was a server error.');
+      return false;
+    } catch (error: any) {
+      console.error('❌ Registration error:', error);
+      alert(error.message || 'An error occurred during registration');
+      return false;
+    }
+  };
+
+  // Handler to refresh lists after successful registration
+  const handleRegistrationSuccess = () => {
+    console.log('🔄 Refreshing data after successful registration');
+    // The data will auto-refresh via useMatchData hook
+  };
 
   return (
     <>
@@ -2748,6 +3054,34 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         ::-webkit-scrollbar-thumb:hover { background: rgba(255, 0, 102, 0.5); }
       `}</style>
 
+      {/* Global Toast Notifications - Always visible regardless of active section */}
+      <div className="fixed top-6 right-6 z-[100] space-y-3 max-w-md pointer-events-none">
+        {liveNotifications.map((notification) => (
+          <div
+            key={notification.id}
+            className={`pointer-events-auto animate-in slide-in-from-right duration-300 shadow-2xl rounded-xl overflow-hidden ${
+              notification.type === 'bid' ? 'bg-gradient-to-r from-blue-500 to-cyan-600' :
+              notification.type === 'sold' ? 'bg-gradient-to-r from-green-500 to-emerald-600' :
+              notification.type === 'unsold' ? 'bg-gradient-to-r from-gray-500 to-slate-600' :
+              notification.type === 'start' ? 'bg-gradient-to-r from-orange-500 to-red-600' :
+              'bg-gradient-to-r from-pink-500 to-rose-600'
+            }`}
+          >
+            <div className="p-3 flex items-center gap-3">
+              <div className="flex-1">
+                <p className="text-white font-bold text-sm">{notification.message}</p>
+              </div>
+              <button
+                onClick={() => removeLiveNotification(notification.id)}
+                className="flex-shrink-0 w-6 h-6 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-all"
+              >
+                <X size={14} className="text-white" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div className="h-screen flex overflow-hidden relative" style={{ background: 'linear-gradient(135deg, #1a0a0a 0%, #2d0a0a 25%, #1a0a12 50%, #0d0d1a 100%)' }}>
         {/* Ambient hero glow effects */}
         <div className="hero-glow" style={{ top: '5%', right: '15%' }}></div>
@@ -2987,10 +3321,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                           </div>
                           <h2 className="text-4xl font-black text-white mb-2">{activeMatch?.name || 'No Active Auction'}</h2>
                           <p className="text-pink-200/60 text-lg">{activeMatch?.year || new Date().getFullYear()} Season</p>
-                          {activeMatch?.place && (
+                          {activeMatch?.venue && (
                             <p className="text-pink-300/50 text-sm mt-1.5 flex items-center gap-1.5">
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-pink-400/60"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                              {activeMatch.place}
+                              {activeMatch.venue}
                             </p>
                           )}
                         </div>
@@ -3047,7 +3381,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                                 <span className="text-white text-[10px] font-bold tracking-wider uppercase">{currentBiddingPlayer.role || 'PLAYER'}</span>
                               </div>
                               <h2 className="text-xl font-black text-white mb-1" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>{currentBiddingPlayer.name}</h2>
-                              <p className="text-pink-300 text-xs font-medium">Base Price: ₹{((currentBiddingPlayer.basePrice || 0) / 100000).toFixed(1)}L</p>
+                              <p className="text-pink-300 text-xs font-medium">Base: {fmtCurrency(currentBiddingPlayer.basePrice)}</p>
                             </div>
                           </div>
                         </>
@@ -3236,13 +3570,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                             <div className="flex items-center justify-center gap-1">
                               <Star size={12} className="text-pink-400" />
                               <span className="text-pink-300 text-xs font-medium">
-                                ₹{((player.basePrice || 0) / 100000).toFixed(0)}L
+                                {formatIndianCurrencyShort(player.basePrice || 0)}
                               </span>
                             </div>
                             {player.status === 'SOLD' && player.soldAmount && (
                               <div className="mt-2 flex items-center justify-center gap-1 text-green-400">
                                 <TrendingUp size={12} />
-                                <span className="text-xs font-bold">₹{((player.soldAmount || 0) / 100000).toFixed(0)}L</span>
+                                <span className="text-xs font-bold">{formatIndianCurrencyShort(player.soldAmount || 0)}</span>
                               </div>
                             )}
                           </div>
@@ -3305,14 +3639,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         </div>
                       </div>
 
-                      {/* Quick Stats */}
+                      {/* Quick Stats - APPROVED ONLY */}
                       <div className="flex gap-3">
                         <div className="text-center px-4 py-2 rounded-lg bg-pink-900/20 border border-pink-500/15">
-                          <p className="text-xl font-black text-pink-100">{players.length}</p>
+                          <p className="text-xl font-black text-pink-100">{players.filter(p => p.approvalStatus === 'accepted').length}</p>
                           <p className="text-[9px] font-bold uppercase text-pink-400/40 tracking-wider">Players</p>
                         </div>
                         <div className="text-center px-4 py-2 rounded-lg bg-pink-900/20 border border-pink-500/15">
-                          <p className="text-xl font-black text-pink-100">{teams.length}</p>
+                          <p className="text-xl font-black text-pink-100">{teams.filter(t => t.approvalStatus === 'accepted').length}</p>
                           <p className="text-[9px] font-bold uppercase text-pink-400/40 tracking-wider">Teams</p>
                         </div>
                         <div className="text-center px-4 py-2 rounded-lg bg-pink-900/20 border border-pink-500/15">
@@ -3374,7 +3708,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         <div className="flex items-center gap-2">
                           {editingAccount ? (
                             <>
-                              <button onClick={() => { setEditingAccount(false); if (activeMatch) setAccountSettings({ name: activeMatch.organizerName || currentUser.name || '', email: activeMatch.organizerEmail || currentUser.email || '', phone: activeMatch.organizerPhone || '', organizationName: activeMatch.organizationName || '', organizationType: activeMatch.organizationType || '', designation: activeMatch.designation || '' }); }} className="px-3 py-1.5 rounded-lg hud-card text-pink-300/60 text-[10px] font-bold flex items-center gap-1 hover:bg-pink-500/10 transition-all">
+                              <button onClick={() => { setEditingAccount(false); if (activeMatch) setAccountSettings({ name: activeMatch.organizerName || currentUser.name || '', email: activeMatch.organizerEmail || currentUser.email || '', phone: activeMatch.organizerPhone || '', organizationName: activeMatch.organizationName || '', organizationType: activeMatch.organizationType || '', designation: activeMatch.designation || '', role: currentUser.role || '', venue: activeMatch.venue || '' }); }} className="px-3 py-1.5 rounded-lg hud-card text-pink-300/60 text-[10px] font-bold flex items-center gap-1 hover:bg-pink-500/10 transition-all">
                                 <X size={12} /> Cancel
                               </button>
                               <button onClick={handleSaveAccountSettings} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all">
@@ -3410,6 +3744,17 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                             <option value="Owner">Owner</option>
                           </select>
                         </div>
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Access Role</label>
+                          <select value={accountSettings.role} onChange={(e) => setAccountSettings({...accountSettings, role: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
+                            <option value="">Select</option>
+                            <option value="ADMIN">Admin</option>
+                            <option value="AUCTIONEER">Auctioneer</option>
+                            <option value="TEAM_REP">Team Rep</option>
+                            <option value="PLAYER">Player</option>
+                            <option value="GUEST">Guest</option>
+                          </select>
+                        </div>
                       </div>
                     </div>
 
@@ -3424,6 +3769,75 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         <Lock size={12} />
                         Request Password Reset
                       </button>
+                    </div>
+
+                    {/* Bid Increment Settings Card */}
+                    <div className="hud-card rounded-2xl p-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-lg bg-pink-500/20 flex items-center justify-center border border-pink-500/30">
+                            <IndianRupee size={14} className="text-pink-400" />
+                          </div>
+                          <div>
+                            <h3 className="text-xs font-black text-pink-300 uppercase tracking-wider">Bid Increment Settings</h3>
+                            <p className="text-[9px] text-pink-300/40">Configure bid buttons for the auction</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={handleSaveBidConfig}
+                          disabled={savingBidConfig}
+                          className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-600 to-red-600 text-white text-[10px] font-bold flex items-center gap-1 transition-all disabled:opacity-50"
+                        >
+                          {savingBidConfig ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                          {savingBidConfig ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+
+                      {/* Unit Conversion Info */}
+                      <div className="bg-pink-900/10 border border-pink-500/10 rounded-lg px-3 py-2 mb-4">
+                        <p className="text-pink-300/60 text-[10px] leading-relaxed">
+                          <span className="font-bold text-pink-400">Unit:</span> {resolvedMatch?.currencyUnit || currentMatch?.currencyUnit || 'L'}
+                          <span className="text-pink-300/40 ml-2">• 1K=₹1,000 • 1L=₹1,00,000 • 1Cr=₹1,00,00,000</span>
+                        </p>
+                      </div>
+
+                      {/* Increment Inputs */}
+                      <div className="grid grid-cols-2 gap-3 mb-3">
+                        {[0, 1, 2, 3].map((idx) => (
+                          <div key={idx} className="space-y-1">
+                            <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider">Increment {idx + 1}</label>
+                            <div className="relative">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-pink-400/50 text-xs">+₹</span>
+                              <input
+                                type="text"
+                                value={bidConfigInputs.increments[idx] || ''}
+                                onChange={(e) => handleBidIncrementChange(idx, e.target.value)}
+                                placeholder={idx === 0 ? '0.1' : idx === 1 ? '0.25' : idx === 2 ? '0.5' : '1'}
+                                className="w-full px-3 py-2 pl-7 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 focus:border-pink-500 focus:outline-none transition-all"
+                              />
+                              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-pink-300/30 text-[10px]">{resolvedMatch?.currencyUnit || currentMatch?.currencyUnit || 'L'}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Custom Increment */}
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider flex items-center gap-1">
+                          Custom Increment <Star size={8} className="text-pink-400" /> <span className="text-pink-300/30">(Optional)</span>
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-pink-400/50 text-xs">+₹</span>
+                          <input
+                            type="text"
+                            value={bidConfigInputs.custom}
+                            onChange={(e) => handleCustomIncrementChange(e.target.value)}
+                            placeholder="e.g. 0.15 or 15K"
+                            className="w-full px-3 py-2 pl-7 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 focus:border-pink-500 focus:outline-none transition-all"
+                          />
+                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-pink-300/30 text-[10px]">{resolvedMatch?.currencyUnit || currentMatch?.currencyUnit || 'L'}</span>
+                        </div>
+                      </div>
                     </div>
                         
                     {/* Auction Configuration Card */}
@@ -3489,15 +3903,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         </div>
                       </div>
 
-                      {/* Team & Squad Row */}
-                      <div className="grid grid-cols-3 gap-3 mb-4">
+                      {/* Team & Squad Row - NO MIN SQUAD */}
+                      <div className="grid grid-cols-2 gap-3 mb-4">
                         <div>
                           <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Max Teams</label>
                           <input type="number" value={seasonSettings.maxTeams} onChange={(e) => setSeasonSettings({...seasonSettings, maxTeams: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Min Squad</label>
-                          <input type="number" value={seasonSettings.minSquadSize} onChange={(e) => setSeasonSettings({...seasonSettings, minSquadSize: parseInt(e.target.value) || 0})} disabled={!editingSettings} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" />
                         </div>
                         <div>
                           <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Max Squad</label>
@@ -3537,11 +3947,19 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                           <select value={accountSettings.organizationType} onChange={(e) => setAccountSettings({...accountSettings, organizationType: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all">
                             <option value="">Select</option>
                             <option value="Sports Club">Sports Club</option>
+                            <option value="College">College</option>
                             <option value="Corporate">Corporate</option>
+                            <option value="League">League</option>
+                            <option value="Club">Club</option>
+                            <option value="Private">Private</option>
                             <option value="Educational">Educational</option>
                             <option value="Government">Government</option>
                             <option value="Other">Other</option>
                           </select>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black uppercase text-pink-400/50 tracking-wider block mb-1">Venue</label>
+                          <input type="text" value={accountSettings.venue} onChange={(e) => setAccountSettings({...accountSettings, venue: e.target.value})} disabled={!editingAccount} className="w-full px-3 py-2 rounded-lg bg-pink-900/20 border border-pink-500/20 text-sm font-bold text-pink-100 disabled:opacity-50 focus:border-pink-500 focus:outline-none transition-all" placeholder="e.g., Mumbai, India" />
                         </div>
                       </div>
                       {!editingAccount && (
@@ -3574,7 +3992,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         </div>
                         <div className="p-3 rounded-lg bg-pink-900/15 border border-pink-500/10">
                           <p className="text-[9px] font-black uppercase text-pink-400/40 tracking-wider mb-0.5">Venue</p>
-                          <p className="text-sm font-bold text-pink-100 truncate">{activeMatch?.place || activeMatch?.venueLocation || activeMatch?.venueMode || '—'}</p>
+                          <p className="text-sm font-bold text-pink-100 truncate">{activeMatch?.venue || '—'}</p>
                         </div>
                       </div>
                     </div>
@@ -3698,7 +4116,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
               <PlayersPage
                 onClose={() => setActiveSection('overview')}
                 currentMatch={resolvedMatch || currentMatch}
-                onAddPlayer={() => { resetAddPlayerForm(); setActiveSection('addPlayer'); }}
+                onAddPlayer={() => setActiveSection('addPlayer')}
+                onShareLink={() => handleShareRegistrationLink('player')}
               />
             )}
 
@@ -3710,39 +4129,34 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
               />
             )}
 
-            {/* 3B: ADD PLAYER FORM */}
+            {/* 3B: ADD PLAYER PAGE - Unified Registration */}
             {activeSection === 'addPlayer' && (
+              <div className="flex-1 relative">
+                <RoleBasedRegistrationPage
+                  setStatus={() => {}}
+                  selectedRole={UserRole.PLAYER}
+                  selectedMatch={resolvedMatch || currentMatch}
+                  selectedSport={null}
+                  matchId={(resolvedMatch || currentMatch)?.id}
+                  onRegister={handleRegistration}
+                  hideBackButton={true}
+                />
+                {/* Back button overlay */}
+                <button
+                  onClick={() => setActiveSection('players')}
+                  className="absolute top-40 right-8 z-50 px-6 py-3 rounded-full bg-white/5 border border-pink-500/25 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2.5 text-sm font-bold shadow-lg"
+                  style={{ boxShadow: '0 0 12px rgba(255,0,102,0.1)' }}
+                >
+                  <ArrowLeft size={20} />
+                  Back to Players
+                </button>
+              </div>
+            )}
+
+            {/* OLD PLAYER FORM - REMOVED - Now using RoleBasedRegistrationPage */}
+            {false && activeSection === 'addPlayer_old' && (
               <div className="flex-1 p-6 pr-8 pb-16">
-                {/* Header */}
-                <div className="flex items-center justify-between mb-8">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(236, 72, 153, 0.15)', border: '1px solid rgba(236, 72, 153, 0.3)' }}>
-                      <Plus size={24} className="text-pink-400" />
-                    </div>
-                    <div>
-                      <h1 className="text-3xl font-black text-white tracking-tight">Register New Player</h1>
-                      <p className="text-pink-400/50 text-sm mt-1">Complete all required fields to add a player to {(resolvedMatch || currentMatch)?.name || 'this auction'}</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setActiveSection('players')}
-                    className="px-6 py-3 rounded-full bg-white/5 border border-pink-500/25 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2.5 text-sm font-bold"
-                    style={{ boxShadow: '0 0 12px rgba(255,0,102,0.1)' }}
-                  >
-                    <ArrowLeft size={20} />
-                    Back to Players
-                  </button>
-                </div>
-
-                {/* Error Message */}
-                {addPlayerError && (
-                  <div className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm mb-6" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#fca5a5' }}>
-                    <AlertCircle size={16} />
-                    {addPlayerError}
-                  </div>
-                )}
-
-                {/* Form Content */}
+                {/* This section removed - replaced with RoleBasedRegistrationPage above */}
                 <div className="max-w-7xl space-y-5">
                   {/* Row 1: Player Photo + Personal Information */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -3870,7 +4284,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                               <div className="mt-2 space-y-1">
                                 <p className="text-[10px] text-pink-400/60">
                                   Max allowed: <span className="text-pink-300 font-semibold">{formattedMaxBasePrice}</span>
-                                  <span className="text-pink-400/40 ml-2">(Team purse: {shortPurse} | Squad: {matchSettings.playersPerTeam})</span>
+                                  <span className="text-pink-400/40 ml-2">(Team purse: {shortPurse} | Squad: {matchSettings.maxPlayersPerTeam})</span>
                                 </p>
                                 <p className="text-[10px] text-pink-400/60">
                                   Recommended range: <span className="text-green-400 font-semibold">{formattedRecommendedMin}</span> – <span className="text-green-400 font-semibold">{formattedMaxBasePrice}</span>
@@ -4075,7 +4489,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         boxShadow: '0 0 20px rgba(236, 72, 153, 0.3)'
                       }}
                     >
-                      {addPlayerLoading ? <><Loader2 size={18} className="animate-spin" /> Registering Player...</> : <><Plus size={18} /> Register Player</>}
+                      {/* OLD FORM REMOVED */}
                     </button>
                   </div>
                 </div>
@@ -4147,7 +4561,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                       />
                     </div>
                     <button
-                      onClick={() => { resetAddTeamForm(); setActiveSection('addTeam'); }}
+                      onClick={() => setActiveSection('addTeam')}
                       className="px-5 py-2.5 rounded-full font-bold text-sm flex items-center gap-2 transition-all duration-300 hover:scale-105"
                       style={{
                         background: 'linear-gradient(135deg, #ec4899, #e11d48)',
@@ -4158,6 +4572,19 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                     >
                       <Plus size={16} />
                       Add Team
+                    </button>
+                    <button
+                      onClick={() => handleShareRegistrationLink('team')}
+                      className="px-5 py-2.5 rounded-full font-bold text-sm flex items-center gap-2 transition-all duration-300 hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
+                        color: '#fff',
+                        boxShadow: '0 0 20px rgba(6, 182, 212, 0.35)',
+                        border: '1px solid rgba(6, 182, 212, 0.6)'
+                      }}
+                    >
+                      <Link2 size={16} />
+                      Share Link
                     </button>
                     <button
                       onClick={() => setActiveSection('overview')}
@@ -4262,22 +4689,27 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                   </div>
                 ) : processedTeams.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {processedTeams.map((team) => (
-                      <TeamHUDCard
-                        key={team.id}
-                        team={team}
-                        playerCount={getTeamPlayerCount(team.id)}
-                        maxPlayers={18}
-                        onClick={() => {
-                          setSelectedTeamId(team.id);
-                          setActiveSection('teamDetail');
-                        }}
-                        showModeration={true}
-                        onApprove={(teamId) => handleUpdateTeamApproval(teamId, 'accepted')}
-                        onDecline={(teamId) => handleUpdateTeamApproval(teamId, 'declined')}
-                        isUpdating={updatingTeamApproval === team.id}
-                      />
-                    ))}
+                    {processedTeams.map((team) => {
+                      // Calculate player count by filtering players sold to this team
+                      const teamPlayerCount = eligiblePlayers.filter(p => p.soldTo === team.id || p.teamId === team.id).length;
+                      return (
+                        <TeamHUDCard
+                          key={team.id}
+                          team={team}
+                          playerCount={teamPlayerCount}
+                          maxPlayers={resolvedMatch?.maxPlayersPerTeam || 18}
+                          onClick={() => {
+                            setSelectedTeamId(team.id);
+                            setActiveSection('teamDetail');
+                          }}
+                          showModeration={true}
+                          onApprove={(teamId) => handleUpdateTeamApproval(teamId, 'accepted')}
+                          onDecline={(teamId) => handleUpdateTeamApproval(teamId, 'declined')}
+                          isUpdating={updatingTeamApproval === team.id}
+                          basePurse={pursePerTeam}
+                        />
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="rounded-xl p-12 text-center" style={{ background: 'linear-gradient(145deg, rgba(20, 10, 25, 0.7), rgba(30, 15, 35, 0.6))', border: '1px dashed rgba(236, 72, 153, 0.25)' }}>
@@ -4304,39 +4736,34 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
               );
             })()}
 
-            {/* 4B: ADD TEAM FORM */}
+            {/* 4B: ADD TEAM PAGE - Unified Registration */}
             {activeSection === 'addTeam' && (
+              <div className="flex-1 relative">
+                <RoleBasedRegistrationPage
+                  setStatus={() => {}}
+                  selectedRole={UserRole.TEAM_REP}
+                  selectedMatch={resolvedMatch || currentMatch}
+                  selectedSport={null}
+                  matchId={(resolvedMatch || currentMatch)?.id}
+                  onRegister={handleRegistration}
+                  hideBackButton={true}
+                />
+                {/* Back button overlay */}
+                <button
+                  onClick={() => setActiveSection('teams')}
+                  className="absolute top-40 right-8 z-50 px-6 py-3 rounded-full bg-white/5 border border-pink-500/25 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2.5 text-sm font-bold shadow-lg"
+                  style={{ boxShadow: '0 0 12px rgba(255,0,102,0.1)' }}
+                >
+                  <ArrowLeft size={20} />
+                  Back to Teams
+                </button>
+              </div>
+            )}
+
+            {/* OLD TEAM FORM - REMOVED - Now using RoleBasedRegistrationPage */}
+            {false && activeSection === 'addTeam_old' && (
               <div className="flex-1 p-6 pr-8 pb-16">
-                {/* Header */}
-                <div className="flex items-center justify-between mb-8">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(236, 72, 153, 0.15)', border: '1px solid rgba(236, 72, 153, 0.3)' }}>
-                      <Plus size={24} className="text-pink-400" />
-                    </div>
-                    <div>
-                      <h1 className="text-3xl font-black text-white tracking-tight">Register New Team</h1>
-                      <p className="text-pink-400/50 text-sm mt-1">Complete all required fields to add a franchise to {(resolvedMatch || currentMatch)?.name || 'this auction'}</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setActiveSection('teams')}
-                    className="px-6 py-3 rounded-full bg-white/5 border border-pink-500/25 text-pink-300 hover:bg-pink-500/10 hover:border-pink-500/40 transition-all flex items-center gap-2.5 text-sm font-bold"
-                    style={{ boxShadow: '0 0 12px rgba(255,0,102,0.1)' }}
-                  >
-                    <ArrowLeft size={20} />
-                    Back to Teams
-                  </button>
-                </div>
-
-                {/* Error Message */}
-                {addTeamError && (
-                  <div className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm mb-6" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#fca5a5' }}>
-                    <AlertCircle size={16} />
-                    {addTeamError}
-                  </div>
-                )}
-
-                {/* Form Content */}
+                {/* This section removed - replaced with RoleBasedRegistrationPage above */}
                 <div className="max-w-7xl space-y-5">
                   {/* Row 1: Upload Logo + Personal Information */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -4470,7 +4897,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="rounded-xl p-4" style={{ background: 'rgba(0,0,0,0.3)' }}>
                           <p className="text-[10px] text-green-300/60 uppercase font-bold tracking-wider mb-1">Squad Size</p>
-                          <p className="text-2xl font-black text-white">{matchSettings.playersPerTeam} <span className="text-sm font-normal text-green-300/60">players</span></p>
+                          <p className="text-2xl font-black text-white">{matchSettings.maxPlayersPerTeam} <span className="text-sm font-normal text-green-300/60">players</span></p>
                         </div>
                         <div className="rounded-xl p-4" style={{ background: 'rgba(0,0,0,0.3)' }}>
                           <p className="text-[10px] text-green-300/60 uppercase font-bold tracking-wider mb-1">Team Purse</p>
@@ -4604,7 +5031,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         boxShadow: '0 0 20px rgba(236, 72, 153, 0.3)'
                       }}
                     >
-                      {addTeamLoading ? <><Loader2 size={18} className="animate-spin" /> Registering Team...</> : <><Plus size={18} /> Register Team</>}
+                      {/* OLD FORM REMOVED */}
                     </button>
                   </div>
                 </div>
@@ -4630,11 +5057,39 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                   </div>
                 );
               }
+              
+              // 🔒 ROUTE PROTECTION: Check team approval status
+              const teamApprovalStatus = getTeamApprovalStatus(selectedTeam);
+              if (teamApprovalStatus !== 'accepted') {
+                return (
+                  <div className="flex-1 p-6 flex items-center justify-center">
+                    <div className="text-center max-w-md">
+                      <Lock size={64} className="text-yellow-400/50 mx-auto mb-4" />
+                      <h3 className="text-2xl font-bold text-white mb-3">
+                        {teamApprovalStatus === 'pending' ? 'Team Not Approved Yet' : 'Access Denied'}
+                      </h3>
+                      <p className="text-pink-300/60 mb-6">
+                        {teamApprovalStatus === 'pending' 
+                          ? 'This team must be approved before you can view their squad. Please approve the team first from the Team Command Center.'
+                          : 'This team has been declined and squad access is not available.'}
+                      </p>
+                      <button 
+                        onClick={() => setActiveSection('teams')}
+                        className="px-6 py-3 rounded-full bg-pink-500/20 border border-pink-500/30 text-pink-300 hover:bg-pink-500/30 transition-all"
+                      >
+                        Back to Teams
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+              
               return (
                 <TeamSquadPage
                   team={selectedTeam}
                   players={eligiblePlayers}
                   onBack={() => setActiveSection('teams')}
+                  maxPlayers={resolvedMatch?.maxPlayersPerTeam || resolvedMatch?.config?.squadSize?.max || currentMatch?.maxPlayersPerTeam || 12}
                 />
               );
             })()}
@@ -4782,6 +5237,23 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                                 <p className="text-pink-100 font-semibold">{auctioneer.governmentId || 'N/A'}</p>
                               </div>
                               <div className="col-span-3 hud-card rounded-lg p-3">
+                                <p className="text-xs font-bold text-pink-400/50 uppercase mb-2">KYC Document</p>
+                                {auctioneer.governmentIdFile ? (
+                                  <a
+                                    href={auctioneer.governmentIdFile}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500/20 to-purple-500/20 hover:from-blue-500/30 hover:to-purple-500/30 border border-blue-500/40 hover:border-blue-400/60 text-blue-300 hover:text-blue-200 rounded-lg font-semibold text-sm transition-all"
+                                    style={{ boxShadow: '0 0 15px rgba(59, 130, 246, 0.2)' }}
+                                  >
+                                    <FileText size={16} />
+                                    View Document
+                                  </a>
+                                ) : (
+                                  <span className="text-pink-400/60 text-sm font-semibold">No document uploaded</span>
+                                )}
+                              </div>
+                              <div className="col-span-3 hud-card rounded-lg p-3">
                                 <p className="text-xs font-bold text-pink-400/50 uppercase mb-2">Languages Known</p>
                                 <div className="flex flex-wrap gap-2">
                                   {auctioneer.languages && auctioneer.languages.length > 0 ? (
@@ -4906,34 +5378,6 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
             {/* 6️⃣ LIVE MONITOR */}
             {activeSection === 'liveMonitor' && (
               <div className="animate-in fade-in duration-500">
-                {/* Live Notifications - Floating at top */}
-                <div className="fixed top-20 right-6 z-50 space-y-3 max-w-md">
-                  {liveNotifications.map((notification) => (
-                    <div
-                      key={notification.id}
-                      className={`animate-in slide-in-from-right duration-300 shadow-2xl rounded-xl overflow-hidden ${
-                        notification.type === 'bid' ? 'bg-gradient-to-r from-blue-500 to-cyan-600' :
-                        notification.type === 'sold' ? 'bg-gradient-to-r from-green-500 to-emerald-600' :
-                        notification.type === 'unsold' ? 'bg-gradient-to-r from-gray-500 to-slate-600' :
-                        notification.type === 'start' ? 'bg-gradient-to-r from-orange-500 to-red-600' :
-                        'bg-gradient-to-r from-purple-500 to-indigo-600'
-                      }`}
-                    >
-                      <div className="p-3 flex items-center gap-3">
-                        <div className="flex-1">
-                          <p className="text-white font-bold text-sm">{notification.message}</p>
-                        </div>
-                        <button
-                          onClick={() => removeLiveNotification(notification.id)}
-                          className="flex-shrink-0 w-6 h-6 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-all"
-                        >
-                          <X size={14} className="text-white" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
                 <div className="grid grid-cols-12 gap-3 h-[calc(100vh-130px)]">
                   {/* Left: Live Auction Display */}
                   <div className="col-span-8 h-full">
@@ -4977,7 +5421,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                             </div>
 
                             {/* Base Price */}
-                            <p className="text-pink-400/60 text-xs">Base Price: ₹{(currentBiddingPlayer.basePrice / 100000).toFixed(1)}L</p>
+                            <p className="text-pink-400/60 text-xs">Base Price: {fmtCurrency(currentBiddingPlayer.basePrice)}</p>
                           </div>
                         ) : (
                           <div className="text-center">
@@ -5115,23 +5559,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
             userRole={UserRole.ADMIN}
             onClose={() => setActiveSection('overview')}
           />
-          <button
-            onClick={() => setActiveSection('overview')}
-            className="absolute top-4 left-4 z-10 flex items-center gap-2.5 px-6 py-3 rounded-xl text-white font-black text-sm transition-all hover:scale-105"
-            style={{
-              background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.7), rgba(249, 115, 22, 0.6))',
-              border: '1px solid rgba(255, 0, 102, 0.4)',
-              backdropFilter: 'blur(8px)',
-              boxShadow: '0 4px 20px rgba(255, 0, 102, 0.3)',
-            }}
-          >
-            <ArrowLeft size={20} />
-            Back to Dashboard
-          </button>
         </div>
       )}
 
-      {/* CONFIRMATION MODAL \u2014 HUD Popup */}
+
+
+      {/* CONFIRMATION MODAL – HUD Popup */}
       {showConfirmation && confirmAction && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4">
           <div className="hud-card rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in zoom-in duration-200 cyber-glow gradient-border">

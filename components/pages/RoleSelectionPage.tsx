@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Gavel, Users, User, ArrowLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { Gavel, Users, User, ArrowLeft, ChevronRight, Link2, Check, Copy } from 'lucide-react';
 import { AuctionStatus, UserRole, MatchData, SportData } from '../../types';
 import { NeonPageWrapper, GlassCard, NeonButton, NeonDesignStyles } from '../ui/NeonDesignSystem';
 
@@ -8,15 +8,68 @@ interface RoleSelectionPageProps {
   selectedMatch: MatchData | null;
   selectedSport: SportData | null;
   onRoleSelected: (role: UserRole) => void;
+  matchId?: string; // For copy link functionality
 }
 
 export const RoleSelectionPage: React.FC<RoleSelectionPageProps> = ({
   setStatus,
   selectedMatch,
   selectedSport,
-  onRoleSelected
+  onRoleSelected,
+  matchId
 }) => {
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
+  const [copiedRole, setCopiedRole] = useState<UserRole | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Get the matchId from props or from selectedMatch
+  const effectiveMatchId = matchId || selectedMatch?.id;
+
+  // Copy registration link to clipboard
+  const copyRegistrationLink = useCallback(async (role: UserRole, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent card selection
+    
+    if (!effectiveMatchId) {
+      setToastMessage('No match selected');
+      setTimeout(() => setToastMessage(null), 3000);
+      return;
+    }
+
+    const rolePathMap: Record<UserRole, string> = {
+      [UserRole.AUCTIONEER]: 'auctioneer',
+      [UserRole.TEAM_REP]: 'team',
+      [UserRole.PLAYER]: 'player',
+      [UserRole.ADMIN]: 'admin',
+      [UserRole.GUEST]: 'guest'
+    };
+
+    const rolePath = rolePathMap[role];
+    if (!rolePath || role === UserRole.ADMIN || role === UserRole.GUEST) return;
+
+    const baseUrl = window.location.origin;
+    const registrationUrl = `${baseUrl}/register/${rolePath}/${effectiveMatchId}`;
+    
+    // Create share text with match name
+    const matchName = selectedMatch?.name || 'this auction';
+    const roleLabel = role === UserRole.AUCTIONEER ? 'an Auctioneer' 
+      : role === UserRole.TEAM_REP ? 'a Team' 
+      : 'a Player';
+    const shareText = `Register as ${roleLabel} for ${matchName}\n${registrationUrl}`;
+
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setCopiedRole(role);
+      setToastMessage(`Registration link copied — ready to share!`);
+      setTimeout(() => {
+        setCopiedRole(null);
+        setToastMessage(null);
+      }, 3000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      setToastMessage('Failed to copy link');
+      setTimeout(() => setToastMessage(null), 3000);
+    }
+  }, [effectiveMatchId, selectedMatch?.name]);
 
   const roles = [
     {
@@ -105,10 +158,10 @@ export const RoleSelectionPage: React.FC<RoleSelectionPageProps> = ({
             const isSelected = selectedRole === role.id;
             
             return (
-              <button
+              <div
                 key={role.id}
                 onClick={() => setSelectedRole(role.id)}
-                className={`rounded-2xl px-4 py-4 border-2 transition-all text-left ${
+                className={`rounded-2xl px-4 py-4 border-2 transition-all text-left cursor-pointer ${
                   isSelected
                     ? 'shadow-2xl scale-105'
                     : 'hover:shadow-lg'
@@ -148,7 +201,33 @@ export const RoleSelectionPage: React.FC<RoleSelectionPageProps> = ({
                     <span className="text-xs font-black uppercase text-pink-400 tracking-wider">Selected</span>
                   </div>
                 )}
-              </button>
+
+                {/* Copy Link Button */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    copyRegistrationLink(role.id, e);
+                  }}
+                  className={`mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                    copiedRole === role.id
+                      ? 'bg-green-500/20 text-green-400 border border-green-500/40'
+                      : 'bg-pink-500/10 text-pink-400 border border-pink-500/30 hover:bg-pink-500/20 hover:border-pink-500/50'
+                  }`}
+                >
+                  {copiedRole === role.id ? (
+                    <>
+                      <Check size={14} />
+                      Copied!
+                    </>
+                  ) : (
+                    <>
+                      <Copy size={14} />
+                      Copy Registration Link
+                    </>
+                  )}
+                </button>
+              </div>
             );
           })}
         </div>
@@ -193,6 +272,16 @@ export const RoleSelectionPage: React.FC<RoleSelectionPageProps> = ({
           </a>
         </p>
       </div>
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 animate-fade-in">
+          <div className="flex items-center gap-2 px-5 py-3 rounded-xl bg-green-500/20 border border-green-500/40 text-green-400 font-semibold text-sm shadow-lg backdrop-blur-sm">
+            <Check size={18} />
+            <span>{toastMessage}</span>
+          </div>
+        </div>
+      )}
     </NeonPageWrapper>
   );
 };

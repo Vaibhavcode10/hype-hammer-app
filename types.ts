@@ -132,6 +132,7 @@ export enum AuctionStatus {
   // Role-based Dashboards
   ADMIN_DASHBOARD = 'ADMIN_DASHBOARD',
   AUCTIONEER_DASHBOARD = 'AUCTIONEER_DASHBOARD',
+  AUCTIONEER_PENDING_APPROVAL = 'AUCTIONEER_PENDING_APPROVAL',
   TEAM_REP_DASHBOARD = 'TEAM_REP_DASHBOARD',
   GUEST_DASHBOARD = 'GUEST_DASHBOARD'
 }
@@ -194,6 +195,9 @@ export interface Player {
   experienceLevel?: string;
   playerCategory?: string;
   previousTeams?: string;
+  // Government ID fields
+  governmentId?: string;
+  governmentIdURL?: string;
 }
 
 export interface Team {
@@ -213,6 +217,9 @@ export interface Team {
   foundationYear?: number;
   repName?: string; // Team representative name
   initialBudget?: number; // Alternative budget field name
+  // Government ID fields
+  governmentId?: string;
+  governmentIdURL?: string;
 }
 
 export interface Bid {
@@ -271,7 +278,7 @@ export interface MatchData {
   // Becomes IMMUTABLE after first team registers
   matchSettings?: {
     pursePerTeam: number;
-    playersPerTeam: number;
+    maxPlayersPerTeam: number;
     numberOfTeams: number;
     avgPlayerValue: number;
     maxBasePrice: number;
@@ -281,6 +288,19 @@ export interface MatchData {
     lockedReason?: string;
     createdAt?: string;
   };
+  
+  // ─── BID CONFIG (Multi-Increment Bidding) ───────────────────────────────
+  // Configurable before auction starts, locked when ONGOING
+  // Can be edited from Live Room (recovery mode) even when locked
+  bidConfig?: BidConfig;
+  
+  // ─── CURRENCY DISPLAY CONFIG ───────────────────────────────────────────
+  // Display format for monetary values (K, L, Cr)
+  // Changeable anytime - affects UI only, not stored values
+  currencyUnit?: CurrencyUnit;
+  
+  // Legacy field - for backward compatibility with old matches
+  bidIncrement?: number;
   
   // System tracking
   updatedAt?: string;
@@ -344,6 +364,25 @@ export interface BidIncrement {
   label: string;
   value: number;
 }
+
+/**
+ * BidConfig - Per-match configurable bid increments
+ * Stored in match document, locked when auction starts
+ */
+export interface BidConfig {
+  increments: number[];     // 4 predefined bid increment amounts (in paise/cents)
+  custom?: number | null;   // Optional custom increment amount (null when not set)
+  isLocked: boolean;        // True when auction is ONGOING (editable from Live Room)
+  updatedAt?: string;       // Last modification timestamp
+  updatedBy?: string;       // User ID who last updated
+}
+
+/**
+ * CurrencyUnit - Display format for monetary values
+ * Stored in match document, changeable anytime by auctioneer
+ * Affects display only - raw values always stored in DB
+ */
+export type CurrencyUnit = 'K' | 'L' | 'Cr';
 
 export interface AuctioneerControls {
   canStartBidding: boolean;

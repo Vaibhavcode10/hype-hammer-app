@@ -133,17 +133,29 @@ const MarketplacePageComponent: React.FC<MarketplacePageProps> = ({
 
       {/* Action Buttons */}
       <div className="space-y-3">
-        <NeonButton
-          fullWidth
-          variant="primary"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelectMatch(match.sportType, match.id);
-          }}
-        >
-          <UserPlus className="w-4 h-4" />
-          Apply for Auction
-        </NeonButton>
+        {match.status === 'COMPLETED' || match.status === 'ONGOING' ? (
+          <NeonButton
+            fullWidth
+            variant="primary"
+            disabled
+            style={{ background: '#444', color: '#bbb', cursor: 'not-allowed', opacity: 0.6 }}
+          >
+            <UserPlus className="w-4 h-4" />
+            Apply for Auction
+          </NeonButton>
+        ) : (
+          <NeonButton
+            fullWidth
+            variant="primary"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectMatch(match.sportType, match.id);
+            }}
+          >
+            <UserPlus className="w-4 h-4" />
+            Apply for Auction
+          </NeonButton>
+        )}
         {match.status === 'COMPLETED' ? (
           <NeonButton
             fullWidth

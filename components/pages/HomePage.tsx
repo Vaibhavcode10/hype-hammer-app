@@ -14,6 +14,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
   const [loginPassword, setLoginPassword] = useState('');
   const [selectedRole, setSelectedRole] = useState<UserRole>(UserRole.ADMIN);
   const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
 
   // Forgot password state
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -31,6 +32,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
+    setLoginLoading(true);
     
     try {
       // Try Firebase API first
@@ -61,10 +63,15 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
         } else {
           setStatus(AuctionStatus.MARKETPLACE);
         }
+        setLoginLoading(false);
         return;
+      } else {
+        // Firebase returned error - stop loading but continue to fallback
+        setLoginLoading(false);
       }
     } catch (err) {
       console.error('Firebase login error:', err);
+      // Continue to localStorage fallback
     }
 
     // Fallback to localStorage for demo users
@@ -72,6 +79,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
     
     if (!storedUsers) {
       setLoginError('No users found. Please register first or refresh the page to seed demo users.');
+      setLoginLoading(false);
       return;
     }
 
@@ -84,6 +92,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
 
       if (!user) {
         setLoginError('Invalid email or password. Please check your credentials and try again.');
+        setLoginLoading(false);
         return;
       }
 
@@ -95,6 +104,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
       };
       
       setShowLoginModal(false);
+      setLoginLoading(false);
       
       if (onLogin) {
         onLogin(authenticatedUser);
@@ -103,6 +113,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
       }
     } catch (err) {
       setLoginError('Error validating credentials. Please try again.');
+      setLoginLoading(false);
       console.error('Login error:', err);
     }
   };
@@ -509,14 +520,83 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
                     setShowForgotPassword(true);
                   }}
                   className="text-xs font-bold uppercase text-pink-400 hover:text-pink-300 transition-colors"
+                  disabled={loginLoading}
                 >
                   Forgot Password?
                 </button>
               </div>
 
-              <NeonButton type="submit" fullWidth variant="primary">
-                Sign In
-              </NeonButton>
+              {/* Login Button with Premium Loading State */}
+              <button
+                type="submit"
+                disabled={loginLoading}
+                className="relative w-full overflow-hidden rounded-xl py-4 font-black text-sm uppercase tracking-wider transition-all duration-300 disabled:cursor-not-allowed"
+                style={{
+                  background: loginLoading 
+                    ? 'linear-gradient(135deg, rgba(75, 0, 50, 0.9), rgba(50, 0, 35, 0.9))'
+                    : 'linear-gradient(135deg, rgba(255, 0, 102, 0.8), rgba(249, 115, 22, 0.7))',
+                  border: '1px solid rgba(255, 0, 102, 0.5)',
+                  boxShadow: loginLoading 
+                    ? '0 0 20px rgba(255, 0, 102, 0.2)' 
+                    : '0 0 30px rgba(255, 0, 102, 0.4), inset 0 0 20px rgba(255, 0, 102, 0.1)',
+                  color: loginLoading ? 'rgba(255, 200, 220, 0.8)' : 'white'
+                }}
+              >
+                {/* Animated Gradient Sweep for Loading */}
+                {loginLoading && (
+                  <div 
+                    className="absolute inset-0 animate-pulse"
+                    style={{
+                      background: 'linear-gradient(90deg, transparent 0%, rgba(255, 0, 102, 0.3) 50%, transparent 100%)',
+                      animation: 'shimmer 1.5s ease-in-out infinite'
+                    }}
+                  />
+                )}
+                
+                {/* Neon Ring Pulse */}
+                {loginLoading && (
+                  <div 
+                    className="absolute inset-0 rounded-xl"
+                    style={{
+                      border: '2px solid rgba(255, 0, 102, 0.6)',
+                      animation: 'pulse 1.5s ease-in-out infinite'
+                    }}
+                  />
+                )}
+
+                <div className="relative flex items-center justify-center gap-3">
+                  {loginLoading ? (
+                    <>
+                      {/* Glowing Spinner */}
+                      <div className="relative">
+                        <Loader2 
+                          size={20} 
+                          className="animate-spin"
+                          style={{ 
+                            filter: 'drop-shadow(0 0 8px rgba(255, 0, 102, 1))',
+                            color: 'rgba(255, 150, 200, 1)'
+                          }} 
+                        />
+                        {/* Outer glow ring */}
+                        <div 
+                          className="absolute inset-0 rounded-full animate-ping"
+                          style={{
+                            border: '1px solid rgba(255, 0, 102, 0.5)',
+                            animationDuration: '1.5s'
+                          }}
+                        />
+                      </div>
+                      <span style={{ textShadow: '0 0 10px rgba(255, 0, 102, 0.8)' }}>
+                        Authenticating...
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{ textShadow: '0 0 10px rgba(255, 255, 255, 0.3)' }}>
+                      Sign In
+                    </span>
+                  )}
+                </div>
+              </button>
 
               <div className="text-center text-sm text-pink-300/60 mt-4">
                 Don't have an account?{' '}

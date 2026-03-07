@@ -14,6 +14,15 @@ import { socketService } from '../../services/socketService';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
+// ─── Currency Formatting ───────────────────────────────────────────────────
+const fmtCurrency = (value: number) => {
+  const val = value || 0;
+  if (val >= 10000000) return `₹${(val / 10000000).toFixed(1)}Cr`;
+  if (val >= 100000) return `₹${(val / 100000).toFixed(1)}L`;
+  if (val >= 1000) return `₹${(val / 1000).toFixed(1)}K`;
+  return `₹${val}`;
+};
+
 interface GuestDashboardPageProps {
   setStatus: (status: AuctionStatus) => void;
   currentMatch: MatchData;
@@ -21,8 +30,19 @@ interface GuestDashboardPageProps {
 }
 
 export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
-  // Navigation
-  const [activeSection, setActiveSection] = useState<'overview' | 'players' | 'teams' | 'liveRoom' | 'results'>('overview');
+  // 🔄 SESSION PERSISTENCE: Restore liveRoom state on mount
+  const [activeSection, setActiveSection] = useState<'overview' | 'players' | 'teams' | 'liveRoom' | 'results'>(() => {
+    // Check if we were in liveRoom before reload
+    const savedSection = sessionStorage.getItem('hypehammer_guest_section');
+    const savedMatchId = sessionStorage.getItem('hypehammer_guest_match_id');
+    
+    // Only restore if we have a saved liveRoom state for this match
+    if (savedSection === 'liveRoom' && savedMatchId && currentMatch?.id === savedMatchId) {
+      console.log('🔄 Restoring guest to liveRoom after reload');
+      return 'liveRoom';
+    }
+    return 'overview';
+  });
 
   // Data states
   const [teams, setTeams] = useState<Team[]>([]);
@@ -41,6 +61,20 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
 
   // Use the passed currentMatch directly (no resolving needed for guests)
   const activeMatch = currentMatch;
+
+  // 🔄 SESSION PERSISTENCE: Save/clear liveRoom state on section change
+  useEffect(() => {
+    if (activeSection === 'liveRoom' && activeMatch?.id) {
+      // Save session when entering liveRoom
+      sessionStorage.setItem('hypehammer_guest_section', 'liveRoom');
+      sessionStorage.setItem('hypehammer_guest_match_id', activeMatch.id);
+      console.log('💾 Saved guest liveRoom session for match:', activeMatch.id);
+    } else if (activeSection !== 'liveRoom') {
+      // Clear session when explicitly navigating away from liveRoom
+      sessionStorage.removeItem('hypehammer_guest_section');
+      sessionStorage.removeItem('hypehammer_guest_match_id');
+    }
+  }, [activeSection, activeMatch?.id]);
 
   // Scroll to top on section change
   useEffect(() => {
@@ -92,6 +126,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
   };
 
   // Fetch initial data via REST
+  // CRITICAL: Guest views must ONLY see ACCEPTED players and teams
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -100,7 +135,10 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
           return;
         }
         setLoading(true);
-        const matchQuery = `?matchId=${activeMatch.id}`;
+        // CRITICAL: Add approvalStatus=accepted to filter out pending/declined
+        const matchQuery = `?matchId=${activeMatch.id}&approvalStatus=accepted`;
+
+        console.log('📊 GuestDashboard: Fetching APPROVED data only for match:', activeMatch.id);
 
         const [teamsRes, playersRes] = await Promise.all([
           fetch(`${API_BASE}/teams${matchQuery}`),
@@ -109,16 +147,20 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
 
         if (teamsRes.ok) {
           const data = await teamsRes.json();
-          const teamsWithSquadSize = (data.data || []).map((team: Team) => ({
+          const approvedTeams = data.data || [];
+          console.log('📊 GuestDashboard: Approved teams:', approvedTeams.length);
+          const teamsWithSquadSize = approvedTeams.map((team: Team) => ({
             ...team,
-            squadSize: team.playerIds?.length || 0
+            squadSize: team.playerIds?.length || team.players?.length || 0
           }));
           setTeams(teamsWithSquadSize);
         }
 
         if (playersRes.ok) {
           const data = await playersRes.json();
-          setPlayers(data.data || []);
+          const approvedPlayers = data.data || [];
+          console.log('📊 GuestDashboard: Approved players:', approvedPlayers.length);
+          setPlayers(approvedPlayers);
         }
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error);
@@ -130,6 +172,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
   }, [activeMatch?.id]);
 
   // Real-time listeners (socket + Firebase)
+  // CRITICAL: Guest/Spectator must ONLY receive APPROVED entities
   useEffect(() => {
     if (!currentUser?.email || !activeMatch?.id) return;
 
@@ -139,8 +182,11 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
 
     const unsubscribers: (() => void)[] = [];
 
-    // Players real-time
+    // Players real-time - APPROVED ONLY for Guest views
+    // Third parameter = true means only return approved players
     unsubscribers.push(socketService.onPlayersUpdate(seasonId, (updatedPlayers) => {
+      // CRITICAL: Replace state entirely - do not merge with previous data
+      console.log('📊 Guest: Real-time approved players count:', updatedPlayers.length);
       setPlayers(updatedPlayers);
       const livePlayer = updatedPlayers.find((p: any) => p.status === 'LIVE' || p.status === 'PENDING');
       if (livePlayer) {
@@ -154,16 +200,22 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
           setCurrentBiddingPlayer(null);
         }
       }
-    }));
+    }, true)); // approvedOnly = true
 
-    // Teams real-time
+    // Teams real-time - APPROVED ONLY for Guest views
+    // Third parameter = true means only return approved teams
     unsubscribers.push(socketService.onTeamsUpdate(seasonId, (updatedTeams) => {
+      // CRITICAL: Replace state entirely - do not merge with previous data
+      console.log('📊 Guest: Real-time approved teams count:', updatedTeams.length);
+      // Use match config for squad size, fallback to counting players
+      const maxSquad = activeMatch?.maxPlayersPerTeam || activeMatch?.config?.maxSquad || 15;
       const teamsWithSquadSize = updatedTeams.map((team: Team) => ({
         ...team,
-        squadSize: team.playerIds?.length || 0
+        squadSize: team.playerIds?.length || team.players?.length || 0,
+        maxSquad // Include max squad from match config
       }));
       setTeams(teamsWithSquadSize);
-    }));
+    }, true)); // approvedOnly = true
 
     // Bids
     unsubscribers.push(socketService.onNewBid((bidData) => {
@@ -244,35 +296,27 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
   }, [currentUser?.email, activeMatch?.id]);
 
   /**
-   * CRITICAL: Filter to only APPROVED players and teams for auction KPIs
-   * Approved = approvalStatus === 'accepted' OR undefined/null (backwards compatibility)
-   * This ensures guest dashboard shows REAL auction pool counts
+   * CRITICAL: Data is now filtered at source (API + real-time listeners)
+   * Both the initial fetch and real-time updates use approvedOnly=true
+   * No client-side backwards compatibility needed - players/teams state already contains only approved entities
    */
-  const approvedPlayers = useMemo(() => {
-    return players.filter(p => 
-      p.approvalStatus === 'accepted' || 
-      p.approvalStatus === undefined || 
-      p.approvalStatus === null
-    );
-  }, [players]);
+  
+  // Get match config values as single source of truth
+  const maxSquadSize = activeMatch?.maxPlayersPerTeam || activeMatch?.config?.maxSquad || 15;
+  // CRITICAL: Venue must come from match document - use venue field from backend
+  const venue = activeMatch?.venue || '—';
 
-  const approvedTeams = useMemo(() => {
-    return teams.filter(t => 
-      t.approvalStatus === 'accepted' || 
-      t.approvalStatus === undefined || 
-      t.approvalStatus === null
-    );
-  }, [teams]);
+  // KPIs - Direct usage since data is already filtered at source
+  const totalTeams = teams.length;
+  const totalPlayers = players.length;
+  const soldPlayers = players.filter(p => p.status === 'SOLD').length;
 
-  // KPIs - Use approved-only counts for real auction data
-  const totalTeams = approvedTeams.length;
-  const totalPlayers = approvedPlayers.length;
-  const soldPlayers = approvedPlayers.filter(p => p.status === 'SOLD').length;
-
-  // Computed: Check if auction is ended (either from socket or backend status)
+  // Computed: Check if auction is ended - ONLY from backend status, not inferred
+  // Match status: SETUP, ONGOING, COMPLETED
+  // Live status: READY, LIVE, PAUSED, ENDED
   const isAuctionEnded = liveAuctionStatus === 'ENDED' || activeMatch?.status === 'COMPLETED';
-  const totalBudget = approvedTeams.reduce((acc, team) => acc + (team.budget || team.initialBudget || 0), 0);
-  const remainingBudget = approvedTeams.reduce((acc, team) => acc + (team.remainingBudget || team.budget || team.initialBudget || 0), 0);
+  const totalBudget = teams.reduce((acc, team) => acc + (team.budget || team.initialBudget || 0), 0);
+  const remainingBudget = teams.reduce((acc, team) => acc + (team.remainingBudget || team.budget || team.initialBudget || 0), 0);
   const spentBudget = totalBudget - remainingBudget;
 
   // ─────────────────────────────────────── RENDER ────────────────────────────
@@ -745,10 +789,10 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                               </div>
                               <h2 className="text-4xl font-black text-white mb-2">{activeMatch?.name || 'No Active Auction'}</h2>
                               <p className="text-pink-200/60 text-lg">{activeMatch?.year || new Date().getFullYear()} Season</p>
-                              {activeMatch?.place && (
+                              {activeMatch?.venue && (
                                 <p className="text-pink-300/50 text-sm mt-1.5 flex items-center gap-1.5">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-pink-400/60"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                                  {activeMatch.place}
+                                  {activeMatch.venue}
                                 </p>
                               )}
                             </div>
@@ -805,7 +849,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                                     <span className="text-white text-[10px] font-bold tracking-wider uppercase">{currentBiddingPlayer.role || 'PLAYER'}</span>
                                   </div>
                                   <h2 className="text-xl font-black text-white mb-1" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}>{currentBiddingPlayer.name}</h2>
-                                  <p className="text-pink-300 text-xs font-medium">Base Price: ₹{((currentBiddingPlayer.basePrice || 0) / 100000).toFixed(1)}L</p>
+                                  <p className="text-pink-300 text-xs font-medium">Base: {fmtCurrency(currentBiddingPlayer.basePrice)}</p>
                                 </div>
                               </div>
                             </>
@@ -828,7 +872,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                             <h3 className="text-lg font-bold text-white flex items-center gap-2">
                               <Users size={18} className="text-pink-400" />
                               Registered Teams
-                              <span className="text-pink-400/60 text-sm font-normal">({approvedTeams.length})</span>
+                              <span className="text-pink-400/60 text-sm font-normal">({teams.length})</span>
                             </h3>
                             <button
                               onClick={() => setActiveSection('teams')}
@@ -838,9 +882,9 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                             </button>
                           </div>
 
-                          {approvedTeams.length > 0 ? (
+                          {teams.length > 0 ? (
                             <div className="grid grid-cols-2 gap-4">
-                              {approvedTeams.slice(0, 4).map((team) => (
+                              {teams.slice(0, 4).map((team) => (
                                 <div key={team.id} className="team-card glass-card rounded-2xl p-3 transition-all duration-300 cursor-pointer group border border-pink-500/10 hover:border-pink-500/30">
                                   <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-pink-500/20 to-red-600/20 flex items-center justify-center overflow-hidden border border-pink-500/20 flex-shrink-0">
@@ -931,7 +975,7 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                             </div>
                             Registered Players
                             <span className="text-pink-400/60 text-sm font-normal ml-2">
-                              ({approvedPlayers.length} total)
+                              ({players.length} total)
                             </span>
                           </h3>
                           <button
@@ -943,9 +987,9 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                           </button>
                         </div>
 
-                        {approvedPlayers.length > 0 ? (
+                        {players.length > 0 ? (
                           <div className="grid grid-cols-6 gap-4">
-                            {approvedPlayers.slice(0, 12).map((player, idx) => (
+                            {players.slice(0, 12).map((player, idx) => (
                               <div key={player.id || idx} className="player-card glass-card rounded-2xl p-4 transition-all duration-300 cursor-pointer group text-center">
                                 <div className="relative w-20 h-20 mx-auto mb-3">
                                   <div className="w-full h-full rounded-full bg-gradient-to-br from-pink-500/20 to-red-600/20 flex items-center justify-center overflow-hidden border-2 border-pink-500/30 group-hover:border-pink-500/60 transition-all">
@@ -1032,19 +1076,6 @@ export const GuestDashboardPage: React.FC<GuestDashboardPageProps> = ({ setStatu
                 userRole={UserRole.GUEST}
                 onClose={() => setActiveSection('overview')}
               />
-              <button
-                onClick={() => setActiveSection('overview')}
-                className="absolute top-4 left-4 z-10 flex items-center gap-2.5 px-6 py-3 rounded-xl text-white font-black text-sm transition-all hover:scale-105"
-                style={{
-                  background: 'linear-gradient(135deg, rgba(255, 0, 102, 0.7), rgba(249, 115, 22, 0.6))',
-                  border: '1px solid rgba(255, 0, 102, 0.4)',
-                  backdropFilter: 'blur(8px)',
-                  boxShadow: '0 4px 20px rgba(255, 0, 102, 0.3)',
-                }}
-              >
-                <ArrowLeft size={20} />
-                Back to Dashboard
-              </button>
             </div>
           )}
         </>

@@ -1,20 +1,26 @@
 /**
- * Cloud Function File Upload Service
- * Handles file uploads to Firebase via Cloud Functions API
- * 
+ * Legacy Cloud Function File Upload Service (COMPAT LAYER)
+ *
+ * IMPORTANT:
+ * Firebase Cloud Functions upload routes `/auction/upload/*` have been disabled in production.
+ * This module now uploads directly to Firebase Storage from the frontend, while preserving the
+ * existing function signatures so older pages don’t break.
+ *
  * Storage Structure (Match-Based):
  * When matchName is provided, files are organized under:
- *   {MatchName}/Players/   - Player photos
- *   {MatchName}/Teams/     - Team logos
- *   {MatchName}/Documents/ - PDFs and documents
- *   {MatchName}/Auctioneers/ - Auctioneer photos
- *   {MatchName}/Recordings/ - Auction recordings
- *   {MatchName}/Replays/   - Auction replays
- *   {MatchName}/Highlights/ - Match highlights
- *   {MatchName}/Profiles/  - Profile pictures
+ *   {MatchName}/Players/      - Player photos
+ *   {MatchName}/Teams/        - Team logos
+ *   {MatchName}/Documents/*   - PDFs and documents
+ *   {MatchName}/Auctioneers/  - Auctioneer photos
+ *   {MatchName}/Recordings/   - Auction recordings
+ *   {MatchName}/Replays/      - Auction replays
+ *   {MatchName}/Highlights/   - Match highlights
+ *   {MatchName}/Profiles/     - Profile pictures
  */
 
-// Get Cloud Function URL from window (set in index.tsx) or use default
+import { STORAGE_FOLDERS, uploadFileToStorage } from './firebaseStorageService';
+
+// Kept for backward compatibility/debugging only
 function getCloudFunctionBaseURL(): string {
   if (typeof window !== 'undefined' && (window as any).__CLOUD_FUNCTION_URL__) {
     return (window as any).__CLOUD_FUNCTION_URL__;
@@ -22,20 +28,49 @@ function getCloudFunctionBaseURL(): string {
   return 'https://us-central1-axilam.cloudfunctions.net/auction';
 }
 
-const CLOUD_FUNCTION_URL = getCloudFunctionBaseURL();
-
-interface UploadResponse {
-  success: boolean;
-  url?: string;
-  filename?: string;
-  fileType?: string;
-  uploadedAt?: string;
-  error?: string;
-}
-
 interface UploadOptions {
   onProgress?: (progress: number) => void;
   matchName?: string;  // Match/Season name for folder organization (e.g., 'WPL', 'IPL 2026')
+}
+
+const UPLOAD_TYPE_TO_FOLDER: Record<string, string> = {
+  'player-photo': STORAGE_FOLDERS.PLAYER_PHOTOS,
+  'team-logo': STORAGE_FOLDERS.TEAM_LOGOS,
+  'profile-picture': STORAGE_FOLDERS.USER_PROFILES,
+  'auctioneer-photo': STORAGE_FOLDERS.AUCTIONEERS,
+  'auction-recording': STORAGE_FOLDERS.AUCTION_RECORDINGS,
+  'auction-replay': STORAGE_FOLDERS.AUCTION_REPLAYS,
+  'match-highlight': STORAGE_FOLDERS.MATCH_HIGHLIGHTS,
+  // Documents are handled specially because they can have subfolders/types
+  document: STORAGE_FOLDERS.DOCUMENTS,
+};
+
+function sanitizeFileNamePart(value: string): string {
+  return (value || '')
+    .replace(/\s+/g, '_')
+    .replace(/[^a-zA-Z0-9._-]/g, '')
+    .slice(0, 120);
+}
+
+function buildDefaultFileName(uploadType: string, file: File): string {
+  const ts = Date.now();
+  const safeOriginal = sanitizeFileNamePart(file.name || 'file');
+  const safeType = sanitizeFileNamePart(uploadType || 'upload');
+  return `${safeType}_${ts}_${safeOriginal}`;
+}
+
+function resolveStorageTarget(uploadType: string): { folder: string; fileName: string } {
+  // If uploadType is a typed document path like `document:OrganizerProof`, preserve it
+  const [baseTypeRaw, subTypeRaw] = (uploadType || '').split(':');
+  const baseType = baseTypeRaw || uploadType;
+
+  if (baseType === 'document' && subTypeRaw) {
+    const safeSubType = sanitizeFileNamePart(subTypeRaw);
+    return { folder: `${STORAGE_FOLDERS.DOCUMENTS}/${safeSubType}`, fileName: '' };
+  }
+
+  const folder = UPLOAD_TYPE_TO_FOLDER[uploadType] || UPLOAD_TYPE_TO_FOLDER[baseType] || STORAGE_FOLDERS.DOCUMENTS;
+  return { folder, fileName: '' };
 }
 
 /**
@@ -183,72 +218,22 @@ export async function uploadFileViaAPI(
       throw new Error('No upload type specified');
     }
 
-    console.log(`📤 Starting upload: ${file.name} (type: ${uploadType}${matchName ? `, match: ${matchName}` : ''})`);
+    // Direct-to-Storage upload (Cloud Function upload routes are disabled in production)
+    const target = resolveStorageTarget(uploadType);
+    const fileName = target.fileName || buildDefaultFileName(uploadType, file);
 
-    // Create FormData
-    const formData = new FormData();
-    formData.append('file', file);
+    console.log(
+      `📤 Uploading directly to Firebase Storage: ${file.name} (type: ${uploadType}${matchName ? `, match: ${matchName}` : ''})`
+    );
 
-    // Build API URL with matchName query param if provided
-    let apiUrl = `${CLOUD_FUNCTION_URL}/upload/${uploadType}`;
-    if (matchName) {
-      const encodedMatchName = encodeURIComponent(matchName);
-      apiUrl += `?matchName=${encodedMatchName}`;
-    }
-    console.log(`📍 API Endpoint: ${apiUrl}`);
-
-    // Create XMLHttpRequest for progress tracking
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-
-      // Track upload progress
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable && onProgress) {
-          const percentComplete = (event.loaded / event.total) * 100;
-          console.log(`⏳ Upload progress: ${percentComplete.toFixed(2)}%`);
-          onProgress(percentComplete);
-        }
-      });
-
-      // Handle completion
-      xhr.addEventListener('load', () => {
-        if (xhr.status === 200) {
-          try {
-            const response = JSON.parse(xhr.responseText);
-            
-            if (response.success && response.url) {
-              console.log(`✅ Upload successful: ${response.url}`);
-              onProgress?.(100);
-              resolve(response.url);
-            } else {
-              reject(new Error(response.error || 'Upload failed'));
-            }
-          } catch (e) {
-            reject(new Error('Invalid response from server'));
-          }
-        } else {
-          try {
-            const error = JSON.parse(xhr.responseText);
-            reject(new Error(error.error || `Upload failed with status ${xhr.status}`));
-          } catch (e) {
-            reject(new Error(`Upload failed with status ${xhr.status}`));
-          }
-        }
-      });
-
-      // Handle errors
-      xhr.addEventListener('error', () => {
-        reject(new Error('Network error during upload'));
-      });
-
-      xhr.addEventListener('abort', () => {
-        reject(new Error('Upload aborted'));
-      });
-
-      // Send request
-      xhr.open('POST', apiUrl);
-      xhr.send(formData);
+    const downloadURL = await uploadFileToStorage(file, target.folder, fileName, matchName, (p) => {
+      if (!onProgress) return;
+      // Mirror old behavior (percent 0-100)
+      onProgress(Math.max(0, Math.min(100, p)));
     });
+
+    console.log(`✅ Upload successful: ${downloadURL}`);
+    return downloadURL;
   } catch (error) {
     console.error('❌ Upload error:', error);
     throw error instanceof Error ? error : new Error(String(error));

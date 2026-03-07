@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Trophy, Building2, Calendar, MapPin, Users, DollarSign, Upload, ArrowLeft, CheckCircle, AlertCircle, User, Shield } from 'lucide-react';
 import { AuctionStatus, SportType } from '../../types';
-import { uploadProfilePictureViaAPI, uploadDocumentViaAPI } from '../../services/cloudFunctionUploadService';
+import { uploadProfilePicture, uploadDocument } from '../../services/firebaseStorageService';
 import { PhoneOtpVerification } from '../ui/PhoneOtpVerification';
 import { NeonDesignStyles, GlassCard, NeonButton, GradientHeading, NeonPageWrapper, NeonInput } from '../ui/NeonDesignSystem';
 
@@ -80,9 +80,9 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
 
-  const handleInputChange = (field: keyof AdminFormData, value: any) => {
+  const handleInputChange = useCallback((field: keyof AdminFormData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-  };
+  }, []);
 
   const handleFileChange = (field: 'governmentIdFile' | 'organizerProof', file: File | null) => {
     if (file) {
@@ -101,13 +101,9 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
     try {
       // Use season name as match name, with organization name as fallback
       const matchName = formData.seasonName || formData.organizationName || 'AdminOrganizer';
-      const photoURL = await uploadProfilePictureViaAPI(file, {
-        onProgress: (progress) => {
-          setUploadProgress(prev => ({ ...prev, photo: progress }));
-        },
-        matchName
-      });
+      const photoURL = await uploadProfilePicture(file, `admin_${Date.now()}`, matchName);
       setFormData(prev => ({ ...prev, profilePhotoURL: photoURL }));
+      setUploadProgress(prev => ({ ...prev, photo: 100 }));
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Photo upload failed';
       setUploadErrors(prev => [...prev, `Photo: ${msg}`]);
@@ -128,13 +124,9 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
     try {
       // Use season name as match name, with organization name as fallback
       const matchName = formData.seasonName || formData.organizationName || 'AdminOrganizer';
-      const docURL = await uploadDocumentViaAPI(file, {
-        onProgress: (progress) => {
-          setUploadProgress(prev => ({ ...prev, govId: progress }));
-        },
-        matchName
-      });
+      const docURL = await uploadDocument(file, 'GovernmentID', `govid_${Date.now()}`, matchName);
       setFormData(prev => ({ ...prev, governmentIdURL: docURL }));
+      setUploadProgress(prev => ({ ...prev, govId: 100 }));
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Document upload failed';
       setUploadErrors(prev => [...prev, `Gov ID: ${msg}`]);
@@ -155,13 +147,9 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
     try {
       // Use season name as match name, with organization name as fallback
       const matchName = formData.seasonName || formData.organizationName || 'AdminOrganizer';
-      const docURL = await uploadDocumentViaAPI(file, {
-        onProgress: (progress) => {
-          setUploadProgress(prev => ({ ...prev, proof: progress }));
-        },
-        matchName
-      });
+      const docURL = await uploadDocument(file, 'OrganizerProof', `proof_${Date.now()}`, matchName);
       setFormData(prev => ({ ...prev, organizerProofURL: docURL }));
+      setUploadProgress(prev => ({ ...prev, proof: 100 }));
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Document upload failed';
       setUploadErrors(prev => [...prev, `Proof: ${msg}`]);
@@ -182,10 +170,15 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
       return false;
     }
     
+    // ✅ Validate auction configuration
+    const auctionConfigValid = !!(formData.maxTeams && formData.maxTeams >= 2 && 
+                                   formData.maxPlayersPerTeam && formData.maxPlayersPerTeam >= 1 && 
+                                   formData.baseBudgetPerTeam && formData.baseBudgetPerTeam > 0);
+    
     const personalValid = !!(formData.fullName && formData.email && formData.phone && formData.password && formData.organizationName && formData.organizerType && formData.designation && phoneVerified && passwordOk);
     const seasonValid = !!(formData.seasonName && formData.sportType && formData.auctionDateTime && formData.venueMode);
     const verificationValid = !!(formData.governmentId);
-    return personalValid && seasonValid && verificationValid;
+    return personalValid && seasonValid && verificationValid && auctionConfigValid;
   };
 
   // Calculate form completion percentage
@@ -213,44 +206,108 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
+    // ─── START OF SUBMIT HANDLER ───
+    console.log('🚀 [SUBMIT] CREATE SEASON button handler triggered');
+    
     e.preventDefault();
-    if (isFormValid()) {
-      try {
-        // Log all form fields before submission
-        console.log('=' .repeat(80));
-        console.log('📋 ADMIN REGISTRATION FORM SUBMISSION');
-        console.log('=' .repeat(80));
-        console.log(`📦 Total fields in form: ${Object.keys(formData).length}`);
-        console.log(`📋 Form fields:`);
-        Object.entries(formData).forEach(([key, value]) => {
-          if (typeof value === 'object' && value instanceof File) {
-            console.log(`   ${key}: File (${value.name})`);
-          } else if (typeof value === 'object' && value !== null) {
-            console.log(`   ${key}: ${typeof value} = ${JSON.stringify(value)}`);
-          } else {
-            console.log(`   ${key}: ${typeof value} = ${value}`);
-          }
-        });
-        console.log('=' .repeat(80));
-        
-        // Show loading state
-        setShowSuccessModal(false);
-        
-        // Call registration (include phoneVerified flag in payload)
-        await onRegisterAdmin({ ...formData, phoneVerified: true });
-        
-        // Show success modal - onRegisterAdmin doesn't throw if successful
-        setShowSuccessModal(true);
-        
-        // Auto-redirect after 2 seconds
-        setTimeout(() => {
-          setStatus(AuctionStatus.ADMIN_DASHBOARD);
-        }, 2000);
-      } catch (error) {
-        // Error was already handled in onRegisterAdmin with alert
-        console.error('Registration failed:', error);
-        setShowSuccessModal(false);
+    
+    // Check if form is valid
+    if (!isFormValid()) {
+      console.error('❌ [VALIDATION] Form validation failed');
+      console.log('📋 Validation failures:');
+      
+      // Show validation errors instead of silently returning
+      const errors: string[] = [];
+      
+      // Check personal details
+      if (!formData.fullName) errors.push('Full Name is required');
+      if (!formData.email) errors.push('Email is required');
+      if (!formData.phone) errors.push('Phone is required');
+      if (!phoneVerified) errors.push('Phone verification is required');
+      if (!formData.password) errors.push('Password is required');
+      if (!passwordOk) errors.push('Passwords do not match');
+      
+      // Check organization details
+      if (!formData.organizationName) errors.push('Organization Name is required');
+      if (!formData.organizerType) errors.push('Organizer Type is required');
+      if (formData.organizerType === 'Other' && !formData.organizerTypeOther?.trim()) {
+        errors.push('Please enter organizer type for "Other"');
       }
+      if (!formData.designation) errors.push('Designation is required');
+      
+      // Check season details
+      if (!formData.seasonName) errors.push('Season/Match Name is required');
+      if (!formData.sportType) errors.push('Sport Type is required');
+      if (formData.sportType === 'Custom' && !formData.sportTypeCustom?.trim()) {
+        errors.push('Please enter sport name for "Custom"');
+      }
+      if (!formData.auctionDateTime) errors.push('Auction Date is required');
+      if (!formData.venueMode) errors.push('Venue Mode is required');
+      
+      // Check verification
+      if (!formData.governmentId) errors.push('Government ID is required');
+      
+      // Check auction configuration
+      if (!formData.maxTeams || formData.maxTeams < 2) errors.push('Teams must be at least 2');
+      if (!formData.maxPlayersPerTeam || formData.maxPlayersPerTeam < 1) errors.push('Players per team must be at least 1');
+      if (!formData.baseBudgetPerTeam || formData.baseBudgetPerTeam <= 0) errors.push('Budget per team must be greater than 0');
+      
+      errors.forEach(error => console.log(`   • ${error}`));
+      console.log('=' .repeat(80));
+      
+      // Show validation errors to user
+      setUploadErrors(errors);
+      return;
+    }
+    
+    console.log('✅ [VALIDATION] Form validation passed');
+    
+    try {
+      // Log all form fields before submission
+      console.log('=' .repeat(80));
+      console.log('📋 ADMIN REGISTRATION FORM SUBMISSION');
+      console.log('=' .repeat(80));
+      console.log(`📦 Total fields in form: ${Object.keys(formData).length}`);
+      console.log(`📋 Form fields:`);
+      Object.entries(formData).forEach(([key, value]) => {
+        if (typeof value === 'object' && value instanceof File) {
+          console.log(`   ${key}: File (${value.name})`);
+        } else if (typeof value === 'object' && value !== null) {
+          console.log(`   ${key}: ${typeof value} = ${JSON.stringify(value)}`);
+        } else {
+          console.log(`   ${key}: ${typeof value} = ${value}`);
+        }
+      });
+      console.log('=' .repeat(80));
+      
+      // Show loading state
+      setShowSuccessModal(false);
+      setUploadErrors([]);
+      
+      // Log before calling the API
+      console.log('📡 [API] Calling createSeason API with admin registration data...');
+      console.log(`   Season: "${formData.seasonName}"`);
+      console.log(`   Organization: "${formData.organizationName}"`);
+      console.log(`   Admin Email: "${formData.email}"`);
+      
+      // Call registration (include phoneVerified flag in payload)
+      await onRegisterAdmin({ ...formData, phoneVerified: true });
+      
+      console.log('✅ [API] createSeason API call successful');
+      
+      // Show success modal - onRegisterAdmin doesn't throw if successful
+      setShowSuccessModal(true);
+      
+      // Auto-redirect after 2 seconds
+      setTimeout(() => {
+        setStatus(AuctionStatus.ADMIN_DASHBOARD);
+      }, 2000);
+    } catch (error) {
+      // Error was already handled in onRegisterAdmin with alert
+      console.error('❌ [API] Registration API call failed:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      setUploadErrors([`Registration failed: ${errorMsg}`]);
+      setShowSuccessModal(false);
     }
   };
 
@@ -332,7 +389,16 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                   </label>
                   <div className="w-28 h-28 mx-auto mb-3 rounded-xl border-2 border-dashed flex items-center justify-center overflow-hidden" style={{ borderColor: 'rgba(255, 0, 102, 0.4)', background: 'rgba(255, 0, 102, 0.05)' }}>
                     {formData.profilePhotoURL ? (
-                      <img src={formData.profilePhotoURL} alt="Profile" className="w-full h-full object-cover" />
+                      <img 
+                        src={formData.profilePhotoURL} 
+                        alt="Profile" 
+                        className="w-full h-full object-cover" 
+                        crossOrigin="anonymous"
+                        onError={(e) => {
+                          console.error('❌ Failed to load profile image:', formData.profilePhotoURL);
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
                     ) : (
                       <div className="text-center text-pink-400/60">
                         <Upload size={20} className="mx-auto mb-1" />
@@ -404,7 +470,6 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                     setPhone={(v) => handleInputChange('phone', v)}
                     phoneVerified={phoneVerified}
                     setPhoneVerified={setPhoneVerified}
-                    containerId="recaptcha-admin"
                     compact
                   />
                 </div>
@@ -830,7 +895,7 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
           {/* ════════════════════════════════════════════════════════════════════ */}
           <div className="mt-8 flex justify-center">
             <NeonButton
-              onClick={() => {}}
+              type="submit"
               disabled={!isFormValid()}
               className="px-12 py-2.5 uppercase tracking-wide font-black"
             >

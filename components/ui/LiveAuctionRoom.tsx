@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { 
   Timer, Users, Gavel, Mic, MicOff, Play, Pause, Square, 
   TrendingUp, DollarSign, Clock, AlertCircle, CheckCircle2, ArrowLeft, XCircle,
@@ -11,8 +11,10 @@ import {
   Player, 
   Team,
   LiveRoomPermissions,
-  BidHistoryItem 
+  BidHistoryItem,
+  BidConfig 
 } from '../../types';
+import { generateBidButtons } from '../../services/matchConfigService';
 import { isValidImageUrl, createImageErrorHandler } from '../../services/imageUrlValidator';
 
 interface LiveAuctionRoomProps {
@@ -35,6 +37,9 @@ interface LiveAuctionRoomProps {
   // Audio state
   auctioneerMicOn: boolean;
   audioStream?: MediaStream;
+  
+  // Bid config (dynamic increments)
+  bidConfig?: BidConfig;
   
   // Action handlers
   onStartBidding?: (playerId: string, basePrice: number) => void;
@@ -68,6 +73,7 @@ export const LiveAuctionRoom: React.FC<LiveAuctionRoomProps> = ({
   remainingSeconds,
   auctioneerMicOn,
   audioStream,
+  bidConfig,
   onStartBidding,
   onCloseBidding,
   onPlaceBid,
@@ -92,14 +98,8 @@ export const LiveAuctionRoom: React.FC<LiveAuctionRoomProps> = ({
     }
   }, [auctionState?.currentBid]);
 
-  // Bid increments (controlled, not typed)
-  const bidIncrements = [
-    { label: '+1L', value: 100000 },
-    { label: '+5L', value: 500000 },
-    { label: '+10L', value: 1000000 },
-    { label: '+25L', value: 2500000 },
-    { label: '+50L', value: 5000000 }
-  ];
+  // Bid increments (from bidConfig or defaults)
+  const bidIncrements = useMemo(() => generateBidButtons(bidConfig), [bidConfig]);
 
   // Format currency
   const formatCurrency = (amount: number): string => {

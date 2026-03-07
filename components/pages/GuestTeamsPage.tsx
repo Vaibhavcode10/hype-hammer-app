@@ -29,26 +29,29 @@ export const GuestTeamsPage: React.FC<GuestTeamsPageProps> = ({ onClose, current
     if (!currentMatch) return;
     try {
       setLoading(true);
+      // CRITICAL: Guest views must ONLY see ACCEPTED players and teams
+      // Use API-level filter for efficiency
+      const approvedQuery = `matchId=${currentMatch.id}&approvalStatus=accepted`;
+      
+      console.log('📊 GuestTeamsPage: Fetching APPROVED data only for match:', currentMatch.id);
+      
       const [teamsRes, playersRes] = await Promise.all([
-        fetch(`${API_BASE}/teams?matchId=${currentMatch.id}`),
-        fetch(`${API_BASE}/players?matchId=${currentMatch.id}`)
+        fetch(`${API_BASE}/teams?${approvedQuery}`),
+        fetch(`${API_BASE}/players?${approvedQuery}`)
       ]);
 
       if (teamsRes.ok) {
         const teamsData = await teamsRes.json();
-        // Filter out declined teams - only show accepted/pending teams to guests
-        const allTeams = teamsData.data || [];
-        const eligibleTeams = allTeams.filter((t: Team) => 
-          t.approvalStatus === 'accepted' || 
-          t.approvalStatus === undefined || 
-          t.approvalStatus === null
-        );
-        setTeams(eligibleTeams);
+        const approvedTeams = teamsData.data || [];
+        console.log('📊 GuestTeamsPage: Approved teams:', approvedTeams.length);
+        setTeams(approvedTeams);
       }
 
       if (playersRes.ok) {
         const playersData = await playersRes.json();
-        setPlayers(playersData.data || []);
+        const approvedPlayers = playersData.data || [];
+        console.log('📊 GuestTeamsPage: Approved players:', approvedPlayers.length);
+        setPlayers(approvedPlayers);
       }
     } catch (error) {
       console.error('Failed to fetch data:', error);
@@ -95,6 +98,7 @@ export const GuestTeamsPage: React.FC<GuestTeamsPageProps> = ({ onClose, current
         team={selectedTeam}
         players={players}
         onBack={() => setShowTeamDetail(false)}
+        maxPlayers={currentMatch?.maxPlayersPerTeam || currentMatch?.config?.squadSize?.max || 12}
       />
     );
   }
@@ -177,18 +181,22 @@ export const GuestTeamsPage: React.FC<GuestTeamsPageProps> = ({ onClose, current
         </div>
       ) : filteredTeams.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {filteredTeams.map((team) => (
-            <TeamHUDCard
-              key={team.id}
-              team={team}
-              playerCount={getTeamPlayerCount(team.id)}
-              maxPlayers={18}
-              onClick={() => {
-                setSelectedTeamId(team.id);
-                setShowTeamDetail(true);
-              }}
-            />
-          ))}
+          {filteredTeams.map((team) => {
+            // Calculate player count using the existing helper function
+            const teamPlayerCount = getTeamPlayerCount(team.id);
+            return (
+              <TeamHUDCard
+                key={team.id}
+                team={team}
+                playerCount={teamPlayerCount}
+                maxPlayers={currentMatch?.maxPlayersPerTeam || 18}
+                onClick={() => {
+                  setSelectedTeamId(team.id);
+                  setShowTeamDetail(true);
+                }}
+              />
+            );
+          })}
         </div>
       ) : (
         <div className="rounded-xl p-12 text-center" style={{ background: 'linear-gradient(145deg, rgba(20, 10, 25, 0.7), rgba(30, 15, 35, 0.6))', border: '1px dashed rgba(236, 72, 153, 0.25)' }}>

@@ -2,6 +2,7 @@ import React from 'react';
 import { Player, Team } from '../../types';
 import { Modal } from '../ui';
 import { Trophy, Wallet, Users, TrendingDown, User, Star, X } from 'lucide-react';
+import { formatIndianCurrencyShort } from '../../services/currencyUtils';
 
 interface SquadModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface SquadModalProps {
   viewingSquadTeamId: string | null;
   teams: Team[];
   players: Player[];
+  maxPlayers?: number; // Squad limit from backend
 }
 
 export const SquadModal: React.FC<SquadModalProps> = ({
@@ -16,12 +18,15 @@ export const SquadModal: React.FC<SquadModalProps> = ({
   onClose,
   viewingSquadTeamId,
   teams,
-  players
+  players,
+  maxPlayers = 12
 }) => {
   const team = teams.find(t => t.id === viewingSquadTeamId);
   const teamPlayers = players.filter(p => p.teamId === viewingSquadTeamId);
   const spent = team ? (team.budget - team.remainingBudget) : 0;
-  const budgetPercentage = team ? Math.round((team.remainingBudget / team.budget) * 100) : 0;
+  // Clamp percentage to 0-100% to handle edge cases
+  const rawPercentage = team ? Math.round((team.remainingBudget / team.budget) * 100) : 0;
+  const budgetPercentage = Math.max(0, Math.min(100, rawPercentage));
 
   if (!isOpen) return null;
 
@@ -99,7 +104,7 @@ export const SquadModal: React.FC<SquadModalProps> = ({
                   <Users size={14} className="text-cyan-400" />
                   <span className="text-[10px] font-bold text-cyan-400/80 uppercase tracking-wider">Squad Size</span>
                 </div>
-                <p className="text-2xl font-black text-cyan-300">{teamPlayers.length}<span className="text-xs text-cyan-400/60">/18</span></p>
+                <p className="text-2xl font-black text-cyan-300">{teamPlayers.length}<span className="text-xs text-cyan-400/60">/{maxPlayers}</span></p>
               </div>
             </div>
 
@@ -107,7 +112,7 @@ export const SquadModal: React.FC<SquadModalProps> = ({
             <div className="mb-8">
               <div className="flex justify-between items-center mb-2">
                 <span className="text-xs font-bold text-pink-400/60 uppercase tracking-wider">Budget Utilization</span>
-                <span className="text-sm font-bold text-white">{budgetPercentage}% remaining</span>
+                <span className="text-sm font-black text-emerald-400">{team ? formatIndianCurrencyShort(team.remainingBudget) : '₹0'} left</span>
               </div>
               <div className="w-full h-4 bg-black/50 rounded-full overflow-hidden border border-pink-500/20">
                 <div 

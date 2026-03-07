@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Plus, Edit2, Trash2, Users, Trophy, Wallet, TrendingUp, Zap, Check, X, Clock, Ban } from 'lucide-react';
+import { Search, Plus, Edit2, Trash2, Users, Trophy, Wallet, TrendingUp, Zap, Check, X, Clock, Ban, FileText, ExternalLink } from 'lucide-react';
 import { Team, AuctionConfig, ApprovalStatus } from '../../types';
+import { formatIndianCurrencyShort } from '../../services/currencyUtils';
 
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
@@ -37,9 +38,10 @@ export const TeamsPage: React.FC<TeamsPageProps> = ({
   const [moderationFilter, setModerationFilter] = useState<ModerationFilter>('all');
   const [updatingApproval, setUpdatingApproval] = useState<string | null>(null);
 
-  // Calculate budget percentage for progress bar
+  // Calculate budget percentage for progress bar (clamped to 0-100%)
   const getBudgetPercentage = (team: Team) => {
-    return Math.round((team.remainingBudget / team.budget) * 100);
+    const rawPct = Math.round((team.remainingBudget / team.budget) * 100);
+    return Math.max(0, Math.min(100, rawPct));
   };
 
   // Get budget bar color based on remaining percentage
@@ -223,7 +225,7 @@ export const TeamsPage: React.FC<TeamsPageProps> = ({
           const budgetPercentage = getBudgetPercentage(team);
           const spent = team.budget - team.remainingBudget;
           const playerCount = team.players?.length || 0;
-          const maxPlayers = 18; // Default max squad size
+          const maxPlayers = config?.squadSize?.max || 12; // Get from backend config
           const approvalStatus = getApprovalStatus(team);
 
           return (
@@ -326,14 +328,39 @@ export const TeamsPage: React.FC<TeamsPageProps> = ({
                   </div>
                 </div>
 
+                {/* Government ID Section */}
+                {(team.governmentId || team.governmentIdURL) && (
+                  <div className="mb-4 pt-3 border-t border-pink-500/20 space-y-1.5">
+                    {team.governmentId && (
+                      <div className="flex items-start gap-1.5">
+                        <FileText size={11} className="text-pink-400/50 mt-0.5" />
+                        <span className="text-[9px] text-pink-400/50 uppercase font-bold">ID:</span>
+                        <span className="text-[9px] text-pink-300 font-semibold truncate">{team.governmentId}</span>
+                      </div>
+                    )}
+                    {team.governmentIdURL && (
+                      <a
+                        href={team.governmentIdURL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center gap-1.5 text-[9px] font-bold text-pink-400 hover:text-pink-300 transition-colors"
+                      >
+                        <ExternalLink size={10} />
+                        View ID Proof
+                      </a>
+                    )}
+                  </div>
+                )}
+
                 {/* Budget Progress Bar - Power Bar Style */}
                 <div className="mb-4">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-[10px] font-bold text-pink-400/60 uppercase tracking-wider flex items-center gap-1">
                       <Zap size={10} className="text-amber-400" />
-                      Budget Power
+                      Remaining
                     </span>
-                    <span className="text-xs font-bold text-white">{budgetPercentage}%</span>
+                    <span className="text-xs font-black text-emerald-400">{formatIndianCurrencyShort(team.remainingBudget)}</span>
                   </div>
                   <div className="w-full h-3 bg-black/50 rounded-full overflow-hidden border border-pink-500/20">
                     <div 

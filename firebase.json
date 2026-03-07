@@ -1,34 +1,36 @@
 {
   "functions": [
     {
-      "source": "functions",
       "codebase": "default",
+      "runtime": "nodejs22",
       "ignore": [
         "node_modules",
         ".git",
         "firebase-debug.log",
         "firebase-debug.*.log",
-        "__pycache__",
-        "*.pyc",
-        ".pytest_cache",
-        "venv",
-        ".env"
-      ]
+        "*.local"
+      ],
+      "source": "functions"
     }
   ],
-   "hosting": {
-    "site":"hype-hammer",
+  "hosting": {
+    "site": "hype-hammer",
     "public": "dist",
     "ignore": [
       "firebase.json",
-      "*/.",
-      "*/node_modules/*"
+      "**/.*",
+      "**/node_modules/**"
     ],
     "rewrites": [
-      { "source": "**", "destination": "/index.html" }
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
     ]
   },
   "firestore": {
+    "database": "(default)",
+    "location": "asia-south1",
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },

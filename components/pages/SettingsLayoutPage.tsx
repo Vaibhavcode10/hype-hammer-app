@@ -310,8 +310,7 @@ export const SettingsLayoutPage: React.FC<SettingsLayoutPageProps> = ({
   const auctionType = localConfig.type || m?.config?.type || config.type;
   const level = m?.config?.level || config.level;
   const totalBudget = localConfig.totalBudget ?? m?.config?.totalBudget ?? config.totalBudget ?? 0;
-  const squadMin = localConfig.squadSize?.min ?? m?.config?.squadSize?.min ?? config.squadSize?.min ?? 5;
-  const squadMax = localConfig.squadSize?.max ?? m?.config?.squadSize?.max ?? config.squadSize?.max ?? 15;
+  const squadMax = localConfig.squadSize?.max ?? m?.config?.squadSize?.max ?? m?.config?.maxSquad ?? config.squadSize?.max ?? config.maxSquad ?? 15;
   const organizerEmail = editOrgEmail;
   const place = editPlace || '—';
   const govIdURL = m?.governmentIdURL;
@@ -522,28 +521,16 @@ export const SettingsLayoutPage: React.FC<SettingsLayoutPageProps> = ({
                   )}
                 </div>
 
-                {/* Squad Size - DARK THEME */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-pink-900/20 border border-pink-500/20 rounded-xl p-3 text-center">
-                    <p className="text-[9px] font-bold uppercase text-pink-400/60 tracking-wider mb-1">Min Squad</p>
-                    {isEditing ? (
-                      <input type="number" className="w-full bg-pink-900/30 border border-pink-500/30 rounded-lg px-2 py-1 text-xl font-black text-blue-400 text-center outline-none focus:border-pink-500"
-                        value={localConfig.squadSize.min}
-                        onChange={(e) => setLocalConfig({...localConfig, squadSize: {...localConfig.squadSize, min: Number(e.target.value)}})} />
-                    ) : (
-                      <p className="text-xl font-black text-blue-400">{squadMin}</p>
-                    )}
-                  </div>
-                  <div className="bg-pink-900/20 border border-pink-500/20 rounded-xl p-3 text-center">
-                    <p className="text-[9px] font-bold uppercase text-pink-400/60 tracking-wider mb-1">Max Squad</p>
-                    {isEditing ? (
-                      <input type="number" className="w-full bg-pink-900/30 border border-pink-500/30 rounded-lg px-2 py-1 text-xl font-black text-blue-400 text-center outline-none focus:border-pink-500"
-                        value={localConfig.squadSize.max}
-                        onChange={(e) => setLocalConfig({...localConfig, squadSize: {...localConfig.squadSize, max: Number(e.target.value)}})} />
-                    ) : (
-                      <p className="text-xl font-black text-blue-400">{squadMax}</p>
-                    )}
-                  </div>
+                {/* Squad Size - MAX ONLY (NO MIN) - DARK THEME */}
+                <div className="bg-pink-900/20 border border-pink-500/20 rounded-xl p-3 text-center">
+                  <p className="text-[9px] font-bold uppercase text-pink-400/60 tracking-wider mb-1">Max Squad</p>
+                  {isEditing ? (
+                    <input type="number" className="w-full bg-pink-900/30 border border-pink-500/30 rounded-lg px-2 py-1 text-xl font-black text-blue-400 text-center outline-none focus:border-pink-500"
+                      value={localConfig.squadSize?.max || localConfig.maxSquad}
+                      onChange={(e) => setLocalConfig({...localConfig, squadSize: {...(localConfig.squadSize || {}), max: Number(e.target.value)}, maxSquad: Number(e.target.value)})} />
+                  ) : (
+                    <p className="text-xl font-black text-blue-400">{squadMax}</p>
+                  )}
                 </div>
 
                 {/* Auction Type & Sport */}
@@ -579,8 +566,19 @@ export const SettingsLayoutPage: React.FC<SettingsLayoutPageProps> = ({
                   </div>
                   <div>
                     <label className="text-[10px] font-black uppercase text-pink-400/60 tracking-wider block mb-1">Organization Type</label>
-                    <input type="text" value={editOrganizationType} onChange={e => setEditOrganizationType(e.target.value)}
-                      className="w-full bg-pink-900/20 border border-pink-500/30 rounded-xl px-3 py-2 text-sm text-pink-100 outline-none focus:border-pink-500 transition-all" />
+                    <select value={editOrganizationType} onChange={e => setEditOrganizationType(e.target.value)}
+                      className="w-full bg-pink-900/20 border border-pink-500/30 rounded-xl px-3 py-2 text-sm text-pink-100 outline-none focus:border-pink-500 transition-all">
+                      <option value="">Select</option>
+                      <option value="Sports Club">Sports Club</option>
+                      <option value="College">College</option>
+                      <option value="Corporate">Corporate</option>
+                      <option value="League">League</option>
+                      <option value="Club">Club</option>
+                      <option value="Private">Private</option>
+                      <option value="Educational">Educational</option>
+                      <option value="Government">Government</option>
+                      <option value="Other">Other</option>
+                    </select>
                   </div>
                   <div>
                     <label className="text-[10px] font-black uppercase text-pink-400/60 tracking-wider block mb-1">Organizer Name</label>

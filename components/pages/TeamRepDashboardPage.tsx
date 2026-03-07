@@ -9,7 +9,11 @@ import { firebaseRealtimeService } from '../../services/firebaseRealtimeService'
 const API_BASE = 'https://us-central1-axilam.cloudfunctions.net/auction';
 
 const formatCurrency = (num: number): string => {
-  return num.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  const val = num || 0;
+  if (val >= 10000000) return `₹${(val / 10000000).toFixed(1)}Cr`;
+  if (val >= 100000) return `₹${(val / 100000).toFixed(1)}L`;
+  if (val >= 1000) return `₹${(val / 1000).toFixed(1)}K`;
+  return `₹${val}`;
 };
 
 interface TeamRepDashboardPageProps {
@@ -19,7 +23,16 @@ interface TeamRepDashboardPageProps {
 }
 
 export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
-  const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom'>('dashboard');
+  // 🔄 SESSION PERSISTENCE: Restore liveRoom state on mount
+  const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom'>(() => {
+    const savedSection = sessionStorage.getItem('hypehammer_teamrep_section');
+    const savedMatchId = sessionStorage.getItem('hypehammer_teamrep_match_id');
+    if (savedSection === 'liveRoom' && savedMatchId && currentMatch?.id === savedMatchId) {
+      console.log('🔄 Restoring team rep to liveRoom after reload');
+      return 'liveRoom';
+    }
+    return 'dashboard';
+  });
   const [showPlayersPage, setShowPlayersPage] = useState(false);
   const [teamData, setTeamData] = useState<Team | null>(null);
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
@@ -52,6 +65,18 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
   const allPlayersRef = useRef<Player[]>([]);
   const seasonId = currentMatch?.id || '';
   const teamId = teamData?.id || '';
+
+  // 🔄 SESSION PERSISTENCE: Save/clear liveRoom state on section change
+  useEffect(() => {
+    if (activeSection === 'liveRoom' && seasonId) {
+      sessionStorage.setItem('hypehammer_teamrep_section', 'liveRoom');
+      sessionStorage.setItem('hypehammer_teamrep_match_id', seasonId);
+      console.log('💾 Saved team rep liveRoom session for match:', seasonId);
+    } else if (activeSection !== 'liveRoom') {
+      sessionStorage.removeItem('hypehammer_teamrep_section');
+      sessionStorage.removeItem('hypehammer_teamrep_match_id');
+    }
+  }, [activeSection, seasonId]);
 
   // Initialize socket connection
   useEffect(() => {
@@ -914,7 +939,7 @@ export const TeamRepDashboardPage: React.FC<TeamRepDashboardPageProps> = ({ setS
                     
                     <div className="w-full max-w-sm mb-3 text-center">
                       <p className="text-xs text-gray-600 uppercase tracking-wider font-bold mb-1">{currentBiddingPlayer.roleId}</p>
-                      <p className="text-sm text-gray-600">Base: ₹{(currentBiddingPlayer.basePrice / 100000).toFixed(1)}L</p>
+                      <p className="text-sm text-gray-600">Base: {formatCurrency(currentBiddingPlayer.basePrice)}</p>
                     </div>
 
                     <div className="w-full max-w-sm">

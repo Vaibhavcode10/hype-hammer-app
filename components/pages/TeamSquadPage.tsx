@@ -1,17 +1,20 @@
 import React from 'react';
 import { ArrowLeft, Trophy, Wallet, Users, TrendingDown, User, Zap, Shield, Globe, Target, Award, IndianRupee } from 'lucide-react';
 import { Team, Player } from '../../types';
+import { formatIndianCurrencyShort } from '../../services/currencyUtils';
 
 interface TeamSquadPageProps {
   team: Team;
   players: Player[];
   onBack: () => void;
+  maxPlayers?: number; // Squad limit from backend
 }
 
 export const TeamSquadPage: React.FC<TeamSquadPageProps> = ({
   team,
   players,
-  onBack
+  onBack,
+  maxPlayers = 12 // Default fallback, but should be passed from parent
 }) => {
   // Filter players belonging to this team by soldTo field (set when player is sold)
   const teamPlayers = players.filter(p => p.soldTo === team.id || p.teamId === team.id);
@@ -19,10 +22,40 @@ export const TeamSquadPage: React.FC<TeamSquadPageProps> = ({
   // Debug log to verify data
   console.log(`[TeamSquadPage] Team: ${team.id}, Total players: ${players.length}, Team players: ${teamPlayers.length}`, teamPlayers);
   
-  const spent = team.budget - team.remainingBudget;
-  const budgetPercentage = Math.round((team.remainingBudget / team.budget) * 100);
-  const maxPlayers = 18;
-  const squadPercentage = Math.round((teamPlayers.length / maxPlayers) * 100);
+  // Helper to get sold amount - consistent with PlayersPage
+  const getSoldAmount = (player: Player): number => {
+    return (
+      (player.soldAmount as number | undefined) ??
+      (player.currentBid as number | undefined) ??
+      (player.soldPrice as number | undefined) ??
+      ((player as any).finalPrice as number | undefined) ??
+      0
+    );
+  };
+  
+  // Calculate spent from actual sold players (most accurate method)
+  const spentFromPlayers = teamPlayers.reduce((sum, p) => {
+    if (p.status === 'SOLD' || p.soldTo === team.id) {
+      return sum + getSoldAmount(p);
+    }
+    return sum;
+  }, 0);
+  
+  // Use the more reliable remaining budget from backend
+  const remaining = team.remainingBudget ?? team.budget ?? 0;
+  
+  // Calculate total budget: prefer stored budget, but validate against calculated values
+  // If stored budget < remaining (data integrity issue), derive total from remaining + spent
+  const storedBudget = team.budget ?? team.initialBudget ?? 0;
+  const totalBudget = storedBudget >= remaining ? storedBudget : (remaining + spentFromPlayers);
+  
+  // Spent amount: use calculated spent if available, fallback to derived value
+  const spent = spentFromPlayers > 0 ? spentFromPlayers : Math.max(0, totalBudget - remaining);
+  
+  // Clamp percentage to 0-100% to handle edge cases
+  const rawPercentage = totalBudget > 0 ? Math.round((remaining / totalBudget) * 100) : 100;
+  const budgetPercentage = Math.max(0, Math.min(100, rawPercentage));
+  const squadPercentage = maxPlayers > 0 ? Math.round((teamPlayers.length / maxPlayers) * 100) : 0;
 
   return (
     <div 
@@ -93,17 +126,18 @@ export const TeamSquadPage: React.FC<TeamSquadPageProps> = ({
               <p className="text-pink-400/50 text-xs">{team.homeCity || 'Franchise HQ'}</p>
             </div>
 
-            {/* Power Badge */}
+            {/* Remaining Budget Display */}
             <div 
               className="flex items-center gap-2 px-3 py-1.5 rounded-full"
               style={{
-                background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(180, 50, 120, 0.1))',
-                border: '1px solid rgba(236, 72, 153, 0.35)',
-                boxShadow: '0 0 10px rgba(236, 72, 153, 0.15)'
+                background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(5, 150, 105, 0.1))',
+                border: '1px solid rgba(16, 185, 129, 0.35)',
+                boxShadow: '0 0 10px rgba(16, 185, 129, 0.15)'
               }}
             >
-              <Zap size={14} className="text-pink-400" />
-              <span className="text-base font-black text-white">{budgetPercentage}%</span>
+              <Wallet size={14} className="text-emerald-400" />
+              <span className="text-base font-black text-emerald-400">{formatIndianCurrencyShort(remaining)}</span>
+              <span className="text-[10px] text-emerald-400/60">Left</span>
             </div>
           </div>
 
@@ -125,7 +159,7 @@ export const TeamSquadPage: React.FC<TeamSquadPageProps> = ({
             >
               <Wallet size={12} className="text-pink-400/60" />
               <span className="text-[9px] font-bold text-pink-400/50 uppercase">TOTAL</span>
-              <span className="text-sm font-black text-white ml-auto">₹{(team.budget / 10000000).toFixed(1)}Cr</span>
+              <span className="text-sm font-black text-white ml-auto">{formatIndianCurrencyShort(totalBudget)}</span>
             </div>
 
             {/* Spent Chip */}
@@ -138,7 +172,7 @@ export const TeamSquadPage: React.FC<TeamSquadPageProps> = ({
             >
               <TrendingDown size={12} className="text-pink-400/60" />
               <span className="text-[9px] font-bold text-pink-400/50 uppercase">SPENT</span>
-              <span className="text-sm font-black text-pink-200 ml-auto">₹{(spent / 10000000).toFixed(1)}Cr</span>
+              <span className="text-sm font-black text-pink-200 ml-auto">{formatIndianCurrencyShort(spent)}</span>
             </div>
 
             {/* Remaining Chip */}
@@ -151,7 +185,7 @@ export const TeamSquadPage: React.FC<TeamSquadPageProps> = ({
             >
               <Wallet size={12} className="text-pink-400/60" />
               <span className="text-[9px] font-bold text-pink-400/50 uppercase">LEFT</span>
-              <span className="text-sm font-black text-white ml-auto">₹{(team.remainingBudget / 10000000).toFixed(1)}Cr</span>
+              <span className="text-sm font-black text-white ml-auto">{formatIndianCurrencyShort(remaining)}</span>
             </div>
 
             {/* Squad Chip */}
@@ -212,7 +246,7 @@ export const TeamSquadPage: React.FC<TeamSquadPageProps> = ({
       {teamPlayers.length > 0 ? (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-4">
           {teamPlayers.map((player) => {
-            const soldPrice = player.soldPrice || player.soldAmount || 0;
+            const soldPrice = getSoldAmount(player);
             const basePrice = player.basePrice || 0;
             const statusText = player.status || 'SOLD';
             const playingRole = player.roleId || player.role || '';
@@ -298,7 +332,7 @@ export const TeamSquadPage: React.FC<TeamSquadPageProps> = ({
                         <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Price</span>
                       </div>
                       <span className="text-base font-black text-pink-200">
-                        {soldPrice > 0 ? `₹${(soldPrice / 100000).toFixed(1)}L` : '—'}
+                        {soldPrice > 0 ? formatIndianCurrencyShort(soldPrice) : '—'}
                       </span>
                     </div>
                     {/* Base Price */}
@@ -308,7 +342,7 @@ export const TeamSquadPage: React.FC<TeamSquadPageProps> = ({
                         <span className="text-[10px] font-semibold text-pink-400/50 uppercase">Base</span>
                       </div>
                       <span className="text-sm font-bold text-pink-300/70">
-                        {basePrice > 0 ? `₹${(basePrice / 100000).toFixed(1)}L` : '—'}
+                        {basePrice > 0 ? formatIndianCurrencyShort(basePrice) : '—'}
                       </span>
                     </div>
                   </div>

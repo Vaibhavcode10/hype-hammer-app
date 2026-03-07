@@ -76,6 +76,100 @@ export const formatIndianCurrencyShort = (amount: number): string => {
   return `${sign}₹${Math.round(absAmount)}`;
 };
 
+// ========================
+// UNIT-BASED FORMATTING
+// ========================
+
+import type { CurrencyUnit } from '../types';
+
+/**
+ * Divisor values for each currency unit
+ */
+const CURRENCY_DIVISORS: Record<CurrencyUnit, number> = {
+  'K': 1000,      // Thousands
+  'L': 100000,    // Lakhs
+  'Cr': 10000000  // Crores
+};
+
+/**
+ * Format amount using a specific currency unit
+ * Always displays in the selected unit regardless of magnitude
+ * 
+ * @param amount - Raw numeric amount
+ * @param unit - Currency unit (K, L, Cr)
+ * @param includeSymbol - Whether to include ₹ symbol (default: true)
+ * @returns Formatted string (e.g., "₹1.5L", "100K", "0.01Cr")
+ */
+export const formatWithUnit = (
+  amount: number,
+  unit: CurrencyUnit = 'L',
+  includeSymbol: boolean = true
+): string => {
+  if (amount === 0) return includeSymbol ? '₹0' : '0';
+  
+  const isNegative = amount < 0;
+  const absAmount = Math.abs(amount);
+  const divisor = CURRENCY_DIVISORS[unit];
+  const value = absAmount / divisor;
+  
+  // Determine decimal places based on value
+  let decimals: number;
+  if (value >= 100) {
+    decimals = 0; // Large values: no decimals
+  } else if (value >= 10) {
+    decimals = 1; // Medium values: 1 decimal
+  } else if (value >= 1) {
+    decimals = 2; // Small values: 2 decimals
+  } else {
+    decimals = 3; // Very small values: 3 decimals
+  }
+  
+  // Format with appropriate precision, trim trailing zeros
+  let formatted = value.toFixed(decimals);
+  // Remove trailing zeros after decimal point
+  if (formatted.includes('.')) {
+    formatted = formatted.replace(/\.?0+$/, '');
+  }
+  
+  const sign = isNegative ? '-' : '';
+  const symbol = includeSymbol ? '₹' : '';
+  
+  return `${sign}${symbol}${formatted}${unit}`;
+};
+
+/**
+ * Format amount for bid buttons (compact, with + prefix for increments)
+ * 
+ * @param amount - Raw numeric amount
+ * @param unit - Currency unit (K, L, Cr)
+ * @returns Formatted string for button label (e.g., "+1L", "+25K")
+ */
+export const formatBidButtonLabel = (
+  amount: number,
+  unit: CurrencyUnit = 'L'
+): string => {
+  const divisor = CURRENCY_DIVISORS[unit];
+  const value = amount / divisor;
+  
+  // Format compactly for buttons
+  let formatted: string;
+  if (value % 1 === 0) {
+    formatted = value.toFixed(0);
+  } else if (value >= 1) {
+    formatted = value.toFixed(1).replace(/\.0$/, '');
+  } else {
+    formatted = value.toFixed(2).replace(/\.?0+$/, '');
+  }
+  
+  return `+${formatted}${unit}`;
+};
+
+/**
+ * Get the default currency unit based on typical match budgets
+ * Can be used when no unit is configured
+ */
+export const getDefaultCurrencyUnit = (): CurrencyUnit => 'L';
+
 /**
  * Format amount with full units in words
  * @param amount - The numeric amount to format  

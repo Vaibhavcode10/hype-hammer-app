@@ -16,7 +16,16 @@ interface PlayerDashboardPageProps {
 }
 
 export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setStatus, currentMatch, currentUser }) => {
-  const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom'>('dashboard');
+  // 🔄 SESSION PERSISTENCE: Restore liveRoom state on mount
+  const [activeSection, setActiveSection] = useState<'dashboard' | 'liveRoom'>(() => {
+    const savedSection = sessionStorage.getItem('hypehammer_player_section');
+    const savedMatchId = sessionStorage.getItem('hypehammer_player_match_id');
+    if (savedSection === 'liveRoom' && savedMatchId && currentMatch?.id === savedMatchId) {
+      console.log('🔄 Restoring player to liveRoom after reload');
+      return 'liveRoom';
+    }
+    return 'dashboard';
+  });
   const [playerData, setPlayerData] = useState<Player | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -57,6 +66,18 @@ export const PlayerDashboardPage: React.FC<PlayerDashboardPageProps> = ({ setSta
   const [resolvedMatchId, setResolvedMatchId] = useState<string>('');
   const [resolvedMatchName, setResolvedMatchName] = useState<string>('');
   const seasonId = resolvedMatchId || currentMatch?.id || '';
+
+  // 🔄 SESSION PERSISTENCE: Save/clear liveRoom state on section change
+  useEffect(() => {
+    if (activeSection === 'liveRoom' && seasonId) {
+      sessionStorage.setItem('hypehammer_player_section', 'liveRoom');
+      sessionStorage.setItem('hypehammer_player_match_id', seasonId);
+      console.log('💾 Saved player liveRoom session for match:', seasonId);
+    } else if (activeSection !== 'liveRoom') {
+      sessionStorage.removeItem('hypehammer_player_section');
+      sessionStorage.removeItem('hypehammer_player_match_id');
+    }
+  }, [activeSection, seasonId]);
 
   // Resolve matchId for players when App doesn't have currentMatch loaded.
   useEffect(() => {

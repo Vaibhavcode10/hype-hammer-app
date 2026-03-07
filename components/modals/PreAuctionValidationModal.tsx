@@ -1,5 +1,6 @@
 import React from 'react';
-import { AlertTriangle, AlertOctagon, CheckCircle2, X, Users, Trophy, ArrowRight, Shield } from 'lucide-react';
+import { AlertTriangle, AlertOctagon, CheckCircle2, X, Users, Trophy, ArrowRight, Shield, IndianRupee } from 'lucide-react';
+import type { BidConfig, CurrencyUnit } from '../../types';
 
 export interface PreAuctionValidationData {
   canStart: boolean;
@@ -32,6 +33,12 @@ interface PreAuctionValidationModalProps {
   onGoToPlayers: () => void;
   validationData: PreAuctionValidationData | null;
   isLoading?: boolean;
+  // Bid config props
+  bidConfigInputs?: { increments: string[]; custom: string };
+  onBidIncrementChange?: (idx: number, value: string) => void;
+  onCustomIncrementChange?: (value: string) => void;
+  currencyUnit?: CurrencyUnit;
+  bidConfig?: BidConfig | null;
 }
 
 /**
@@ -47,7 +54,12 @@ export const PreAuctionValidationModal: React.FC<PreAuctionValidationModalProps>
   onGoToTeams,
   onGoToPlayers,
   validationData,
-  isLoading = false
+  isLoading = false,
+  bidConfigInputs,
+  onBidIncrementChange,
+  onCustomIncrementChange,
+  currencyUnit = 'L',
+  bidConfig
 }) => {
   if (!isOpen) return null;
 
@@ -221,6 +233,86 @@ export const PreAuctionValidationModal: React.FC<PreAuctionValidationModalProps>
                   <li>• Max {stats?.maxPlayersPerTeam || 0} players per team allowed</li>
                 </ul>
               </div>
+
+              {/* Bid Increment Settings */}
+              {bidConfigInputs && onBidIncrementChange && onCustomIncrementChange && (
+                <div className="bg-gradient-to-br from-pink-50 to-rose-50 border-2 border-pink-200 rounded-xl p-4 mb-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-8 h-8 bg-gradient-to-r from-pink-500 to-red-500 rounded-lg flex items-center justify-center">
+                      <IndianRupee size={16} className="text-white" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-bold text-slate-700">Bid Increment Settings</span>
+                      <p className="text-xs text-slate-500">Configure bid buttons for the auction</p>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-white/60 border border-pink-200 rounded-lg px-3 py-2 mb-3">
+                    <p className="text-slate-600 text-xs leading-relaxed">
+                      <span className="font-bold text-pink-600">Unit:</span> Values use the selected unit ({currencyUnit}).
+                      <span className="text-slate-400 ml-1">1K=₹1,000 | 1L=₹1,00,000 | 1Cr=₹1,00,00,000</span>
+                    </p>
+                  </div>
+                  
+                  {/* Increment Inputs */}
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    {[0, 1, 2, 3].map((idx) => (
+                      <div key={idx} className="space-y-1">
+                        <label className="text-slate-500 text-xs font-medium">
+                          Increment {idx + 1}
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-pink-500 text-xs">+₹</span>
+                          <input
+                            type="text"
+                            value={bidConfigInputs.increments[idx] || ''}
+                            onChange={(e) => onBidIncrementChange(idx, e.target.value)}
+                            disabled={bidConfig?.isLocked}
+                            placeholder={idx === 0 ? '0.1' : idx === 1 ? '0.25' : idx === 2 ? '0.5' : '1'}
+                            className={`w-full bg-white border rounded-lg px-3 py-2 pl-7 text-sm text-slate-700 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all ${
+                              bidConfig?.isLocked 
+                                ? 'border-slate-200 opacity-60 cursor-not-allowed' 
+                                : 'border-pink-200 hover:border-pink-400'
+                            }`}
+                          />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">{currencyUnit}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Custom Increment */}
+                  <div className="space-y-1">
+                    <label className="text-slate-500 text-xs font-medium flex items-center gap-1">
+                      Custom Increment <span className="text-pink-500">★</span>
+                      <span className="text-slate-400 text-xs">(Optional)</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-pink-500 text-xs">+₹</span>
+                      <input
+                        type="text"
+                        value={bidConfigInputs.custom}
+                        onChange={(e) => onCustomIncrementChange(e.target.value)}
+                        disabled={bidConfig?.isLocked}
+                        placeholder="e.g. 0.15 or 15K"
+                        className={`w-full bg-white border rounded-lg px-3 py-2 pl-7 text-sm text-slate-700 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all ${
+                          bidConfig?.isLocked 
+                            ? 'border-slate-200 opacity-60 cursor-not-allowed' 
+                            : 'border-pink-200 hover:border-pink-400'
+                        }`}
+                      />
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">{currencyUnit}</span>
+                    </div>
+                  </div>
+                  
+                  {bidConfig?.isLocked && (
+                    <div className="mt-2 text-xs text-amber-600 flex items-center gap-1">
+                      <Shield size={12} />
+                      Bid config is locked after auction starts
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="flex flex-col gap-2">

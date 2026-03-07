@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trophy, Wallet, Users, Check, Clock, Ban, X } from 'lucide-react';
+import { Trophy, Wallet, Users, Check, Clock, Ban, X, FileText, ExternalLink, Lock } from 'lucide-react';
 import { Team, ApprovalStatus } from '../../types';
 
 interface TeamHUDCardProps {
@@ -7,6 +7,8 @@ interface TeamHUDCardProps {
   playerCount: number;
   maxPlayers?: number;
   onClick: () => void;
+  // Budget from match settings (backend source of truth)
+  basePurse?: number;
   // Moderation props (optional)
   showModeration?: boolean;
   onApprove?: (teamId: string) => void;
@@ -19,15 +21,37 @@ export const TeamHUDCard: React.FC<TeamHUDCardProps> = ({
   playerCount,
   maxPlayers = 18,
   onClick,
+  basePurse,
   showModeration = false,
   onApprove,
   onDecline,
   isUpdating = false
 }) => {
-  // Calculate budget percentage for power bar
-  const budgetPercentage = Math.round((team.remainingBudget / team.budget) * 100);
-  const spent = team.budget - team.remainingBudget;
+  // Use team's budget and remainingBudget directly from the backend (source of truth)
+  // These are stored as actual numeric values: budget=100000, remainingBudget=100000
+  const totalBudget = team.budget || basePurse || 0;
+  const remainingBudget = team.remainingBudget ?? totalBudget;
+  const totalSpent = totalBudget - remainingBudget;
+  // Clamp percentage to 0-100% to handle edge cases
+  const rawPercentage = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
+  const budgetPercentage = Math.max(0, Math.min(100, rawPercentage));
   const approvalStatus: ApprovalStatus = team.approvalStatus || 'pending';
+  
+  // Format currency for display - detect if we need Cr (crores) or L (lakhs)
+  const formatBudget = (value: number) => {
+    if (value >= 10000000) {
+      return { amount: (value / 10000000).toFixed(1), suffix: 'Cr' };
+    } else if (value >= 100000) {
+      return { amount: (value / 100000).toFixed(1), suffix: 'L' };
+    } else if (value >= 1000) {
+      return { amount: (value / 1000).toFixed(1), suffix: 'K' };
+    }
+    return { amount: value.toString(), suffix: '' };
+  };
+  
+  const remainingFormatted = formatBudget(remainingBudget);
+  const spentFormatted = formatBudget(totalSpent);
+  const totalFormatted = formatBudget(totalBudget);
 
   // Get border color based on approval status
   const getBorderColor = () => {
@@ -123,9 +147,10 @@ export const TeamHUDCard: React.FC<TeamHUDCardProps> = ({
               )}
             </div>
 
-            {/* Power % */}
+            {/* Remaining Budget Display */}
             <div className="text-right flex-shrink-0">
-              <span className="text-xl font-black text-white">{budgetPercentage}%</span>
+              <span className="text-base font-black text-emerald-400">₹{remainingFormatted.amount}<span className="text-xs text-emerald-400/60">{remainingFormatted.suffix}</span></span>
+              <p className="text-[8px] text-pink-400/40 uppercase tracking-wider">Left</p>
             </div>
           </div>
 
@@ -144,8 +169,8 @@ export const TeamHUDCard: React.FC<TeamHUDCardProps> = ({
                 <span className="text-[8px] font-bold text-pink-400/50 uppercase tracking-wider">BUDGET</span>
               </div>
               <p className="text-lg font-black text-white leading-none">
-                ₹{(team.remainingBudget / 10000000).toFixed(1)}
-                <span className="text-[9px] font-bold text-pink-400/40 ml-0.5">Cr</span>
+                ₹{remainingFormatted.amount}
+                <span className="text-[9px] font-bold text-pink-400/40 ml-0.5">{remainingFormatted.suffix}</span>
               </p>
             </div>
 
@@ -186,23 +211,81 @@ export const TeamHUDCard: React.FC<TeamHUDCardProps> = ({
               />
             </div>
             <div className="flex justify-between mt-1.5">
-              <span className="text-[8px] text-pink-400/40">Spent: ₹{(spent / 10000000).toFixed(1)}Cr</span>
-              <span className="text-[8px] text-pink-400/40">Total: ₹{(team.budget / 10000000).toFixed(1)}Cr</span>
+              <span className="text-[8px] text-pink-400/40">Spent: ₹{spentFormatted.amount}{spentFormatted.suffix}</span>
+              <span className="text-[8px] text-pink-400/40">Total: ₹{totalFormatted.amount}{totalFormatted.suffix}</span>
             </div>
           </div>
 
-          {/* View Squad Button */}
-          <button 
-            className="w-full py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300 flex items-center justify-center gap-2"
-            style={{
-              background: 'rgba(236, 72, 153, 0.1)',
-              border: '1px solid rgba(236, 72, 153, 0.3)',
-              color: '#f9a8d4'
-            }}
-          >
-            <Users size={11} />
-            VIEW SQUAD
-          </button>
+          {/* Government ID Section */}
+          {(team.governmentId || team.governmentIdURL) && (
+            <div 
+              className="rounded-lg p-2.5 mb-3"
+              style={{
+                background: 'rgba(79, 70, 229, 0.06)',
+                border: '1px solid rgba(79, 70, 229, 0.15)'
+              }}
+            >
+              {team.governmentId && (
+                <div className="flex items-center gap-2 mb-2">
+                  <FileText size={11} className="text-indigo-400/60 flex-shrink-0" />
+                  <span className="text-[8px] font-bold text-indigo-400/50 uppercase tracking-wider">GOV ID</span>
+                  <span className="text-xs font-semibold text-indigo-300/80 ml-auto">{team.governmentId}</span>
+                </div>
+              )}
+              {team.governmentIdURL && (
+                <a 
+                  href={team.governmentIdURL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-indigo-400/70 hover:text-indigo-300 transition-colors text-[8px] font-bold uppercase tracking-wider"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <ExternalLink size={11} className="flex-shrink-0" />
+                  View ID Proof
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* View Squad Button - Approval-based Access Control */}
+          {approvalStatus !== 'declined' && (
+            <div className="relative group/squad">
+              <button 
+                onClick={approvalStatus === 'accepted' ? onClick : undefined}
+                disabled={approvalStatus !== 'accepted'}
+                className={`w-full py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300 flex items-center justify-center gap-2 ${
+                  approvalStatus === 'accepted' 
+                    ? 'cursor-pointer hover:bg-pink-500/20' 
+                    : 'cursor-not-allowed opacity-60'
+                }`}
+                style={{
+                  background: approvalStatus === 'accepted' ? 'rgba(236, 72, 153, 0.1)' : 'rgba(120, 120, 120, 0.1)',
+                  border: approvalStatus === 'accepted' ? '1px solid rgba(236, 72, 153, 0.3)' : '1px solid rgba(120, 120, 120, 0.3)',
+                  color: approvalStatus === 'accepted' ? '#f9a8d4' : '#999'
+                }}
+              >
+                {approvalStatus === 'pending' ? (
+                  <>
+                    <Lock size={11} />
+                    TEAM NOT APPROVED YET
+                  </>
+                ) : (
+                  <>
+                    <Users size={11} />
+                    VIEW SQUAD
+                  </>
+                )}
+              </button>
+              {/* Tooltip for pending teams */}
+              {approvalStatus === 'pending' && (
+                <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 opacity-0 group-hover/squad:opacity-100 transition-opacity pointer-events-none z-10 whitespace-nowrap">
+                  <div className="bg-gray-900 text-xs text-gray-200 px-3 py-1.5 rounded-lg border border-gray-700 shadow-lg">
+                    Team must be approved before viewing squad
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Moderation Actions */}
           {showModeration && (

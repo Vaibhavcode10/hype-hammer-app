@@ -2,7 +2,8 @@ import React, { useMemo, useEffect } from 'react';
 import { 
   Radio, TrendingUp, Users, DollarSign, Clock, AlertCircle,
   Heart, Target, Zap, Crown, Award, Activity, Shield, ArrowLeft,
-  Flame, Dumbbell, CheckCircle, XCircle, User, Globe, MapPin, ShoppingCart
+  Flame, Dumbbell, CheckCircle, XCircle, User, Globe, MapPin, ShoppingCart,
+  Gavel
 } from 'lucide-react';
 import { 
   LiveAuctionState, 
@@ -10,10 +11,15 @@ import {
   UserRole, 
   Player, 
   Team,
-  BidHistoryItem
+  BidHistoryItem,
+  BidConfig,
+  CurrencyUnit
 } from '../../types';
 import { PlayerQueueCarousel } from './PlayerQueueCarousel';
 import { isValidImageUrl } from '../../services/imageUrlValidator';
+import type { MatchConfig } from '../../services/matchConfigService';
+import { generateBidButtons, DEFAULT_CURRENCY_UNIT } from '../../services/matchConfigService';
+import { formatWithUnit, formatBidButtonLabel } from '../../services/currencyUtils';
 
 interface SpectatorLiveRoomProps {
   auctionState: LiveAuctionState | null;
@@ -23,6 +29,11 @@ interface SpectatorLiveRoomProps {
   userId: string;
   userRole: UserRole;
   remainingSeconds: number;
+  matchConfig?: MatchConfig | null;
+  bidConfig?: BidConfig | null;
+  currencyUnit?: CurrencyUnit;
+  isInitialLoading?: boolean;
+  onClose?: () => void;
 }
 
 // CSS for auto-scrolling ticker animation
@@ -79,8 +90,22 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
   teams,
   userId,
   userRole,
-  remainingSeconds
+  remainingSeconds,
+  matchConfig,
+  bidConfig,
+  currencyUnit,
+  isInitialLoading = false,
+  onClose
 }) => {
+  // CRITICAL: Use match config as single source of truth for squad size
+  const maxSquadFromConfig = matchConfig?.maxSquad || matchConfig?.squadSize?.max || 15;
+  const venueFromConfig = matchConfig?.venue || 'Live Auction';
+  
+  // Generate bid buttons from bidConfig (read-only display for spectators)
+  const bidButtons = useMemo(() => {
+    return generateBidButtons(bidConfig || null);
+  }, [bidConfig]);
+  
   // Inject ticker styles
   useEffect(() => {
     const styleId = 'ticker-styles';
@@ -94,16 +119,29 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
 
   /**
    * CRITICAL GUARD: Filter to only APPROVED players for auction display
-   * A declined player must NEVER appear in the Live Room.
+   * A declined or pending player must NEVER appear in the Live Room.
    * This is defense-in-depth - LiveAuctionPage should already pass only approved players.
+   * 
+   * ONLY approvalStatus === 'accepted' counts as approved.
    */
   const approvedPlayersOnly = useMemo(() => {
-    return allPlayers.filter(p => 
-      p.approvalStatus === 'accepted' || 
-      p.approvalStatus === undefined || 
-      p.approvalStatus === null
-    );
+    const approved = allPlayers.filter(p => p.approvalStatus === 'accepted');
+    console.log('📊 SpectatorLiveRoom: Approved players:', approved.length, '/', allPlayers.length);
+    return approved;
   }, [allPlayers]);
+
+  /**
+   * CRITICAL GUARD: Filter to only APPROVED teams for auction display
+   * A declined or pending team must NEVER appear in the Live Room.
+   * This is defense-in-depth - LiveAuctionPage should already pass only approved teams.
+   * 
+   * ONLY approvalStatus === 'accepted' counts as approved.
+   */
+  const approvedTeamsOnly = useMemo(() => {
+    const approved = teams.filter(t => t.approvalStatus === 'accepted');
+    console.log('📊 SpectatorLiveRoom: Approved teams:', approved.length, '/', teams.length);
+    return approved;
+  }, [teams]);
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -111,17 +149,10 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const formatCurrency = (amount: number): string => {
-    if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(1)}Cr`;
-    if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
-    return `₹${amount.toLocaleString()}`;
-  };
-
-  const formatBudget = (amount: number): string => {
-    if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(1)}Cr`;
-    if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
-    return `₹${amount.toLocaleString()}`;
-  };
+  // Currency-unit-aware formatting
+  const effectiveUnit: CurrencyUnit = currencyUnit || DEFAULT_CURRENCY_UNIT;
+  const formatCurrency = (amount: number): string => formatWithUnit(amount, effectiveUnit);
+  const formatBudget = (amount: number): string => formatWithUnit(amount, effectiveUnit);
 
   // Get players bought by each team (players with status SOLD and soldTo or leadingTeamId matching team)
   // Same logic as AdminDashboardPage.tsx getTeamStats
@@ -133,12 +164,14 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
   };
 
   // Build extended team data with live updates
+  // CRITICAL: Use approvedTeamsOnly to exclude pending/declined teams
+  // CRITICAL: Use matchConfig as single source of truth for squad size
   const teamsWithPlayers = useMemo(() => {
-    return teams.map(team => {
+    return approvedTeamsOnly.map(team => {
       const boughtPlayers = getTeamPlayers(team.id);
-      // totalSquadSize should be the MAX squad size (capacity), not current count
-      // Use team.maxSquadSize, or squadSize as max capacity, or default to 15
-      const maxSquadSize = team.maxSquadSize || team.squadSize || 15;
+      // CRITICAL: Squad size comes from match config, not hardcoded
+      // Fallback chain: matchConfig.maxSquad > team.maxSquadSize > team.squadSize > 15
+      const maxSquadSize = maxSquadFromConfig || team.maxSquadSize || team.squadSize || 15;
       const remainingSlots = Math.max(0, maxSquadSize - boughtPlayers.length);
       
       return {
@@ -149,7 +182,7 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
         remainingBudget: team.remainingBudget || 0
       };
     });
-  }, [teams, allPlayers]);
+  }, [approvedTeamsOnly, allPlayers, maxSquadFromConfig]);
 
   // Get player role badge color
   const getPlayerRoleColor = (role?: string) => {
@@ -163,7 +196,13 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
   };
 
   // Navigate to appropriate dashboard based on user role
+  // Uses onClose prop for smooth state-based navigation when available
   const handleBackToDashboard = () => {
+    if (onClose) {
+      onClose();
+      return;
+    }
+    // Fallback: direct navigation if onClose not provided
     const dashboardRoutes: { [key: string]: string } = {
       'admin': '/admin/dashboard',
       'auctioneer': '/auctioneer/dashboard',
@@ -179,6 +218,51 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
 
   return (
     <div className="w-full h-full flex flex-col bg-black overflow-hidden">
+      {/* ═══════════════════════════════════════════════════════════════════════════════ */}
+      {/* INITIAL LOADING OVERLAY - Shown until Firebase confirms auction state */}
+      {/* ═══════════════════════════════════════════════════════════════════════════════ */}
+      {isInitialLoading && (
+        <div className="absolute inset-0 z-[150] flex items-center justify-center bg-black/95 backdrop-blur-md">
+          <div className="text-center">
+            {/* Glowing Spinner Ring */}
+            <div className="relative w-24 h-24 mx-auto mb-8">
+              {/* Outer glow ring */}
+              <div className="absolute inset-0 rounded-full border-4 border-pink-500/20 animate-ping" style={{ animationDuration: '2s' }} />
+              
+              {/* Spinning gradient ring */}
+              <div 
+                className="absolute inset-0 rounded-full animate-spin"
+                style={{
+                  background: 'conic-gradient(from 0deg, rgba(236, 72, 153, 0) 0%, rgba(236, 72, 153, 0.8) 50%, rgba(236, 72, 153, 0) 100%)',
+                  animationDuration: '1.5s',
+                  mask: 'radial-gradient(farthest-side, transparent calc(100% - 6px), white calc(100% - 6px))',
+                  WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 6px), white calc(100% - 6px))'
+                }}
+              />
+              
+              {/* Center icon */}
+              <div className="absolute inset-4 rounded-full bg-black/80 flex items-center justify-center">
+                <Gavel size={32} className="text-pink-400" style={{ filter: 'drop-shadow(0 0 10px rgba(236, 72, 153, 0.8))' }} />
+              </div>
+            </div>
+            
+            <h3 className="text-2xl font-black text-white uppercase tracking-wider mb-2"
+                style={{ textShadow: '0 0 20px rgba(236, 72, 153, 0.5)' }}>
+              Joining Live Auction
+            </h3>
+            <p className="text-pink-300/60 text-sm">Connecting to auction room...</p>
+            
+            {/* Shimmer bar */}
+            <div className="w-48 h-1 mx-auto mt-6 rounded-full bg-gray-800 overflow-hidden">
+              <div 
+                className="h-full w-1/3 rounded-full bg-gradient-to-r from-transparent via-pink-500 to-transparent"
+                style={{ animation: 'shimmer 1.5s ease-in-out infinite' }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* TOPBAR - Status and Counts */}
       <div className="h-20 bg-gray-900/80 border-b border-pink-400/50 flex items-center justify-between px-6 z-40" style={{
         background: 'linear-gradient(to right, rgba(20, 5, 15, 0.95), rgba(30, 5, 20, 0.95))',
@@ -224,7 +308,7 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
           {/* Available Players */}
           <div className="flex flex-col items-center gap-1">
             <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Available Players</p>
-            <p className="text-lg font-black text-pink-400">{approvedPlayersOnly.filter(p => p.status === 'AVAILABLE').length}</p>
+            <p className="text-lg font-black text-pink-400">{approvedPlayersOnly.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status).length}</p>
           </div>
           
           {/* Unsold Players */}
@@ -233,10 +317,10 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
             <p className="text-lg font-black text-pink-400">{approvedPlayersOnly.filter(p => p.status === 'UNSOLD').length}</p>
           </div>
           
-          {/* Filled Teams */}
+          {/* Filled Teams - CRITICAL: Use maxSquadFromConfig as single source of truth */}
           <div className="flex flex-col items-center gap-1">
             <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Filled Teams</p>
-            <p className="text-lg font-black text-pink-400">{teams.filter(t => (t.players?.length || t.playerIds?.length || 0) >= (t.squadSize || 11)).length}</p>
+            <p className="text-lg font-black text-pink-400">{approvedTeamsOnly.filter(t => (t.players?.length || t.playerIds?.length || 0) >= maxSquadFromConfig).length}</p>
           </div>
           
           {/* Live Status Indicator */}
@@ -451,8 +535,9 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
       </div>
 
       {/* LIVE PLAYER INFO PANEL - GAMING HUD OVERLAY */}
+      {/* FIXED: Increased width from w-80 to w-96 for better readability */}
       {currentPlayer && (
-        <div className="absolute top-24 right-2 bottom-48 z-50 w-80\">
+        <div className="absolute top-24 right-2 bottom-48 z-50 w-96">
           {/* Outer Frame Container */}
           <div className="relative h-full">
             {/* Corner accent brackets - Gaming Style */}
@@ -753,7 +838,7 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
             userRole={userRole}
             currentBidAmount={auctionState?.currentBidAmount || auctionState?.currentBid}
             leadingTeamName={auctionState?.leadingTeamName}
-            teams={teams}
+            teams={approvedTeamsOnly}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
@@ -783,10 +868,10 @@ export const SpectatorLiveRoom: React.FC<SpectatorLiveRoomProps> = ({
               paddingRight: '24px'
             }}
           >
-            {/* Duplicate teams for continuous loop effect */}
-            {[...teamsWithPlayers, ...teamsWithPlayers].map((team, idx) => (
+            {/* Team ticker - single iteration, CSS handles continuous scroll */}
+            {teamsWithPlayers.map((team) => (
               <div 
-                key={`${team.id}-${idx}`}
+                key={team.id}
                 className="ticker-item relative"
                 style={{
                   minWidth: '320px',

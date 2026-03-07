@@ -150,10 +150,40 @@ export const BackupRestoreSection: React.FC<BackupRestoreSectionProps> = ({
 
   // Create backup handlers
   const handleCreateFullBackup = async () => {
-    if (!permissions.canCreateFullBackup || isCreatingBackup || backupInProgress) return;
+    console.log('[Backup] Full backup button clicked:', {
+      matchId,
+      canCreateFullBackup: permissions.canCreateFullBackup,
+      isCreatingBackup,
+      backupInProgress,
+      userRole
+    });
+    
+    if (!matchId) {
+      console.error('[Backup] No matchId provided');
+      onNotification?.('No match selected', 'error');
+      return;
+    }
+    
+    if (!permissions.canCreateFullBackup) {
+      console.error('[Backup] User does not have permission to create backups');
+      onNotification?.('You do not have permission to create backups', 'error');
+      return;
+    }
+    
+    if (isCreatingBackup) {
+      console.warn('[Backup] Backup already in progress');
+      return;
+    }
+    
+    if (backupInProgress) {
+      console.warn('[Backup] Another backup is currently in progress');
+      onNotification?.('A backup is already in progress', 'info');
+      return;
+    }
     
     setIsCreatingBackup(true);
     try {
+      console.log('[Backup] Starting full backup creation...');
       const response = await createFullBackup(
         matchId,
         currentUser.name,
@@ -161,26 +191,60 @@ export const BackupRestoreSection: React.FC<BackupRestoreSectionProps> = ({
         userRole
       );
       
+      console.log('[Backup] API response:', response);
+      
       if (response.success) {
         onNotification?.('Full backup created successfully ✅', 'success');
         setBackupInProgress(true);
         loadBackups();
       } else {
-        onNotification?.(response.error || 'Failed to create backup', 'error');
+        const errorMsg = response.error || response.message || 'Failed to create backup';
+        console.error('[Backup] API error:', errorMsg);
+        onNotification?.(errorMsg, 'error');
       }
     } catch (error) {
-      console.error('Backup failed:', error);
-      onNotification?.('Backup failed', 'error');
+      console.error('[Backup] Exception during backup:', error);
+      onNotification?.(`Backup failed: ${String(error)}`, 'error');
     } finally {
       setIsCreatingBackup(false);
     }
   };
 
   const handleCreateQuickBackup = async () => {
-    if (!permissions.canCreateQuickBackup || isCreatingBackup || backupInProgress) return;
+    console.log('[Backup] Quick backup button clicked:', {
+      matchId,
+      canCreateQuickBackup: permissions.canCreateQuickBackup,
+      isCreatingBackup,
+      backupInProgress,
+      userRole
+    });
+    
+    if (!matchId) {
+      console.error('[Backup] No matchId provided');
+      onNotification?.('No match selected', 'error');
+      return;
+    }
+    
+    if (!permissions.canCreateQuickBackup) {
+      console.error('[Backup] User does not have permission to create backups');
+      onNotification?.('You do not have permission to create backups', 'error');
+      return;
+    }
+    
+    if (isCreatingBackup) {
+      console.warn('[Backup] Backup creation already in progress');
+      return;
+    }
+    
+    if (backupInProgress) {
+      console.warn('[Backup] Another backup is currently in progress');
+      onNotification?.('A backup is already in progress', 'info');
+      return;
+    }
     
     setIsCreatingBackup(true);
     try {
+      console.log('[Backup] Starting quick backup creation...');
       const response = await createQuickBackup(
         matchId,
         currentUser.name,
@@ -188,16 +252,20 @@ export const BackupRestoreSection: React.FC<BackupRestoreSectionProps> = ({
         userRole
       );
       
+      console.log('[Backup] API response:', response);
+      
       if (response.success) {
         onNotification?.('Quick backup created successfully ✅', 'success');
         setBackupInProgress(true);
         loadBackups();
       } else {
-        onNotification?.(response.error || 'Failed to create backup', 'error');
+        const errorMsg = response.error || response.message || 'Failed to create backup';
+        console.error('[Backup] API error:', errorMsg);
+        onNotification?.(errorMsg, 'error');
       }
     } catch (error) {
-      console.error('Backup failed:', error);
-      onNotification?.('Backup failed', 'error');
+      console.error('[Backup] Exception during backup:', error);
+      onNotification?.(`Backup failed: ${String(error)}`, 'error');
     } finally {
       setIsCreatingBackup(false);
     }

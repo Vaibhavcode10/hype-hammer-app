@@ -3,7 +3,7 @@ import {
   Timer, Users, Gavel, Mic, MicOff, Play, Pause, Square, 
   TrendingUp, DollarSign, Clock, AlertCircle, CheckCircle2, ArrowLeft, XCircle,
   Zap, Shield, Award, Activity, Radio, Crown, Trophy, Target, Calendar, Hash, AlertTriangle,
-  Wallet, UserCheck, PieChart, AlertOctagon
+  Wallet, UserCheck, PieChart, AlertOctagon, Settings
 } from 'lucide-react';
 import { isValidImageUrl } from '../../services/imageUrlValidator';
 import { 
@@ -13,9 +13,12 @@ import {
   Player, 
   Team,
   LiveRoomPermissions,
-  BidHistoryItem 
+  BidHistoryItem,
+  BidConfig,
+  CurrencyUnit
 } from '../../types';
-import { MatchConfig } from '../../services/matchConfigService';
+import { MatchConfig, generateBidButtons, updateBidConfig, updateCurrencyUnit, DEFAULT_BID_INCREMENTS, formatBidIncrementLabel, DEFAULT_CURRENCY_UNIT } from '../../services/matchConfigService';
+import { formatWithUnit, formatBidButtonLabel } from '../../services/currencyUtils';
 import { 
   calculateTeamPurseInsights, 
   validateBidAgainstPurse, 
@@ -34,6 +37,7 @@ interface AuctioneerLiveRoomProps {
   remainingSeconds: number;
   auctioneerMicOn: boolean;
   permissions: LiveRoomPermissions;
+  isInitialLoading?: boolean;
   onStartAuction?: () => void;
   onPauseAuction?: () => void;
   onResumeAuction?: () => void;
@@ -47,6 +51,10 @@ interface AuctioneerLiveRoomProps {
   onSwitchPlayer?: (playerId: string) => void;
   currentMatch?: { id: string } | null;
   matchConfig?: MatchConfig | null;
+  bidConfig?: BidConfig | null;
+  onBidConfigUpdate?: (config: BidConfig) => void;
+  currencyUnit?: CurrencyUnit;
+  onCurrencyUnitChange?: (unit: CurrencyUnit) => void;
 }
 
 /**
@@ -63,6 +71,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
   remainingSeconds,
   auctioneerMicOn,
   permissions,
+  isInitialLoading = false,
   onStartAuction,
   onPauseAuction,
   onResumeAuction,
@@ -75,11 +84,28 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
   onDirectSell,
   onSwitchPlayer,
   currentMatch,
-  matchConfig
+  matchConfig,
+  bidConfig,
+  onBidConfigUpdate,
+  currencyUnit: currencyUnitProp = DEFAULT_CURRENCY_UNIT,
+  onCurrencyUnitChange
 }) => {
+  // Use currency unit from props
+  const currencyUnit: CurrencyUnit = currencyUnitProp;
+  
   // Custom bid state per team
   const [customBidAmounts, setCustomBidAmounts] = useState<Record<string, string>>({});
   const [switchPlayerModal, setSwitchPlayerModal] = useState<{ show: boolean; player: Player | null }>({ show: false, player: null });
+  
+  // Settings panel state
+  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  
+  // Bid config editing state (Recovery Mode)
+  const [showBidConfigModal, setShowBidConfigModal] = useState(false);
+  const [editingIncrements, setEditingIncrements] = useState<string[]>(['', '', '', '']);
+  const [editingCustom, setEditingCustom] = useState('');
+  const [savingBidConfig, setSavingBidConfig] = useState(false);
+  const [bidConfigMessage, setBidConfigMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   
   // Purse warning modal state
   const [purseWarningModal, setPurseWarningModal] = useState<{
@@ -131,18 +157,163 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
     setCustomBidAmounts(prev => ({ ...prev, [teamId]: '' }));
   };
 
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // BID CONFIG RECOVERY MODE HANDLERS
+  // ═══════════════════════════════════════════════════════════════════════════════
+  
+  /**
+   * Open bid config edit modal (Recovery Mode)
+   * Can be used even when auction is ONGOING
+   */
+  const handleOpenBidConfigEdit = () => {
+    // Pre-populate with current values
+    if (bidConfig && bidConfig.increments) {
+      const values = bidConfig.increments.map(v => {
+        if (v >= 100000) return String(v / 100000);
+        if (v >= 1000) return String(v / 1000) + 'K';
+        return String(v);
+      });
+      while (values.length < 4) values.push('');
+      setEditingIncrements(values);
+      setEditingCustom(bidConfig.custom ? String(bidConfig.custom / 100000) : '');
+    } else {
+      setEditingIncrements(DEFAULT_BID_INCREMENTS.map(v => String(v / 100000)));
+      setEditingCustom('');
+    }
+    setBidConfigMessage(null);
+    setShowBidConfigModal(true);
+  };
+  
+  /**
+   * Parse input value to rupees based on currencyUnit
+   * K → 1000, L → 100000, Cr → 10000000
+   */
+  const parseIncrementInput = (value: string): number => {
+    if (!value || value.trim() === '') return 0;
+    const cleaned = value.toString().trim().toUpperCase();
+    
+    // Handle explicit K suffix
+    if (cleaned.endsWith('K')) {
+      const num = parseFloat(cleaned.slice(0, -1));
+      return isNaN(num) ? 0 : num * 1000;
+    }
+    // Handle explicit L suffix
+    if (cleaned.endsWith('L')) {
+      const num = parseFloat(cleaned.slice(0, -1));
+      return isNaN(num) ? 0 : num * 100000;
+    }
+    // Handle explicit CR suffix
+    if (cleaned.endsWith('CR')) {
+      const num = parseFloat(cleaned.slice(0, -2));
+      return isNaN(num) ? 0 : num * 10000000;
+    }
+    
+    // No suffix: use currencyUnit to determine multiplier
+    const num = parseFloat(cleaned);
+    if (isNaN(num)) return 0;
+    
+    const multiplier = currencyUnit === 'K' ? 1000 : currencyUnit === 'Cr' ? 10000000 : 100000;
+    return num * multiplier;
+  };
+  
+  /**
+   * Save bid config from recovery mode
+   */
+  const handleSaveBidConfigFromLiveRoom = async () => {
+    if (!currentMatch?.id) return;
+    
+    setSavingBidConfig(true);
+    setBidConfigMessage(null);
+    
+    try {
+      const increments = editingIncrements
+        .map(v => parseIncrementInput(v))
+        .filter(v => v > 0);
+      
+      if (increments.length === 0) {
+        setBidConfigMessage({ type: 'error', text: 'At least one increment is required' });
+        setSavingBidConfig(false);
+        return;
+      }
+      
+      const sortedIncrements = [...increments].sort((a, b) => a - b);
+      const uniqueIncrements = [...new Set(sortedIncrements)];
+      
+      if (uniqueIncrements.length !== increments.length) {
+        setBidConfigMessage({ type: 'error', text: 'Duplicate values not allowed' });
+        setSavingBidConfig(false);
+        return;
+      }
+      
+      const custom = parseIncrementInput(editingCustom);
+      
+      // Save with fromLiveRoom = true (bypasses lock)
+      const result = await updateBidConfig(
+        currentMatch.id,
+        {
+          increments: sortedIncrements,
+          custom: custom > 0 ? custom : null, // Use null, not undefined (Firestore rejects undefined)
+        },
+        userId,
+        true // FROM LIVE ROOM - bypasses lock!
+      );
+      
+      if (result.success) {
+        setBidConfigMessage({ type: 'success', text: 'Bid increments updated!' });
+        // Notify parent to refresh bidConfig
+        if (onBidConfigUpdate) {
+          onBidConfigUpdate({
+            increments: sortedIncrements,
+            custom: custom > 0 ? custom : null, // Use null, not undefined
+            isLocked: true,
+            updatedAt: new Date().toISOString(),
+            updatedBy: userId,
+          });
+        }
+        setTimeout(() => {
+          setShowBidConfigModal(false);
+          setBidConfigMessage(null);
+        }, 1500);
+      } else {
+        setBidConfigMessage({ type: 'error', text: result.message || 'Failed to save' });
+      }
+    } catch (error) {
+      console.error('[LiveRoom] Error saving bid config:', error);
+      setBidConfigMessage({ type: 'error', text: String(error) });
+    } finally {
+      setSavingBidConfig(false);
+    }
+  };
+
   /**
    * CRITICAL GUARD: Filter to only APPROVED players for auction display
-   * A declined player must NEVER appear in the Live Room.
+   * A declined or pending player must NEVER appear in the Live Room.
    * This is defense-in-depth - LiveAuctionPage should already pass only approved players.
+   * 
+   * STRICT: Only count players with approvalStatus === 'accepted'
+   * This must match the Players page logic exactly.
    */
   const approvedPlayersOnly = useMemo(() => {
-    return allPlayers.filter(p => 
-      p.approvalStatus === 'accepted' || 
-      p.approvalStatus === undefined || 
-      p.approvalStatus === null
-    );
+    const approved = allPlayers.filter(p => p.approvalStatus === 'accepted');
+    console.log('📊 AuctioneerLiveRoom: Approved players:', approved.length, '/', allPlayers.length,
+      'All players:', allPlayers.map(p => ({ name: p.name, status: p.approvalStatus })));
+    return approved;
   }, [allPlayers]);
+
+  /**
+   * CRITICAL GUARD: Filter to only APPROVED teams for auction display
+   * A declined or pending team must NEVER appear in the Live Room.
+   * This is defense-in-depth - LiveAuctionPage should already pass only approved teams.
+   * 
+   * STRICT: Only count teams with approvalStatus === 'accepted'
+   * This must match the Teams page logic exactly.
+   */
+  const approvedTeamsOnly = useMemo(() => {
+    const approved = teams.filter(t => t.approvalStatus === 'accepted');
+    console.log('📊 AuctioneerLiveRoom: Approved teams:', approved.length, '/', teams.length,
+      'All teams:', teams.map(t => ({ name: t.name, status: t.approvalStatus })));
+    return approved;
+  }, [teams]);
 
   const handlePlayerCardClick = (player: Player) => {
     // Don't allow switching to the same player
@@ -169,17 +340,18 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const formatBudget = (amount: number): string => {
-    if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(1)}Cr`;
-    if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
-    return `₹${amount.toLocaleString()}`;
-  };
-
-  const formatCurrency = (amount: number): string => {
-    if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(1)}Cr`;
-    if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
-    return `₹${amount.toLocaleString()}`;
-  };
+  // Currency-unit-aware formatting
+  const formatBudget = (amount: number): string => formatWithUnit(amount, currencyUnit);
+  const formatCurrency = (amount: number): string => formatWithUnit(amount, currencyUnit);
+  
+  // Generate bid button labels with current currency unit
+  const bidButtonsWithLabels = useMemo(() => {
+    const buttons = generateBidButtons(bidConfig || null);
+    return buttons.map(btn => ({
+      ...btn,
+      label: formatBidButtonLabel(btn.amount, currencyUnit)
+    }));
+  }, [bidConfig, currencyUnit]);
 
   // Calculate stats - CRITICAL: Use approvedPlayersOnly to exclude declined players
   const remainingPlayers = approvedPlayersOnly.filter(p => p.status !== 'SOLD').length;
@@ -190,21 +362,35 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
   // AUCTION END STATE CALCULATIONS
   // ═══════════════════════════════════════════════════════════════════════════════
   
-  // All players processed = no AVAILABLE players left (all are either SOLD or UNSOLD)
-  const availablePlayers = approvedPlayersOnly.filter(p => p.status === 'AVAILABLE');
+  // All players processed = no AVAILABLE/PENDING players left (all are either SOLD or UNSOLD)
+  // AND auction must be in ENDED status OR actually have processed players
+  // CRITICAL FIX: Include PENDING status - players can have either before auction
+  const availablePlayers = approvedPlayersOnly.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status);
   const unsoldPlayers = approvedPlayersOnly.filter(p => p.status === 'UNSOLD');
-  const allPlayersProcessed = availablePlayers.length === 0 && !currentPlayer;
+  const soldPlayersCount = approvedPlayersOnly.filter(p => p.status === 'SOLD').length;
+  const hasProcessedPlayers = soldPlayersCount > 0 || unsoldPlayers.length > 0;
+  // CRITICAL FIX: Only show auction complete if:
+  // 1. Auction status is ENDED, OR
+  // 2. No available players AND we've actually processed some players (not just before auction starts)
+  const allPlayersProcessed = (
+    (auctionState?.status === LiveAuctionStatus.ENDED) ||
+    (availablePlayers.length === 0 && !currentPlayer && hasProcessedPlayers)
+  );
   
-  // Calculate team fill status
+  // CRITICAL: Get max squad size from match config (single source of truth)
+  const maxSquadFromConfig = matchConfig?.maxSquad || matchConfig?.squadSize?.max || 15;
+  
+  // Calculate team fill status - CRITICAL: Use approvedTeamsOnly and matchConfig
   const teamsWithSlotInfo = useMemo(() => {
-    return teams.map(team => {
+    return approvedTeamsOnly.map(team => {
       const currentSquadSize = team.players?.length || team.playerIds?.length || 0;
-      const maxSize = team.maxSquadSize || team.squadSize || 11;
+      // CRITICAL: Use matchConfig.maxSquad as single source of truth
+      const maxSize = maxSquadFromConfig || team.maxSquadSize || team.squadSize || 11;
       const remainingSlots = Math.max(0, maxSize - currentSquadSize);
       const isFull = currentSquadSize >= maxSize;
       return { ...team, currentSquadSize, maxSize, remainingSlots, isFull };
     });
-  }, [teams]);
+  }, [approvedTeamsOnly, maxSquadFromConfig]);
   
   const allTeamsFull = teamsWithSlotInfo.every(t => t.isFull);
   const filledTeamsCount = teamsWithSlotInfo.filter(t => t.isFull).length;
@@ -222,8 +408,9 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
   const canEndAuction = allPlayersProcessed || allTeamsFull;
   
   // Calculate actual remaining budget for each team - memoized for performance
+  // CRITICAL: Use approvedTeamsOnly to exclude pending/declined teams
   const teamsWithRemainingBudget = useMemo(() => {
-    return teams.map(team => {
+    return approvedTeamsOnly.map(team => {
       // If remainingBudget is explicitly set and valid, use it
       if (team.remainingBudget !== undefined && team.remainingBudget !== null && team.remainingBudget > 0) {
         return team;
@@ -242,7 +429,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
         remainingBudget: Math.max(0, calculatedRemaining)
       };
     });
-  }, [teams, approvedPlayersOnly]);
+  }, [approvedTeamsOnly, approvedPlayersOnly]);
   
   const leadingTeam = auctionState?.leadingTeamId 
     ? teamsWithRemainingBudget.find(t => t.id === auctionState.leadingTeamId)
@@ -256,32 +443,11 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
     return calculateTeamPurseInsights(leadingTeam, allPlayers, matchConfig);
   }, [leadingTeam, allPlayers, matchConfig]);
 
-  // Handle bid with purse check - shows warning but doesn't block
+  // Handle bid - directly place bid without purse warning popup
+  // Purse validation is still done server-side; this just removes the client-side warning modal
   const handleBidWithPurseCheck = (teamId: string, incrementAmount: number) => {
-    const team = teamsWithRemainingBudget.find(t => t.id === teamId);
-    if (!team) {
-      onPlaceBid?.(teamId, incrementAmount);
-      return;
-    }
-
-    const newTotalBid = currentBid + incrementAmount;
-    const validation = validateBidAgainstPurse(team, allPlayers, matchConfig, newTotalBid);
-
-    if (!validation.isSafe && validation.warningMessage) {
-      // Show warning modal but allow proceeding
-      setPurseWarningModal({
-        show: true,
-        teamId,
-        teamName: team.name,
-        incrementAmount,
-        warningMessage: validation.warningMessage,
-        safeMaxBid: validation.safeMaxBid,
-        newTotalBid
-      });
-    } else {
-      // Safe bid - proceed directly
-      onPlaceBid?.(teamId, incrementAmount);
-    }
+    // Place bid directly without showing purse warning modal
+    onPlaceBid?.(teamId, incrementAmount);
   };
 
   // Confirm bid despite warning
@@ -299,7 +465,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
 
   // Calculate dynamic card width based on total players to fit in screen
   // CRITICAL: Use approvedPlayersOnly
-  const totalBottomPlayers = approvedPlayersOnly.filter(p => p.status === 'UNSOLD' || p.status === 'AVAILABLE').length;
+  const totalBottomPlayers = approvedPlayersOnly.filter(p => p.status === 'UNSOLD' || p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status).length;
   const calculateCardWidth = () => {
     if (totalBottomPlayers === 0) return 140;
     // Return fixed size for visibility
@@ -344,6 +510,129 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
         </button>
       )}
 
+      {/* ═══════════════════════════════════════════════════════════════════════════════ */}
+      {/* INITIAL LOADING OVERLAY - Shown until Firebase confirms auction state */}
+      {/* ═══════════════════════════════════════════════════════════════════════════════ */}
+      {isInitialLoading && (
+        <div className="absolute inset-0 z-[150] flex items-center justify-center bg-black/95 backdrop-blur-md">
+          <div className="text-center">
+            {/* Glowing Spinner Ring */}
+            <div className="relative w-24 h-24 mx-auto mb-8">
+              {/* Outer glow ring */}
+              <div className="absolute inset-0 rounded-full border-4 border-pink-500/20 animate-ping" style={{ animationDuration: '2s' }} />
+              
+              {/* Spinning gradient ring */}
+              <div 
+                className="absolute inset-0 rounded-full animate-spin"
+                style={{
+                  background: 'conic-gradient(from 0deg, rgba(236, 72, 153, 0) 0%, rgba(236, 72, 153, 0.8) 50%, rgba(236, 72, 153, 0) 100%)',
+                  animationDuration: '1.5s',
+                  mask: 'radial-gradient(farthest-side, transparent calc(100% - 6px), white calc(100% - 6px))',
+                  WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 6px), white calc(100% - 6px))'
+                }}
+              />
+              
+              {/* Center icon */}
+              <div className="absolute inset-4 rounded-full bg-black/80 flex items-center justify-center">
+                <Gavel size={32} className="text-pink-400" style={{ filter: 'drop-shadow(0 0 10px rgba(236, 72, 153, 0.8))' }} />
+              </div>
+            </div>
+            
+            <h3 className="text-2xl font-black text-white uppercase tracking-wider mb-2"
+                style={{ textShadow: '0 0 20px rgba(236, 72, 153, 0.5)' }}>
+              Loading Auction Room
+            </h3>
+            <p className="text-pink-300/60 text-sm">Connecting to live auction...</p>
+            
+            {/* Shimmer bar */}
+            <div className="w-48 h-1 mx-auto mt-6 rounded-full bg-gray-800 overflow-hidden">
+              <div 
+                className="h-full w-1/3 rounded-full bg-gradient-to-r from-transparent via-pink-500 to-transparent"
+                style={{ animation: 'shimmer 1.5s ease-in-out infinite' }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════════════════ */}
+      {/* AUCTION ENDED OVERLAY - Shown when auction status is ENDED */}
+      {/* ═══════════════════════════════════════════════════════════════════════════════ */}
+      {auctionState?.status === LiveAuctionStatus.ENDED && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md">
+          <div className="text-center p-16 rounded-3xl border-2 border-red-500/30 max-w-2xl mx-4" style={{
+            background: 'linear-gradient(135deg, rgba(20, 5, 15, 0.98), rgba(30, 8, 20, 0.98))',
+            boxShadow: '0 0 80px rgba(239, 68, 68, 0.3), inset 0 0 40px rgba(239, 68, 68, 0.05)'
+          }}>
+            <div className="w-24 h-24 mx-auto mb-8 rounded-full bg-gradient-to-br from-red-500/30 to-red-600/30 flex items-center justify-center border-2 border-red-500/40">
+              <Square size={48} className="text-red-400" />
+            </div>
+            
+            <h2 className="text-5xl font-black text-white mb-4 tracking-wide uppercase">
+              LIVE AUCTION ENDED
+            </h2>
+            <p className="text-red-300/70 text-xl mb-10">
+              The auction has been officially closed. No further bidding is possible.
+            </p>
+            
+            {/* Stats Summary */}
+            <div className="grid grid-cols-3 gap-6 mb-10">
+              <div 
+                className="p-6 rounded-xl"
+                style={{
+                  background: 'rgba(34, 197, 94, 0.1)',
+                  border: '1px solid rgba(34, 197, 94, 0.3)'
+                }}
+              >
+                <div className="text-4xl font-black text-green-400 mb-2">
+                  {approvedPlayersOnly.filter(p => p.status === 'SOLD').length}
+                </div>
+                <div className="text-sm text-gray-400 uppercase tracking-wider">Players Sold</div>
+              </div>
+              <div 
+                className="p-6 rounded-xl"
+                style={{
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)'
+                }}
+              >
+                <div className="text-4xl font-black text-red-400 mb-2">
+                  {approvedPlayersOnly.filter(p => p.status === 'UNSOLD').length}
+                </div>
+                <div className="text-sm text-gray-400 uppercase tracking-wider">Unsold</div>
+              </div>
+              <div 
+                className="p-6 rounded-xl"
+                style={{
+                  background: 'rgba(147, 51, 234, 0.1)',
+                  border: '1px solid rgba(147, 51, 234, 0.3)'
+                }}
+              >
+                <div className="text-4xl font-black text-purple-400 mb-2">
+                  {approvedTeamsOnly.filter(t => (t.players?.length || t.playerIds?.length || 0) >= maxSquadFromConfig).length}/{approvedTeamsOnly.length}
+                </div>
+                <div className="text-sm text-gray-400 uppercase tracking-wider">Teams Filled</div>
+              </div>
+            </div>
+            
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="px-10 py-4 rounded-xl text-white font-bold tracking-wider flex items-center gap-3 mx-auto transition-all hover:scale-105"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.8), rgba(220, 38, 38, 0.8))',
+                  boxShadow: '0 4px 20px rgba(239, 68, 68, 0.4)',
+                  border: '1px solid rgba(239, 68, 68, 0.5)'
+                }}
+              >
+                <ArrowLeft size={20} />
+                Back to Dashboard
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="relative z-10 h-full flex flex-col">
         
         {/* 🥇 1️⃣ TOP HEADER BAR - Full Width Tournament Banner */}
@@ -384,7 +673,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
           </div>
 
           {/* Right: Auction Statistics - CRITICAL: Use approvedPlayersOnly */}
-          <div className="flex items-center gap-8">
+          <div className="flex items-center gap-6">
             <div className="text-center">
               <div className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-1">
                 Total Players
@@ -405,15 +694,6 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
             
             <div className="text-center">
               <div className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-1">
-                Available Players
-              </div>
-              <div className="text-red-400 font-black text-xl tabular-nums">
-                {approvedPlayersOnly.filter(p => p.status === 'AVAILABLE').length}
-              </div>
-            </div>
-            
-            <div className="text-center">
-              <div className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-1">
                 Unsold Players
               </div>
               <div className="text-red-400 font-black text-xl tabular-nums">
@@ -426,11 +706,148 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 Filled Teams
               </div>
               <div className="text-red-400 font-black text-xl tabular-nums">
-                {teams.filter(t => (t.players?.length || t.playerIds?.length || 0) >= (t.squadSize || 11)).length}
+                {approvedTeamsOnly.filter(t => (t.players?.length || t.playerIds?.length || 0) >= maxSquadFromConfig).length}
               </div>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-1">
+                Total Teams
+              </div>
+              <div className="text-red-400 font-black text-xl tabular-nums">
+                {approvedTeamsOnly.length}
+              </div>
+            </div>
+            
+            {/* Settings Icon - Opens Settings Panel */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  console.log('⚙️ Settings button clicked, current state:', showSettingsPanel);
+                  setShowSettingsPanel(!showSettingsPanel);
+                }}
+                className={`ml-2 p-2.5 rounded-lg border transition-all group relative
+                           ${showSettingsPanel 
+                             ? 'bg-yellow-500/30 border-yellow-500/60 text-yellow-400' 
+                             : 'bg-gray-800/80 border-gray-700/50 hover:bg-yellow-500/20 hover:border-yellow-500/50'}`}
+                title="Auction Settings"
+              >
+                <Settings size={18} className={`transition-colors ${showSettingsPanel ? 'text-yellow-400' : 'text-gray-400 group-hover:text-yellow-400'}`} />
+              </button>
             </div>
           </div>
         </div>
+        
+        {/* Settings Panel - Rendered outside header to avoid overflow clipping */}
+        {showSettingsPanel && (
+          <>
+            {/* Backdrop to close panel */}
+            <div 
+              className="fixed inset-0 z-[998]" 
+              onClick={() => setShowSettingsPanel(false)}
+            />
+            {/* Settings Panel */}
+            <div className="fixed top-16 right-6 w-80 bg-gray-900/98 border border-gray-700/80 
+                            rounded-xl shadow-2xl z-[999] overflow-hidden backdrop-blur-sm">
+              <div className="px-4 py-3 border-b border-gray-700/50 bg-gray-800/50">
+                <h3 className="text-white font-bold text-sm">Auction Settings</h3>
+              </div>
+              
+              <div className="p-4 space-y-4">
+                {/* Currency Unit Selector */}
+                <div>
+                  <label className="block text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">
+                    Currency Display Unit
+                  </label>
+                  <div className="flex gap-2">
+                    {(['K', 'L', 'Cr'] as CurrencyUnit[]).map((unit) => (
+                      <button
+                        key={unit}
+                        onClick={async () => {
+                          if (currentMatch?.id && onCurrencyUnitChange) {
+                            onCurrencyUnitChange(unit);
+                            await updateCurrencyUnit(currentMatch.id, unit, userId);
+                          }
+                        }}
+                        className={`flex-1 px-4 py-2 rounded-lg font-bold text-sm transition-all
+                                   ${currencyUnit === unit
+                                     ? 'bg-yellow-500 text-black'
+                                     : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white border border-gray-700'}`}
+                      >
+                        {unit}
+                        <span className="block text-[10px] font-normal opacity-70">
+                          {unit === 'K' ? 'Thousands' : unit === 'L' ? 'Lakhs' : 'Crores'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Edit Bid Increments Button */}
+                <div>
+                  <label className="block text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">
+                    Bid Increments
+                  </label>
+                  <button
+                    onClick={() => {
+                      setShowSettingsPanel(false);
+                      handleOpenBidConfigEdit();
+                    }}
+                    className="w-full px-4 py-2.5 rounded-lg flex items-center justify-center gap-2
+                               bg-gradient-to-r from-yellow-600/20 to-orange-600/20
+                               border border-yellow-500/30 text-yellow-400
+                               hover:bg-yellow-500/20 hover:border-yellow-500/50 
+                               transition-all text-sm font-bold"
+                  >
+                    <Gavel size={16} />
+                    <span>Edit Bid Increments</span>
+                    <span className="text-xs text-yellow-300/60">(Recovery Mode)</span>
+                  </button>
+                </div>
+                
+                {/* Current Bid Buttons Preview */}
+                <div>
+                  <label className="block text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">
+                    Active Bid Buttons
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {bidButtonsWithLabels.map((btn, idx) => (
+                      <span key={idx} className="px-2 py-1 bg-gray-800 rounded text-xs text-gray-300 border border-gray-700">
+                        {btn.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* DANGER ZONE - End Live Auction */}
+                {onEndAuction && (
+                  <div className="pt-4 mt-4 border-t border-red-500/20">
+                    <label className="block text-red-400 text-xs font-semibold uppercase tracking-wider mb-2">
+                      ⚠️ Danger Zone
+                    </label>
+                    <button
+                      onClick={() => {
+                        setShowSettingsPanel(false);
+                        onEndAuction();
+                      }}
+                      className="w-full px-4 py-3 rounded-lg flex items-center justify-center gap-2
+                                 bg-gradient-to-r from-red-600/20 to-red-700/30
+                                 border-2 border-red-500/50 text-red-400
+                                 hover:bg-red-600/30 hover:border-red-500/80 hover:text-red-300
+                                 transition-all text-sm font-bold"
+                    >
+                      <AlertTriangle size={18} />
+                      <span>END LIVE AUCTION</span>
+                    </button>
+                    <p className="text-[10px] text-red-400/50 text-center mt-2">
+                      Stops auction for all users immediately
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
 
         {currentPlayer ? (
           <>
@@ -980,12 +1397,6 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                     </div>
                   ) : (
                     teamsWithRemainingBudget
-                      .sort((a, b) => {
-                        // Leading team to top
-                        if (a.id === auctionState?.leadingTeamId) return -1;
-                        if (b.id === auctionState?.leadingTeamId) return 1;
-                        return 0;
-                      })
                       .map((team, index) => {
                       const remainingBudget = team.remainingBudget || 0;
                       const isLeadingTeam = auctionState?.leadingTeamId === team.id;
@@ -993,238 +1404,153 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                       const canAfford = remainingBudget >= (auctionState?.currentBid || auctionState?.currentBidAmount || currentPlayer?.basePrice || 0);
                       const currentBid = auctionState?.currentBid || auctionState?.currentBidAmount || currentPlayer?.basePrice || 0;
                       
-                      if (isLeadingTeam) {
-                        // Leading Team - Simple Display
-                        return (
-                          <div
-                            key={team.id}
-                            className="relative h-16 overflow-hidden rounded-lg
-                                       transform hover:scale-[1.02] transition-all duration-200"
-                          >
-                            {/* Background */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-red-900/60 via-red-800/50 to-red-900/60 rounded-lg"></div>
-
-                            {/* Border */}
-                            <div className="absolute inset-0 border-2 border-red-500/60 pointer-events-none rounded-lg" />
-
-                            {/* Content Layer */}
-                            <div className="relative h-full flex items-center gap-2.5 px-3">
-                              
-                              {/* Rank Badge */}
-                              <div className="relative w-10 h-10 flex-shrink-0">
-                                <div className="relative w-full h-full bg-gradient-to-br from-red-400 to-red-600
-                                                flex items-center justify-center rounded-lg
-                                                border-2 border-red-300">
-                                  <Crown size={16} className="text-white" />
-                                </div>
-                              </div>
-
-                              {/* Team Identity */}
-                              <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                                <div className="w-10 h-10 bg-black/60 border-2 border-red-500/60 flex-shrink-0 overflow-hidden rounded-md">
-                                  {team.logo ? (
-                                    <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
-                                  ) : (
-                                    <Shield size={20} className="text-red-400 m-auto" />
-                                  )}
-                                </div>
-                                
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <div className="text-sm font-black text-red-100 truncate uppercase tracking-[0.08em]">
-                                      {team.name}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs font-black text-red-300 tracking-wider tabular-nums">
-                                      ₹{(remainingBudget / 100000).toFixed(1)}L
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Bid Buttons */}
-                              <div className="flex gap-1.5 flex-shrink-0 items-center">
-                                {[
-                                  { amount: 100000, label: '+1L', gradient: 'from-red-600 to-red-700' },
-                                  { amount: 500000, label: '+5L', gradient: 'from-red-700 to-red-800' },
-                                  { amount: 1000000, label: '+10L', gradient: 'from-red-800 to-red-900' }
-                                ].map(({ amount, label, gradient }) => (
-                                  <button
-                                    key={label}
-                                    onClick={() => handleBidWithPurseCheck(team.id, amount)}
-                                    disabled={!onPlaceBid || remainingBudget < (currentBid + amount)}
-                                    className={`px-2.5 py-1.5 bg-gradient-to-b ${gradient}
-                                               border border-red-400/80 text-red-50 text-[10px] font-black uppercase rounded-md
-                                               hover:scale-105 
-                                               disabled:from-gray-700 disabled:to-gray-800 disabled:border-gray-600
-                                               disabled:text-gray-500 disabled:cursor-not-allowed
-                                               active:scale-95 transition-all duration-150`}
-                                  >
-                                    {label}
-                                  </button>
-                                ))}
-                                {/* Custom Bid Input */}
-                                <div className="flex gap-0.5 items-center" title="Enter increment in Lakhs (e.g., 2 = +₹2L, 5 = +₹5L)">
-                                  <input
-                                    type="text"
-                                    value={customBidAmounts[team.id] || ''}
-                                    onChange={(e) => handleCustomBidChange(team.id, e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.preventDefault();
-                                        handleCustomBidSubmit(team.id, remainingBudget, currentBid);
-                                      }
-                                    }}
-                                    placeholder="+"
-                                    className="w-14 px-1 py-1.5 bg-black/60 border border-red-500/60 rounded text-red-100 text-[10px] font-bold text-center
-                                               focus:outline-none focus:border-red-400 focus:ring-1 focus:ring-red-400"
-                                  />
-                                  <span className="text-red-400 text-[9px] font-bold">L</span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      } else {
-                        // 🔥 CHALLENGER STRIPS - Tactical Warfare
-                        return (
-                          <div
-                            key={team.id}
-                            className="relative h-14 overflow-hidden
-                                       hover:scale-[1.01] transition-all duration-150"
+                      // 🎯 UNIFIED TEAM STRIP with Smooth Transitions
+                      return (
+                        <div
+                          key={team.id}
+                          className={`relative h-14 overflow-hidden rounded-lg
+                                     hover:scale-[1.01] transition-all duration-500 ease-out`}
+                          style={{
+                            // Smooth box-shadow transition for leading highlight
+                            boxShadow: isLeadingTeam 
+                              ? '0 0 20px rgba(239, 68, 68, 0.4), 0 0 40px rgba(239, 68, 68, 0.2), inset 0 0 15px rgba(239, 68, 68, 0.1)'
+                              : '0 0 0 rgba(239, 68, 68, 0), 0 0 0 rgba(239, 68, 68, 0)',
+                            transition: 'box-shadow 500ms cubic-bezier(0.4, 0, 0.2, 1), transform 150ms ease-out'
+                          }}
+                        >
+                          {/* Background Layer - Smooth Color Transition */}
+                          <div 
+                            className="absolute inset-0 rounded-lg transition-all duration-500 ease-out"
                             style={{
-                              clipPath: isTop3 
-                                ? 'polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))'
-                                : 'polygon(0 0, 100% 0, 100% 100%, 6px 100%, 0 calc(100% - 6px))'
+                              background: isLeadingTeam
+                                ? 'linear-gradient(to right, rgba(127, 29, 29, 0.5), rgba(153, 27, 27, 0.4), rgba(127, 29, 29, 0.5))'
+                                : isTop3
+                                  ? 'linear-gradient(to right, rgba(23, 37, 84, 0.5), rgba(22, 78, 99, 0.3), rgba(23, 37, 84, 0.5))'
+                                  : canAfford
+                                    ? 'linear-gradient(to right, rgba(3, 7, 18, 0.7), rgba(17, 24, 39, 0.5), rgba(3, 7, 18, 0.7))'
+                                    : 'linear-gradient(to right, rgba(69, 10, 10, 0.4), rgba(3, 7, 18, 0.5), rgba(69, 10, 10, 0.4))'
                             }}
                           >
-                            {/* Background Layer */}
-                            <div className={`absolute inset-0 ${
-                              isTop3
-                                ? 'bg-gradient-to-r from-blue-950/50 via-cyan-950/30 to-blue-950/50'
-                                : canAfford
-                                ? 'bg-gradient-to-r from-gray-950/70 via-gray-900/50 to-gray-950/70'
-                                : 'bg-gradient-to-r from-red-950/40 via-gray-950/50 to-red-950/40'
-                            }`}>
-                              {/* Subtle Noise */}
-                              <div className="absolute inset-0 opacity-[0.08]"
-                                   style={{
-                                     backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 256 256\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noise\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'1.2\' numOctaves=\'3\' /%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noise)\' /%3E%3C/svg%3E")',
-                                     backgroundSize: '64px 64px'
-                                   }} />
+                            {/* Subtle Noise */}
+                            <div className="absolute inset-0 opacity-[0.08] rounded-lg"
+                                 style={{
+                                   backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 256 256\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noise\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'1.2\' numOctaves=\'3\' /%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noise)\' /%3E%3C/svg%3E")',
+                                   backgroundSize: '64px 64px'
+                                 }} />
+                          </div>
 
-                              {/* Tactical Lines */}
-                              {isTop3 && (
-                                <div className="absolute inset-0 opacity-15">
-                                  {[...Array(5)].map((_, i) => (
-                                    <div
-                                      key={i}
-                                      className="absolute h-full w-px bg-gradient-to-b from-transparent via-cyan-400 to-transparent"
-                                      style={{
-                                        left: `${i * 20}%`,
-                                        transform: 'skewX(-20deg)'
-                                      }}
-                                    />
-                                  ))}
-                                </div>
-                              )}
+                          {/* Border - Smooth Color Transition */}
+                          <div 
+                            className="absolute inset-0 pointer-events-none rounded-lg transition-all duration-500 ease-out"
+                            style={{
+                              border: isLeadingTeam
+                                ? '2px solid rgba(239, 68, 68, 0.5)'
+                                : isTop3 
+                                  ? '1px solid rgba(6, 182, 212, 0.4)' 
+                                  : '1px solid rgba(55, 65, 81, 0.4)'
+                            }}
+                          />
+
+                          {/* Left Edge Stripe - Smooth Color Transition */}
+                          <div 
+                            className="absolute left-0 top-0 bottom-0 w-1 rounded-l-lg transition-all duration-500 ease-out"
+                            style={{
+                              background: isLeadingTeam
+                                ? 'linear-gradient(to bottom, rgb(248, 113, 113), rgb(220, 38, 38), rgb(185, 28, 28))'
+                                : isTop3 
+                                  ? 'linear-gradient(to bottom, rgb(34, 211, 238), rgb(59, 130, 246), rgb(6, 182, 212))' 
+                                  : 'linear-gradient(to bottom, rgb(75, 85, 99), rgb(31, 41, 55))'
+                            }}
+                          />
+
+                          {/* Content */}
+                          <div 
+                            className="relative h-full flex items-center gap-2 px-2 transition-all duration-500 ease-out"
+                          >
+                            {/* Team Identity */}
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <div 
+                                className="w-9 h-9 flex-shrink-0 overflow-hidden rounded-md transition-all duration-500 ease-out"
+                                style={{
+                                  border: isLeadingTeam 
+                                    ? '2px solid rgba(239, 68, 68, 0.6)' 
+                                    : isTop3 
+                                      ? '1px solid rgba(6, 182, 212, 0.5)' 
+                                      : '1px solid rgba(55, 65, 81, 0.5)',
+                                  background: isLeadingTeam ? 'rgba(0, 0, 0, 0.6)' : isTop3 ? 'rgba(0, 0, 0, 0.6)' : 'rgba(17, 24, 39, 0.5)'
+                                }}
+                              >
+                                {team.logo ? (
+                                  <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
+                                ) : (
+                                  <Shield size={14} className={`m-auto transition-colors duration-500 ${isLeadingTeam ? 'text-red-400' : 'text-gray-500'}`} />
+                                )}
+                              </div>
+                              
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-xs font-black truncate uppercase tracking-wider leading-tight transition-colors duration-500
+                                              ${isLeadingTeam ? 'text-red-100' : isTop3 ? 'text-cyan-100' : 'text-gray-300'}`}>
+                                  {team.name}
+                                </p>
+                                <p className={`text-[10px] font-bold tracking-wider leading-tight tabular-nums transition-colors duration-500
+                                              ${isLeadingTeam ? 'text-red-300' : canAfford ? 'text-cyan-400' : 'text-red-400'}`}>
+                                  {formatBudget(remainingBudget)} {!canAfford && '⚠'}
+                                </p>
+                              </div>
                             </div>
 
-                            {/* Sharp Border */}
-                            <div className={`absolute inset-0 border pointer-events-none ${
-                              isTop3 ? 'border-cyan-500/40' : 'border-gray-700/40'
-                            }`}
-                                 style={{
-                                   clipPath: isTop3 
-                                     ? 'polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))'
-                                     : 'polygon(0 0, 100% 0, 100% 100%, 6px 100%, 0 calc(100% - 6px))'
-                                 }} />
-
-                            {/* Rank Edge Stripe */}
-                            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${
-                              isTop3 
-                                ? 'bg-gradient-to-b from-cyan-400 via-blue-500 to-cyan-600' 
-                                : 'bg-gradient-to-b from-gray-600 to-gray-800'
-                            }`} />
-
-                            {/* Content */}
-                            <div className="relative h-full flex items-center gap-2 px-2">
-                              
-                              {/* Team Identity - Tactical */}
-                              <div className="flex items-center gap-2 flex-1 min-w-0">
-                                <div className={`w-9 h-9 border flex-shrink-0 overflow-hidden
-                                                ${isTop3 ? 'border-cyan-500/50 bg-black/60' : 'border-gray-700/50 bg-gray-900/50'}`}
-                                     style={{ clipPath: 'polygon(20% 0%, 80% 0%, 100% 20%, 100% 80%, 80% 100%, 20% 100%, 0% 80%, 0% 20%)' }}>
-                                  {team.logo ? (
-                                    <img src={team.logo} alt={team.name} className="w-full h-full object-cover" />
-                                  ) : (
-                                    <Shield size={14} className="text-gray-500 m-auto" />
-                                  )}
-                                </div>
-                                
-                                <div className="flex-1 min-w-0">
-                                  <p className={`text-xs font-black truncate uppercase tracking-wider leading-tight
-                                                ${isTop3 ? 'text-cyan-100' : 'text-gray-300'}`}>
-                                    {team.name}
-                                  </p>
-                                  <p className={`text-[10px] font-bold tracking-wider leading-tight tabular-nums
-                                                ${canAfford ? 'text-cyan-400' : 'text-red-400'}`}>
-                                    ₹{(remainingBudget / 100000).toFixed(1)}L {!canAfford && '⚠'}
-                                  </p>
-                                </div>
-                              </div>
-
-                              {/* Tactical Bid Controls */}
-                              <div className="flex gap-1 flex-shrink-0 items-center">
-                                {[
-                                  { amount: 100000, label: '+1L' },
-                                  { amount: 500000, label: '+5L' },
-                                  { amount: 1000000, label: '+10L' },
-                                  { amount: 2000000, label: '+20L' }
-                                ].map(({ amount, label }) => (
-                                  <button
-                                    key={label}
-                                    onClick={() => handleBidWithPurseCheck(team.id, amount)}
-                                    disabled={!onPlaceBid || remainingBudget < (currentBid + amount)}
-                                    className="px-2.5 py-1.5 bg-gradient-to-b from-purple-700 to-purple-900
-                                               border border-purple-500/50 text-white text-[10px] font-black uppercase
-                                               hover:from-purple-600 hover:to-purple-800 hover:scale-110
-                                               disabled:from-gray-900 disabled:to-black disabled:border-gray-800
-                                               disabled:text-gray-700 disabled:cursor-not-allowed
-                                               active:scale-95 transition-all duration-150
-                                               shadow-[0_2px_0_rgba(0,0,0,0.4)]"
-                                    style={{
-                                      clipPath: 'polygon(10% 0%, 90% 0%, 100% 100%, 0% 100%)'
-                                    }}
-                                  >
-                                    {label}
-                                  </button>
-                                ))}
-                                {/* Custom Bid Input */}
-                                <div className="flex gap-0.5 items-center" title="Enter increment in Lakhs (e.g., 2 = +₹2L, 5 = +₹5L)">
-                                  <input
-                                    type="text"
-                                    value={customBidAmounts[team.id] || ''}
-                                    onChange={(e) => handleCustomBidChange(team.id, e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.preventDefault();
-                                        handleCustomBidSubmit(team.id, remainingBudget, currentBid);
-                                      }
-                                    }}
-                                    placeholder="+"
-                                    className="w-14 px-1 py-1.5 bg-black/60 border border-purple-500/60 rounded text-purple-100 text-[10px] font-bold text-center
-                                               focus:outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-400
-                                               shadow-[0_2px_0_rgba(0,0,0,0.4)]"
-                                  />
-                                  <span className="text-purple-300 text-[9px] font-bold">L</span>
-                                </div>
+                            {/* Bid Controls - Color adapts to leading state */}
+                            <div className="flex gap-1 flex-shrink-0 items-center">
+                              {bidButtonsWithLabels.map(({ amount, label }, idx) => (
+                                <button
+                                  key={`${team.id}-${amount}-${idx}`}
+                                  onClick={() => handleBidWithPurseCheck(team.id, amount)}
+                                  disabled={!onPlaceBid || remainingBudget < (currentBid + amount)}
+                                  className={`px-2.5 py-1.5 text-[10px] font-black uppercase rounded-md
+                                             hover:scale-105 active:scale-95 transition-all duration-150
+                                             disabled:from-gray-900 disabled:to-black disabled:border-gray-800
+                                             disabled:text-gray-700 disabled:cursor-not-allowed
+                                             ${label.includes('★') ? 'ring-1 ring-yellow-400/50' : ''}`}
+                                  style={{
+                                    background: isLeadingTeam 
+                                      ? 'linear-gradient(to bottom, rgb(239, 68, 68), rgb(185, 28, 28))'
+                                      : 'linear-gradient(to bottom, rgb(126, 34, 206), rgb(88, 28, 135))',
+                                    border: isLeadingTeam 
+                                      ? '1px solid rgba(248, 113, 113, 0.8)'
+                                      : '1px solid rgba(168, 85, 247, 0.5)',
+                                    color: isLeadingTeam ? 'rgb(254, 226, 226)' : 'white',
+                                    transition: 'background 300ms ease-out, border-color 300ms ease-out'
+                                  }}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                              {/* Custom Bid Input */}
+                              <div className="flex gap-0.5 items-center" title="Enter increment in Lakhs (e.g., 2 = +₹2L, 5 = +₹5L)">
+                                <input
+                                  type="text"
+                                  value={customBidAmounts[team.id] || ''}
+                                  onChange={(e) => handleCustomBidChange(team.id, e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleCustomBidSubmit(team.id, remainingBudget, currentBid);
+                                    }
+                                  }}
+                                  placeholder="+"
+                                  className="w-14 px-1 py-1.5 bg-black/60 rounded text-[10px] font-bold text-center
+                                             focus:outline-none focus:ring-1 transition-all duration-300"
+                                  style={{
+                                    border: isLeadingTeam ? '1px solid rgba(239, 68, 68, 0.6)' : '1px solid rgba(168, 85, 247, 0.6)',
+                                    color: isLeadingTeam ? 'rgb(254, 202, 202)' : 'rgb(233, 213, 255)'
+                                  }}
+                                />
+                                <span className={`text-[9px] font-bold transition-colors duration-300 ${isLeadingTeam ? 'text-red-400' : 'text-purple-300'}`}>L</span>
                               </div>
                             </div>
                           </div>
-                        );
-                      }
+                        </div>
+                      );
                     })
                   )}
                 </div>
@@ -1246,7 +1572,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                     
                     <div className="relative flex items-center justify-center gap-2">
                       <CheckCircle2 size={18} className="animate-pulse" />
-                      <span>CONFIRM SALE - {teams.find(t => t.id === auctionState.leadingTeamId)?.name}</span>
+                      <span>CONFIRM SALE - {approvedTeamsOnly.find(t => t.id === auctionState.leadingTeamId)?.name}</span>
                       <Zap size={16} className="text-yellow-300" />
                     </div>
                   </button>
@@ -1346,7 +1672,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 ))}
 
                 {/* AVAILABLE PLAYERS (Right) - Static - CRITICAL: Use approvedPlayersOnly */}
-                {approvedPlayersOnly.filter(p => p.status === 'AVAILABLE').map((player, idx) => (
+                {approvedPlayersOnly.filter(p => p.status === 'AVAILABLE' || p.status === 'PENDING' || !p.status).map((player, idx) => (
                   <div 
                     key={`available-${player.id}-${idx}`}
                     onClick={() => handlePlayerCardClick(player)}
@@ -1514,6 +1840,8 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
             </div>
           )}
           
+
+          
           {/* End Auction Button - Always at Bottom for Auctioneer */}
           {onEndAuction && canEndAuction && (
             <div className="mx-6 mb-4">
@@ -1598,7 +1926,7 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                       border: '1px solid rgba(147, 51, 234, 0.3)'
                     }}
                   >
-                    <div className="text-4xl font-black text-purple-400 mb-2">{filledTeamsCount}/{teams.length}</div>
+                    <div className="text-4xl font-black text-purple-400 mb-2">{filledTeamsCount}/{approvedTeamsOnly.length}</div>
                     <div className="text-sm text-gray-400 uppercase tracking-wider">Teams Filled</div>
                   </div>
                 </div>
@@ -1671,8 +1999,8 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 )}
               </div>
             ) : (
-              // Ready to Start State
-              <div className="text-center">
+              // Ready to Start State - Show Overview
+              <div className="text-center px-6">
                 <div className="relative inline-block mb-6">
                   <div className="absolute inset-0 bg-pink-500/10 blur-2xl"></div>
                   <Gavel size={80} className="relative text-pink-600/40" />
@@ -1680,9 +2008,34 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                 <h2 className="text-3xl font-black text-gray-500 tracking-wide mb-3">
                   Ready to Start Auction
                 </h2>
-                <p className="text-gray-600 text-lg mb-8">
+                <p className="text-gray-600 text-lg mb-6">
                   Select a player to begin the bidding process
                 </p>
+
+                {/* Stats Preview */}
+                <div className="grid grid-cols-3 gap-6 mb-8 max-w-2xl mx-auto">
+                  <div className="p-6 rounded-xl" style={{
+                    background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(22, 163, 74, 0.1) 100%)',
+                    border: '1px solid rgba(34, 197, 94, 0.3)'
+                  }}>
+                    <div className="text-4xl font-black text-green-400 mb-2">{approvedPlayersOnly.length}</div>
+                    <div className="text-sm text-gray-400 uppercase tracking-wider">Total Players</div>
+                  </div>
+                  <div className="p-6 rounded-xl" style={{
+                    background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.1) 0%, rgba(126, 34, 206, 0.1) 100%)',
+                    border: '1px solid rgba(147, 51, 234, 0.3)'
+                  }}>
+                    <div className="text-4xl font-black text-purple-400 mb-2">{approvedTeamsOnly.length}</div>
+                    <div className="text-sm text-gray-400 uppercase tracking-wider">Teams</div>
+                  </div>
+                  <div className="p-6 rounded-xl" style={{
+                    background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(37, 99, 235, 0.1) 100%)',
+                    border: '1px solid rgba(59, 130, 246, 0.3)'
+                  }}>
+                    <div className="text-4xl font-black text-blue-400 mb-2">{maxSquadFromConfig}</div>
+                    <div className="text-sm text-gray-400 uppercase tracking-wider">Squad Size</div>
+                  </div>
+                </div>
                 
                 {onStartAuction && (
                   <button
@@ -1698,6 +2051,35 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
                     <Play size={24} />
                     <span>Start Auction</span>
                   </button>
+                )}
+
+                {/* Teams Preview - Show first few teams */}
+                {approvedTeamsOnly.length > 0 && (
+                  <div className="mt-12 max-w-4xl mx-auto">
+                    <h3 className="text-lg font-black text-gray-400 mb-4 uppercase tracking-wider">Participating Teams</h3>
+                    <div className="grid grid-cols-5 gap-4">
+                      {approvedTeamsOnly.slice(0, 10).map(team => (
+                        <div
+                          key={team.id}
+                          className="p-3 rounded-lg"
+                          style={{
+                            background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.1) 0%, rgba(219, 39, 119, 0.1) 100%)',
+                            border: '1px solid rgba(236, 72, 153, 0.3)'
+                          }}
+                        >
+                          {team.logo ? (
+                            <img src={team.logo} alt={team.name} className="w-12 h-12 mx-auto mb-2 rounded-full object-cover" />
+                          ) : (
+                            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-pink-500/20 flex items-center justify-center">
+                              <Trophy size={20} className="text-pink-400" />
+                            </div>
+                          )}
+                          <p className="text-xs font-bold text-white text-center truncate">{team.name}</p>
+                          <p className="text-[10px] text-gray-400 text-center">{formatBudget(team.remainingBudget || team.budget || 0)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -1858,93 +2240,137 @@ export const AuctioneerLiveRoom: React.FC<AuctioneerLiveRoomProps> = ({
         </div>
       )}
 
-      {/* PURSE WARNING MODAL */}
-      {purseWarningModal.show && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+      {/* ═══════════════════════════════════════════════════════════════════════════════ */}
+      {/* BID CONFIG EDIT MODAL - Recovery Mode */}
+      {/* ═══════════════════════════════════════════════════════════════════════════════ */}
+      {showBidConfigModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div 
-            className="relative w-[480px] overflow-hidden"
+            className="relative max-w-lg w-full mx-4 rounded-2xl overflow-hidden"
             style={{
-              background: 'linear-gradient(135deg, rgba(25, 10, 10, 0.98) 0%, rgba(40, 15, 15, 0.98) 100%)',
-              border: '2px solid rgba(239, 68, 68, 0.6)',
-              borderRadius: '16px',
-              boxShadow: '0 0 60px rgba(239, 68, 68, 0.3), 0 0 100px rgba(239, 68, 68, 0.1)'
+              background: 'linear-gradient(180deg, rgba(30, 30, 50, 0.98) 0%, rgba(20, 20, 35, 0.98) 100%)',
+              border: '2px solid rgba(234, 179, 8, 0.4)',
+              boxShadow: '0 0 60px rgba(234, 179, 8, 0.2)'
             }}
           >
-            {/* Warning Header */}
-            <div 
-              className="px-6 py-4 flex items-center gap-3"
-              style={{ 
-                background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.2) 0%, transparent 100%)',
-                borderBottom: '1px solid rgba(239, 68, 68, 0.3)'
-              }}
-            >
-              <div className="p-2 rounded-full" style={{ background: 'rgba(239, 68, 68, 0.2)' }}>
-                <AlertOctagon size={24} className="text-red-400 animate-pulse" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-red-400">⚠️ PURSE WARNING</h3>
-                <p className="text-xs text-gray-400">{purseWarningModal.teamName}</p>
-              </div>
-            </div>
-
-            {/* Warning Content */}
-            <div className="p-6">
-              <div 
-                className="p-4 rounded-xl mb-4"
-                style={{ 
-                  background: 'rgba(239, 68, 68, 0.1)',
-                  border: '1px solid rgba(239, 68, 68, 0.3)'
-                }}
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-yellow-500/20 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <Gavel size={20} className="text-yellow-400" />
+                Edit Bid Increments
+                <span className="text-xs text-yellow-400/60 font-normal">(Recovery Mode)</span>
+              </h3>
+              <button
+                onClick={() => setShowBidConfigModal(false)}
+                className="text-gray-400 hover:text-white transition-colors"
               >
-                <p className="text-sm text-gray-200 leading-relaxed">
-                  {purseWarningModal.warningMessage}
+                <XCircle size={20} />
+              </button>
+            </div>
+            
+            {/* Content */}
+            <div className="p-6 space-y-4">
+              <p className="text-yellow-300/70 text-sm">
+                Update bid increment buttons. Changes take effect immediately for all users.
+              </p>
+              
+              {/* Increment Inputs */}
+              <div className="grid grid-cols-2 gap-3">
+                {[0, 1, 2, 3].map((idx) => (
+                  <div key={idx} className="space-y-1">
+                    <label className="text-yellow-300/60 text-xs">Increment {idx + 1}</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-yellow-400/60 text-sm">+₹</span>
+                      <input
+                        type="text"
+                        value={editingIncrements[idx] || ''}
+                        onChange={(e) => {
+                          const newVals = [...editingIncrements];
+                          newVals[idx] = e.target.value;
+                          setEditingIncrements(newVals);
+                        }}
+                        disabled={savingBidConfig}
+                        placeholder={idx === 0 ? '0.1' : idx === 1 ? '0.25' : idx === 2 ? '0.5' : '1'}
+                        className="w-full bg-black/40 border border-yellow-500/30 rounded-lg px-4 py-2.5 pl-9
+                                   text-white placeholder-yellow-300/30 focus:outline-none focus:ring-2 focus:ring-yellow-500/50"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-yellow-300/40 text-xs">{currencyUnit || 'L'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              {/* Unit Conversion Guide */}
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-3 py-2">
+                <p className="text-yellow-300/80 text-xs leading-relaxed">
+                  <span className="font-bold text-yellow-400">Unit Conversion:</span> Values without suffix use the selected unit ({currencyUnit || 'L'}).<br/>
+                  <span className="text-yellow-300/60">Examples: 1K = ₹1,000 | 1L = ₹1,00,000 | 1Cr = ₹1,00,00,000</span>
                 </p>
               </div>
-
-              {/* Bid Comparison */}
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="text-center p-3 rounded-lg" style={{ background: 'rgba(239, 68, 68, 0.15)' }}>
-                  <span className="text-xs text-gray-400 block mb-1">New Bid Amount</span>
-                  <span className="text-lg font-bold text-red-400">
-                    {formatCurrencyShort(purseWarningModal.newTotalBid)}
-                  </span>
-                </div>
-                <div className="text-center p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.15)' }}>
-                  <span className="text-xs text-gray-400 block mb-1">Safe Max Bid</span>
-                  <span className="text-lg font-bold text-green-400">
-                    {formatCurrencyShort(purseWarningModal.safeMaxBid)}
-                  </span>
+              
+              {/* Custom Increment */}
+              <div className="space-y-1">
+                <label className="text-yellow-300/60 text-xs flex items-center gap-1">
+                  Custom Increment <span className="text-yellow-400">★</span>
+                  <span className="text-yellow-300/40">(Optional)</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-yellow-400/60 text-sm">+₹</span>
+                  <input
+                    type="text"
+                    value={editingCustom}
+                    onChange={(e) => setEditingCustom(e.target.value)}
+                    disabled={savingBidConfig}
+                    placeholder="e.g. 0.15 or 15K"
+                    className="w-full bg-black/40 border border-yellow-500/30 rounded-lg px-4 py-2.5 pl-9
+                               text-white placeholder-yellow-300/30 focus:outline-none focus:ring-2 focus:ring-yellow-500/50"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-yellow-300/40 text-xs">{currencyUnit || 'L'}</span>
                 </div>
               </div>
-
-              <p className="text-xs text-gray-500 text-center mb-4">
-                This warning doesn't block the bid - proceed if intentional
-              </p>
-
-              {/* Action Buttons */}
-              <div className="flex gap-3">
-                <button
-                  onClick={cancelBidWarning}
-                  className="flex-1 px-4 py-3 rounded-xl font-semibold text-sm text-gray-300
-                             bg-gray-800/50 border border-gray-600/50 hover:bg-gray-700/50
-                             transition-all duration-200"
-                >
-                  Cancel Bid
-                </button>
-                <button
-                  onClick={confirmBidDespiteWarning}
-                  className="flex-1 px-4 py-3 rounded-xl font-bold text-sm text-white uppercase
-                             hover:scale-105 active:scale-95
-                             transition-all duration-200"
-                  style={{
-                    background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.85) 0%, rgba(220, 38, 38, 0.85) 100%)',
-                    border: '1px solid rgba(239, 68, 68, 0.5)',
-                    boxShadow: '0 0 20px rgba(239, 68, 68, 0.3)'
-                  }}
-                >
-                  ⚡ Proceed Anyway
-                </button>
-              </div>
+              
+              {/* Messages */}
+              {bidConfigMessage && (
+                <div className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
+                  bidConfigMessage.type === 'error' 
+                    ? 'bg-red-500/10 border border-red-500/20 text-red-400'
+                    : 'bg-green-500/10 border border-green-500/20 text-green-400'
+                }`}>
+                  {bidConfigMessage.type === 'error' ? <XCircle size={14} /> : <CheckCircle2 size={14} />}
+                  {bidConfigMessage.text}
+                </div>
+              )}
+            </div>
+            
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-yellow-500/20 flex gap-3">
+              <button
+                onClick={() => setShowBidConfigModal(false)}
+                disabled={savingBidConfig}
+                className="flex-1 px-4 py-2.5 rounded-lg bg-gray-800/50 border border-gray-600/50 
+                           text-gray-300 font-medium hover:bg-gray-700/50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveBidConfigFromLiveRoom}
+                disabled={savingBidConfig}
+                className="flex-1 px-4 py-2.5 rounded-lg font-bold text-white flex items-center justify-center gap-2
+                           bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-400 hover:to-orange-400
+                           disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                {savingBidConfig ? (
+                  <>
+                    <Activity size={16} className="animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={16} />
+                    Save & Apply
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
