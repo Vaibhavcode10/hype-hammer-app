@@ -446,27 +446,32 @@ const ReportSection: React.FC<{
             onBlur={(e) => { e.target.style.border = '1px solid rgba(255,0,102,0.2)'; e.target.style.boxShadow = 'inset 0 1px 3px rgba(0,0,0,0.1)'; }}
           />
         </div>
-        <div className="relative">
-          <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}
-            className="pl-4 pr-10 py-3 rounded-xl text-sm text-white appearance-none cursor-pointer focus:outline-none"
-            style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.08), rgba(200,50,120,0.05))', border: '1px solid rgba(255,0,102,0.2)' }}>
-            <option value="">All Teams</option>
-            {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-          <Filter size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-pink-400/50 pointer-events-none" />
-        </div>
-        <div className="relative">
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}
-            className="pl-4 pr-10 py-3 rounded-xl text-sm text-white appearance-none cursor-pointer focus:outline-none"
-            style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.08), rgba(200,50,120,0.05))', border: '1px solid rgba(255,0,102,0.2)' }}>
-            <option value="all">All Status</option>
-            <option value="sold">Sold</option>
-            <option value="unsold">Unsold</option>
-            <option value="available">Available</option>
-            {isLive && <option value="live">Live (Bidding)</option>}
-          </select>
-          <Filter size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-pink-400/50 pointer-events-none" />
-        </div>
+      <div className="relative">
+  <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}
+    className="pl-4 pr-10 py-3 rounded-xl text-sm text-white appearance-none cursor-pointer focus:outline-none"
+    style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.08), rgba(200,50,120,0.05))', border: '1px solid rgba(255,0,102,0.2)' }}>
+    <option value="" style={{ background: '#2b0a12', color: '#fff' }}>All Teams</option>
+    {teams.map(t => (
+      <option key={t.id} value={t.id} style={{ background: '#2b0a12', color: '#fff' }}>
+        {t.name}
+      </option>
+    ))}
+  </select>
+  <Filter size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-pink-400/50 pointer-events-none" />
+</div>
+
+<div className="relative">
+  <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}
+    className="pl-4 pr-10 py-3 rounded-xl text-sm text-white appearance-none cursor-pointer focus:outline-none"
+    style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.08), rgba(200,50,120,0.05))', border: '1px solid rgba(255,0,102,0.2)' }}>
+    <option value="all" style={{ background: '#2b0a12', color: '#fff' }}>All Status</option>
+    <option value="sold" style={{ background: '#2b0a12', color: '#fff' }}>Sold</option>
+    <option value="unsold" style={{ background: '#2b0a12', color: '#fff' }}>Unsold</option>
+    <option value="available" style={{ background: '#2b0a12', color: '#fff' }}>Available</option>
+    {isLive && <option value="live" style={{ background: '#2b0a12', color: '#fff' }}>Live (Bidding)</option>}
+  </select>
+  <Filter size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-pink-400/50 pointer-events-none" />
+</div>
         <button onClick={exportCSV}
           className="flex items-center gap-2 px-5 py-3 rounded-xl text-white font-bold text-sm transition-all ml-auto"
           style={{ background: 'linear-gradient(135deg, rgba(255,20,100,0.2), rgba(200,50,120,0.15))', border: '1px solid rgba(255,0,102,0.35)', boxShadow: '0 0 12px rgba(255,0,102,0.1)' }}>
@@ -2415,6 +2420,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   };
 
   const handleAddPlayer = async () => {
+    console.log('handleAddPlayer called'); // Debug log
     if (!playerName.trim()) { setAddPlayerError('Player Name is required'); return; }
     if (!playerEmail.trim()) { setAddPlayerError('Email is required'); return; }
     if (!playerPassword.trim()) { setAddPlayerError('Password is required'); return; }
@@ -4489,7 +4495,17 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         boxShadow: '0 0 20px rgba(236, 72, 153, 0.3)'
                       }}
                     >
-                      {/* OLD FORM REMOVED */}
+                      {addPlayerLoading ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Registering...
+                        </>
+                      ) : (
+                        <>
+                          <Check size={16} />
+                          Register Player
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
