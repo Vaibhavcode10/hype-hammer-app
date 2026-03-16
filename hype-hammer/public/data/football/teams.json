@@ -1,0 +1,66 @@
+[
+  {
+    "id": "rm",
+    "name": "Real Madrid",
+    "logo": "https://images.unsplash.com/photo-1599305090598-fe179d501227?auto=format&fit=crop&q=80&w=200&h=200",
+    "budget": 200000000,
+    "remainingBudget": 70000000,
+    "purchasedPlayers": [
+      {
+        "id": "fp1",
+        "name": "Kylian Mbappé",
+        "price": 50000000,
+        "role": "Forward"
+      },
+      {
+        "id": "fp3",
+        "name": "Vinicius Jr",
+        "price": 40000000,
+        "role": "Forward"
+      }
+    ],
+    "owner": "Florentino Pérez",
+    "homeCity": "Madrid",
+    "foundationYear": 1902
+  },
+  {
+    "id": "fc",
+    "name": "FC Barcelona",
+    "logo": "https://images.unsplash.com/photo-1599305090598-fe179d501227?auto=format&fit=crop&q=80&w=200&h=200",
+    "budget": 150000000,
+    "remainingBudget": 105000000,
+    "purchasedPlayers": [
+      {
+        "id": "fp4",
+        "name": "Harry Kane",
+        "price": 45000000,
+        "role": "Forward"
+      }
+    ],
+    "owner": "Joan Laporta",
+    "homeCity": "Barcelona",
+    "foundationYear": 1899
+  },
+  {
+    "id": "mci",
+    "name": "Manchester City",
+    "logo": "https://images.unsplash.com/photo-1599305090598-fe179d501227?auto=format&fit=crop&q=80&w=200&h=200",
+    "budget": 200000000,
+    "remainingBudget": 200000000,
+    "purchasedPlayers": [],
+    "owner": "City Football Group",
+    "homeCity": "Manchester",
+    "foundationYear": 1880
+  },
+  {
+    "id": "liv",
+    "name": "Liverpool FC",
+    "logo": "https://images.unsplash.com/photo-1599305090598-fe179d501227?auto=format&fit=crop&q=80&w=200&h=200",
+    "budget": 180000000,
+    "remainingBudget": 180000000,
+    "purchasedPlayers": [],
+    "owner": "FSG",
+    "homeCity": "Liverpool",
+    "foundationYear": 1892
+  }
+]

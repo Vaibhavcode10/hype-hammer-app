@@ -1,0 +1,73 @@
+[
+  {
+    "id": "fp1",
+    "name": "Kylian Mbappé",
+    "roleId": "fwd",
+    "basePrice": 50000000,
+    "isOverseas": true,
+    "status": "SOLD",
+    "age": 25,
+    "nationality": "French",
+    "image": "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "World Cup winner. Blistering pace and clinical finish. 250+ career goals, 3x Ligue 1 POTY",
+    "recentForm": "Excellent",
+    "soldPrice": 50000000,
+    "soldTo": "rm"
+  },
+  {
+    "id": "fp2",
+    "name": "Jude Bellingham",
+    "roleId": "mid",
+    "basePrice": 35000000,
+    "isOverseas": true,
+    "status": "PENDING",
+    "age": 21,
+    "nationality": "English",
+    "image": "https://images.unsplash.com/photo-1531415074968-036ba1b575da?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "Rising talent. Versatile midfielder. 40+ caps for England",
+    "recentForm": "Excellent"
+  },
+  {
+    "id": "fp3",
+    "name": "Vinicius Jr",
+    "roleId": "fwd",
+    "basePrice": 40000000,
+    "isOverseas": true,
+    "status": "SOLD",
+    "age": 24,
+    "nationality": "Brazilian",
+    "image": "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "Pacy winger. Champions League winner 2024. 100+ goals in all competitions",
+    "recentForm": "Excellent",
+    "soldPrice": 40000000,
+    "soldTo": "rm"
+  },
+  {
+    "id": "fp4",
+    "name": "Harry Kane",
+    "roleId": "fwd",
+    "basePrice": 45000000,
+    "isOverseas": true,
+    "status": "SOLD",
+    "age": 31,
+    "nationality": "English",
+    "image": "https://images.unsplash.com/photo-1512719994953-eabf50895df7?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "Prolific striker. 220+ international goals. Consistent 30+ goals/season",
+    "recentForm": "Good",
+    "soldPrice": 45000000,
+    "soldTo": "fc"
+  },
+  {
+    "id": "fp5",
+    "name": "Erling Haaland",
+    "roleId": "fwd",
+    "basePrice": 60000000,
+    "isOverseas": true,
+    "status": "PENDING",
+    "age": 24,
+    "nationality": "Norwegian",
+    "image": "https://images.unsplash.com/photo-1512719994953-eabf50895df7?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "Lethal finisher. 30+ goals in 2023-24. CL finalist",
+    "recentForm": "Excellent"
+  }
+]

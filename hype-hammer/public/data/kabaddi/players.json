@@ -1,0 +1,45 @@
+[
+  {
+    "id": "kp1",
+    "name": "Pardeep Narwal",
+    "roleId": "raider",
+    "basePrice": 8000000,
+    "isOverseas": false,
+    "status": "SOLD",
+    "age": 28,
+    "nationality": "Indian",
+    "image": "https://images.unsplash.com/photo-1512719994953-eabf50895df7?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "Kabaddi legend. Record raid points. 1500+ raid points in PKL",
+    "recentForm": "Excellent",
+    "soldPrice": 8000000,
+    "soldTo": "up"
+  },
+  {
+    "id": "kp2",
+    "name": "Naveen Kumar",
+    "roleId": "raider",
+    "basePrice": 7000000,
+    "isOverseas": false,
+    "status": "PENDING",
+    "age": 24,
+    "nationality": "Indian",
+    "image": "https://images.unsplash.com/photo-1512719994953-eabf50895df7?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "Young raiding talent. Quick learner. 400+ raid points",
+    "recentForm": "Good"
+  },
+  {
+    "id": "kp3",
+    "name": "Ravi Kumar",
+    "roleId": "defender",
+    "basePrice": 6000000,
+    "isOverseas": false,
+    "status": "SOLD",
+    "age": 26,
+    "nationality": "Indian",
+    "image": "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "Defensive powerhouse. 300+ tackle points. Consistent performer",
+    "recentForm": "Excellent",
+    "soldPrice": 6000000,
+    "soldTo": "up"
+  }
+]

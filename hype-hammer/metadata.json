@@ -1,0 +1,7 @@
+{
+  "name": "OmniAuction: Universal Sports Auction Platform",
+  "description": "A sport-agnostic auction management system for professional leagues, local tournaments, and esports drafts.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

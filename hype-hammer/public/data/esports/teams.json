@@ -1,0 +1,49 @@
+[
+  {
+    "id": "navi",
+    "name": "Natus Vincere",
+    "logo": "https://images.unsplash.com/photo-1599305090598-fe179d501227?auto=format&fit=crop&q=80&w=200&h=200",
+    "budget": 1000000,
+    "remainingBudget": 500000,
+    "purchasedPlayers": [
+      {
+        "id": "ep1",
+        "name": "s1mple",
+        "price": 500000,
+        "role": "Fragger"
+      }
+    ],
+    "owner": "NAVI Esports",
+    "homeCity": "Kyiv",
+    "foundationYear": 2010
+  },
+  {
+    "id": "t1",
+    "name": "T1 Entertainment",
+    "logo": "https://images.unsplash.com/photo-1599305090598-fe179d501227?auto=format&fit=crop&q=80&w=200&h=200",
+    "budget": 1200000,
+    "remainingBudget": 800000,
+    "purchasedPlayers": [
+      {
+        "id": "ep2",
+        "name": "Faker",
+        "price": 400000,
+        "role": "IGL"
+      }
+    ],
+    "owner": "SK Telecom",
+    "homeCity": "Seoul",
+    "foundationYear": 2013
+  },
+  {
+    "id": "fnc",
+    "name": "Fnatic",
+    "logo": "https://images.unsplash.com/photo-1599305090598-fe179d501227?auto=format&fit=crop&q=80&w=200&h=200",
+    "budget": 800000,
+    "remainingBudget": 800000,
+    "purchasedPlayers": [],
+    "owner": "Fnatic Group",
+    "homeCity": "London",
+    "foundationYear": 2007
+  }
+]

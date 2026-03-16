@@ -1,0 +1,45 @@
+[
+  {
+    "id": "ep1",
+    "name": "s1mple",
+    "roleId": "fragger",
+    "basePrice": 500000,
+    "isOverseas": true,
+    "status": "SOLD",
+    "age": 26,
+    "nationality": "Ukrainian",
+    "image": "https://images.unsplash.com/photo-1531415074968-036ba1b575da?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "Legendary CS:GO player. 4x Major champion. GOAT status",
+    "recentForm": "Excellent",
+    "soldPrice": 500000,
+    "soldTo": "navi"
+  },
+  {
+    "id": "ep2",
+    "name": "Faker",
+    "roleId": "igl",
+    "basePrice": 400000,
+    "isOverseas": true,
+    "status": "SOLD",
+    "age": 27,
+    "nationality": "South Korean",
+    "image": "https://images.unsplash.com/photo-1512719994953-eabf50895df7?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "League of Legends GOAT. 3x World champion. 1000+ LCK games",
+    "recentForm": "Good",
+    "soldPrice": 400000,
+    "soldTo": "t1"
+  },
+  {
+    "id": "ep3",
+    "name": "TenZ",
+    "roleId": "fragger",
+    "basePrice": 300000,
+    "isOverseas": true,
+    "status": "PENDING",
+    "age": 23,
+    "nationality": "Canadian",
+    "image": "https://images.unsplash.com/photo-1531415074968-036ba1b575da?auto=format&fit=crop&q=80&w=400&h=400",
+    "career": "Valorant superstar. Insane duelist. 200+ tournament wins",
+    "recentForm": "Excellent"
+  }
+]

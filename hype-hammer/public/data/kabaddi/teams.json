@@ -1,0 +1,48 @@
+[
+  {
+    "id": "up",
+    "name": "UP Yoddhas",
+    "logo": "https://images.unsplash.com/photo-1599305090598-fe179d501227?auto=format&fit=crop&q=80&w=200&h=200",
+    "budget": 50000000,
+    "remainingBudget": 36000000,
+    "purchasedPlayers": [
+      {
+        "id": "kp1",
+        "name": "Pardeep Narwal",
+        "price": 8000000,
+        "role": "Raider"
+      },
+      {
+        "id": "kp3",
+        "name": "Ravi Kumar",
+        "price": 6000000,
+        "role": "Defender"
+      }
+    ],
+    "owner": "Sanjay Singh",
+    "homeCity": "Lucknow",
+    "foundationYear": 2014
+  },
+  {
+    "id": "tel",
+    "name": "Telangana Titans",
+    "logo": "https://images.unsplash.com/photo-1599305090598-fe179d501227?auto=format&fit=crop&q=80&w=200&h=200",
+    "budget": 45000000,
+    "remainingBudget": 45000000,
+    "purchasedPlayers": [],
+    "owner": "Telangana Sports",
+    "homeCity": "Hyderabad",
+    "foundationYear": 2015
+  },
+  {
+    "id": "taj",
+    "name": "Taj Group Warriors",
+    "logo": "https://images.unsplash.com/photo-1599305090598-fe179d501227?auto=format&fit=crop&q=80&w=200&h=200",
+    "budget": 50000000,
+    "remainingBudget": 50000000,
+    "purchasedPlayers": [],
+    "owner": "Taj Sports",
+    "homeCity": "Delhi",
+    "foundationYear": 2016
+  }
+]
