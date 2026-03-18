@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Gavel, Users, User, Upload, ArrowLeft, CheckCircle, X, Info, AlertTriangle, Loader2 } from 'lucide-react';
 import { AuctionStatus, UserRole, SportType, MatchData, SportData } from '../../types';
 import { useMatchSettings } from '../../hooks/useMatchSettings';
@@ -106,12 +106,14 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const [auctioneerPhoto, setAuctioneerPhoto] = useState<File | null>(null);
   const [auctioneerPhotoPreview, setAuctioneerPhotoPreview] = useState<string | null>(null);
   const [isDraggingAuctioneerPhoto, setIsDraggingAuctioneerPhoto] = useState(false);
+  const auctioneerPhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Team Rep fields
   const [teamName, setTeamName] = useState('');
   const [teamShortCode, setTeamShortCode] = useState('');
   const [teamLogo, setTeamLogo] = useState<File | null>(null);
   const [teamLogoPreview, setTeamLogoPreview] = useState<string | null>(null);
+  const teamLogoInputRef = useRef<HTMLInputElement | null>(null);
   const [homeCity, setHomeCity] = useState('');
   const [roleInTeam, setRoleInTeam] = useState('');
 
@@ -121,6 +123,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const [nationality, setNationality] = useState('');
   const [playerPhoto, setPlayerPhoto] = useState<File | null>(null);
   const [playerPhotoPreview, setPlayerPhotoPreview] = useState<string | null>(null);
+  const playerPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const [playingRole, setPlayingRole] = useState('');
   const [battingStyle, setBattingStyle] = useState('');
   const [bowlingStyle, setBowlingStyle] = useState('');
@@ -295,7 +298,11 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    
+
+    if (selectedRole === UserRole.PLAYER) {
+      console.log('Button clicked: Add Player (Submit Registration)');
+    }
+
     console.log('================== FORM SUBMISSION DEBUG ==================');
     console.log('1️⃣ Form submit initiated for role:', selectedRole);
     console.log('   - governmentId state:', governmentId);
@@ -575,6 +582,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                           : 'border-pink-500/30 hover:border-pink-400'
                     }`}
                     style={{ background: 'rgba(255, 0, 102, 0.08)' }}
+                    onClick={() => auctioneerPhotoInputRef.current?.click()}
                     onDragOver={handleAuctioneerPhotoDragOver}
                     onDragLeave={handleAuctioneerPhotoDragLeave}
                     onDrop={handleAuctioneerPhotoDrop}
@@ -604,6 +612,7 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                       <div>
                         <Upload className="mx-auto text-pink-400/50 mb-2" size={20} />
                         <input
+                          ref={auctioneerPhotoInputRef}
                           type="file"
                           onChange={handleAuctioneerPhotoChange}
                           className="hidden"
@@ -818,7 +827,11 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                 {/* Left: Team Logo Upload (1 col) */}
                 <div>
                   <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Team Logo <span className="text-red-400">*</span></label>
-                  <div className="border-2 border-dashed border-pink-500/30 rounded-lg p-3 text-center hover:border-pink-400 transition-colors cursor-pointer min-h-[160px] flex flex-col items-center justify-center" style={{ background: 'rgba(255, 0, 102, 0.08)' }}>
+                  <div
+                    className="border-2 border-dashed border-pink-500/30 rounded-lg p-3 text-center hover:border-pink-400 transition-colors cursor-pointer min-h-[160px] flex flex-col items-center justify-center"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)' }}
+                    onClick={() => teamLogoInputRef.current?.click()}
+                  >
                     {teamLogoPreview ? (
                       <div className="w-full flex flex-col items-center justify-center">
                         <img 
@@ -830,14 +843,19 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         <p className="text-[10px] text-pink-300/70 truncate max-w-[90px]" title={teamLogo?.name}>{teamLogo?.name}</p>
                         <button
                           type="button"
-                          onClick={(e) => { e.preventDefault(); setTeamLogo(null); setTeamLogoPreview(null); }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setTeamLogo(null);
+                            setTeamLogoPreview(null);
+                          }}
                           className="text-[9px] text-red-400 hover:text-red-300 font-bold mt-1"
                         >Change</button>
                       </div>
                     ) : (
                       <div>
                         <Upload className="mx-auto text-pink-400/50 mb-2" size={20} />
-                        <input type="file" onChange={handleTeamLogoChange} className="hidden" id="teamLogo" accept="image/*" required />
+                        <input ref={teamLogoInputRef} type="file" onChange={handleTeamLogoChange} className="hidden" id="teamLogo" accept="image/*" required />
                         <label htmlFor="teamLogo" className="cursor-pointer block">
                           <p className="text-xs text-pink-300/70 font-medium mb-0.5">Upload</p>
                           <p className="text-[9px] text-pink-300/50">JPG, PNG</p>
@@ -987,7 +1005,11 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                 {/* Left: Player Photo Upload (1 col) */}
                 <div>
                   <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Your Photo <span className="text-red-400">*</span></label>
-                  <div className="border-2 border-dashed border-pink-500/30 rounded-lg p-3 text-center hover:border-pink-400 transition-colors cursor-pointer min-h-[160px] flex flex-col items-center justify-center" style={{ background: 'rgba(255, 0, 102, 0.08)' }}>
+                  <div
+                    className="border-2 border-dashed border-pink-500/30 rounded-lg p-3 text-center hover:border-pink-400 transition-colors cursor-pointer min-h-[160px] flex flex-col items-center justify-center"
+                    style={{ background: 'rgba(255, 0, 102, 0.08)' }}
+                    onClick={() => playerPhotoInputRef.current?.click()}
+                  >
                     {playerPhotoPreview ? (
                       <div className="w-full flex flex-col items-center justify-center">
                         <img 
@@ -999,14 +1021,19 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
                         <p className="text-[10px] text-pink-300/70 truncate max-w-[90px]" title={playerPhoto?.name}>{playerPhoto?.name}</p>
                         <button
                           type="button"
-                          onClick={(e) => { e.preventDefault(); setPlayerPhoto(null); setPlayerPhotoPreview(null); }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setPlayerPhoto(null);
+                            setPlayerPhotoPreview(null);
+                          }}
                           className="text-[9px] text-red-400 hover:text-red-300 font-bold mt-1"
                         >Change</button>
                       </div>
                     ) : (
                       <div>
                         <Upload className="mx-auto text-pink-400/50 mb-2" size={20} />
-                        <input type="file" onChange={handlePlayerPhotoChange} className="hidden" id="playerPhoto" accept="image/*" required />
+                        <input ref={playerPhotoInputRef} type="file" onChange={handlePlayerPhotoChange} className="hidden" id="playerPhoto" accept="image/*" required />
                         <label htmlFor="playerPhoto" className="cursor-pointer block">
                           <p className="text-xs text-pink-300/70 font-medium mb-0.5">Upload</p>
                           <p className="text-[9px] text-pink-300/50">JPG, PNG</p>

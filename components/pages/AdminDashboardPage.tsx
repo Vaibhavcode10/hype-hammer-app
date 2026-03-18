@@ -982,7 +982,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   // Never auto-fetch or switch to a different match by email scanning
   useEffect(() => {
     if (currentMatch) {
-      console.log('🔒 LOCKED: Using provided currentMatch:', currentMatch.id, currentMatch.name);
+
       setResolvedMatch(currentMatch);
       setMatchResolved(true);
       setLoading(false);
@@ -992,7 +992,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     // currentMatch is null — try to fetch the SPECIFIC match from sessionStorage matchId
     const savedMatchId = sessionStorage.getItem('hypehammer_current_match_id');
     if (savedMatchId) {
-      console.log('🔒 currentMatch is null but sessionStorage has matchId:', savedMatchId, '— looking in localStorage first');
+
       
       // Check localStorage first (for recently created matches)
       const localStorageData = localStorage.getItem('hypehammer_sports');
@@ -1003,7 +1003,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
           for (const sport of allSportsData) {
             const foundMatch = sport.matches?.find((m: any) => m.id === savedMatchId);
             if (foundMatch) {
-              console.log('🔒 ✅ Found match in localStorage:', foundMatch.name, savedMatchId);
+
               setResolvedMatch(foundMatch);
               setMatchResolved(true);
               setLoading(false);
@@ -1016,7 +1016,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       }
       
       // Not found in localStorage, try API fetch
-      console.log('🔒 Match not in localStorage, fetching from API:', `${API_BASE}/matches/${savedMatchId}`);
+
       const fetchSpecificMatch = async () => {
         setLoading(true);
         try {
@@ -1029,7 +1029,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
             console.log('📡 API Response data:', data);
             const matchData = data.data || data;
             if (matchData && matchData.id) {
-              console.log('🔒 ✅ Loaded locked match from API:', matchData.name, matchData.id);
+
               setResolvedMatch(matchData);
             } else {
               console.error('⚠️ ❌ Match not found for saved ID:', savedMatchId, 'Response:', data);
@@ -1148,14 +1148,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     
     const totalSpent = soldPlayersForTeam.reduce((sum, p) => {
       const amount = p.soldAmount || p.soldPrice || p.finalPrice || p.currentBid || p.basePrice || 0;
-      console.log(`💰 ${team.name} - ${p.name}: sold=${p.soldAmount}, price=${p.soldPrice}, final=${p.finalPrice}, current=${p.currentBid}, base=${p.basePrice} → using: ${amount}`);
+
       return sum + amount;
     }, 0);
     
     const initialBudget = team.budget || team.initialBudget || 0;
     const remainingBudget = initialBudget - totalSpent;
     
-    console.log(`📊 ${team.name}: Budget=${initialBudget}, Spent=${totalSpent}, Remaining=${remainingBudget}`);
+
     
     return {
       squadSize: soldPlayersForTeam.length,
@@ -1250,7 +1250,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
           const timeB = new Date(b.timestamp || 0).getTime();
           return timeB - timeA;
         });
-        console.log('✓ Fetched bid history:', sortedBids.length, 'bids');
+
         
         // Use the latest bid to set actual current bid and leading team
         if (sortedBids.length > 0) {
@@ -1677,11 +1677,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
           fetch(`${API_BASE}/auctioneers${matchQuery}`)
         ]);
 
-        console.log('📊 Response status - Teams:', teamsRes.status, 'Players:', playersRes.status, 'Auctioneers:', auctioneersRes.status);
+
 
         if (teamsRes.ok) {
           const data = await teamsRes.json();
-          console.log('✅ Teams data:', data.data?.length || 0, 'teams');
+
           // Calculate squadSize from playerIds array length
           const teamsWithSquadSize = (data.data || []).map((team: Team) => ({
             ...team,
@@ -1694,7 +1694,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
         if (playersRes.ok) {
           const data = await playersRes.json();
-          console.log('✅ Players data:', data.data?.length || 0, 'players');
+
           setPlayers(data.data || []);
         } else {
           console.error('❌ Players fetch failed:', playersRes.status, await playersRes.text());
@@ -1702,7 +1702,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
 
         if (auctioneersRes.ok) {
           const data = await auctioneersRes.json();
-          console.log('✅ Auctioneers data:', data.data?.length || 0, 'auctioneers');
+
           setAuctioneers(data.data || []);
           
           // Initialize alerts count from auctioneers data
@@ -1714,13 +1714,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         
         // Add initial log
         addSystemLog('info', 'Admin dashboard loaded');
-        console.log('✅ AdminDashboard: Data fetch complete');
+
       } catch (error) {
         console.error('❌ Failed to fetch dashboard data:', error);
         addSystemLog('error', 'Failed to load dashboard data');
       } finally {
         setLoading(false);
-        console.log('✅ AdminDashboard: Loading state set to false');
+
       }
     };
 
@@ -1942,7 +1942,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
           .then(res => res.json())
           .then(playerData => {
             if (playerData.success && playerData.data) {
-              console.log('✅ Admin: Fetched player from API:', playerData.data.name);
+
               setCurrentBiddingPlayer(playerData.data);
               setCurrentBid(playerData.data.currentBid || playerData.data.basePrice || data.currentBid || 0);
               setLeadingTeamName(playerData.data.leadingTeamName || '');
@@ -2009,7 +2009,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
     }));
 
     unsubscribers.push(socketService.onPlayerSold(async (data: any) => {
-      console.log('✅ Admin: PLAYER_SOLD', data);
+
       
       setCurrentBiddingPlayer(null);
       setCurrentBid(0);
@@ -2144,19 +2144,19 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
       let bids = [];
       if (result.data && Array.isArray(result.data)) {
         bids = result.data;
-        console.log('✓ Extracted bids from result.data:', bids.length, 'bids');
+
       } else if (result.bids && Array.isArray(result.bids)) {
         bids = result.bids;
-        console.log('✓ Extracted bids from result.bids:', bids.length, 'bids');
+
       } else if (Array.isArray(result)) {
         bids = result;
-        console.log('✓ Result is directly an array:', bids.length, 'bids');
+
       } else {
         console.warn('⚠️ Unexpected response structure:', result);
         bids = [];
       }
       
-      console.log('📊 Total bids extracted:', bids.length);
+
       
       if (bids.length > 0) {
         console.log('📋 First bid sample:', JSON.stringify(bids[0], null, 2));
@@ -2169,7 +2169,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         return timeA - timeB;
       });
       
-      console.log('✓ Sorted bids chronologically');
+
       
       // Enrich bids with team names from local teams array
       const enrichedBids = sortedBids.map((bid: any) => {
@@ -2256,7 +2256,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         fullName: ownerName, email: teamEmail, password: teamPassword, phone: teamPhone,
         seasonId: matchRef.id, teamName, teamShortCode, homeCity, roleInTeam,
         teamLogo: logoUrl, authorizationLetter: authLetterUrl,
-        governmentId, governmentIdURL: govIdUrl, role: 'TEAM_REP'
+        governmentId, governmentIdURL: govIdUrl, role: 'TEAM_REP',
+        budget: pursePerTeam || 10000000
       };
 
       const result = await registerTeam(registrationData);
@@ -2269,6 +2270,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
         }
         resetAddTeamForm();
         setActiveSection('teams');
+      } else {
+        setAddTeamError('Registration failed. The API returned no data — please check if the team already exists.');
       }
     } catch (err: any) {
       console.error('❌ Team registration failed:', err);
@@ -2420,7 +2423,6 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
   };
 
   const handleAddPlayer = async () => {
-    console.log('handleAddPlayer called'); // Debug log
     if (!playerName.trim()) { setAddPlayerError('Player Name is required'); return; }
     if (!playerEmail.trim()) { setAddPlayerError('Email is required'); return; }
     if (!playerPassword.trim()) { setAddPlayerError('Password is required'); return; }
@@ -4495,17 +4497,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
                         boxShadow: '0 0 20px rgba(236, 72, 153, 0.3)'
                       }}
                     >
-                      {addPlayerLoading ? (
-                        <>
-                          <Loader2 size={16} className="animate-spin" />
-                          Registering...
-                        </>
-                      ) : (
-                        <>
-                          <Check size={16} />
-                          Register Player
-                        </>
-                      )}
+                      {/* OLD FORM REMOVED */}
                     </button>
                   </div>
                 </div>

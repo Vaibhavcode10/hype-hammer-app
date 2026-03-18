@@ -187,16 +187,16 @@ const AppContent: React.FC = () => {
 
   const currentMatch = useMemo(() => {
     if (!currentSportData || !currentMatchId) {
-      console.log('📊 currentMatch is NULL - currentSportData:', !!currentSportData, 'currentMatchId:', currentMatchId);
+
       return null;
     }
     const match = currentSportData.matches.find(m => m.id === currentMatchId);
-    console.log('📊 currentMatch computed:', match?.name);
+
     return match;
   }, [currentSportData, currentMatchId]);
 
   // Log status on every render
-  console.log('🔄 App render - status:', status, 'currentUser.role:', currentUser?.role, 'currentMatch:', currentMatch?.id);
+
 
   // Current match state (for active auction)
   const [config, setConfig] = useState<AuctionConfig>(INITIAL_CONFIG);
@@ -303,14 +303,14 @@ const AppContent: React.FC = () => {
           try {
             const parsedData = JSON.parse(localData);
             if (parsedData && parsedData.length > 0) {
-              console.log('📦 Loaded cached sports data from localStorage');
+
               setAllSports(parsedData);
             }
           } catch (err) {
             console.error('Error parsing local storage:', err);
           }
         } else if (!localCacheVersion || localCacheVersion !== String(CACHE_VERSION)) {
-          console.log('🔄 Cache version mismatch, clearing stale data');
+
           localStorage.removeItem('hypehammer_sports');
           localStorage.removeItem('hypehammer_cache_version');
         }
@@ -318,17 +318,17 @@ const AppContent: React.FC = () => {
         // Try API to get fresh data (source of truth)
         const sportsFromDB = await loadAllSportsFromDB();
         if (sportsFromDB && sportsFromDB.length > 0) {
-          console.log('✅ Loaded fresh sports data from Firebase');
+
           // Only update if data actually changed (deep comparison via JSON)
           const currentData = localStorage.getItem('hypehammer_sports');
           const newData = JSON.stringify(sportsFromDB);
           if (currentData !== newData) {
-            console.log('📊 Data changed, updating state');
+
             setAllSports(sportsFromDB);
             localStorage.setItem('hypehammer_sports', newData);
             localStorage.setItem('hypehammer_cache_version', '2');
           } else {
-            console.log('✓ Data unchanged, skipping update');
+
           }
           return; // Exit here - we got fresh data from API
         }
@@ -353,7 +353,7 @@ const AppContent: React.FC = () => {
   // Navigate to pending dashboard once currentMatch is ready
   useEffect(() => {
     if (pendingDashboardStatus && currentMatch) {
-      console.log('✅ currentMatch ready, navigating to:', pendingDashboardStatus);
+
       setStatus(pendingDashboardStatus);
       setPendingDashboardStatus(null);
     }
@@ -371,7 +371,7 @@ const AppContent: React.FC = () => {
       
       if (matchingSport) {
         const sportIdentifier = matchingSport.customSportName || matchingSport.sportType || 'Cricket';
-        console.log('✅ Found sport for matchId:', sportIdentifier);
+
         setCurrentSport(sportIdentifier);
         sessionStorage.setItem('hypehammer_current_sport', sportIdentifier);
       } else {
@@ -430,7 +430,7 @@ const AppContent: React.FC = () => {
               const savedMatchId = sessionStorage.getItem('hypehammer_current_match_id');
               
               if (savedMatchId) {
-                console.log('✅ Admin has match ID in session:', savedMatchId);
+
                 // Ensure allSports is populated before navigating
                 if (allSports.length === 0) {
                   console.log('⚠️ allSports is empty, fetching sports data first...');
@@ -439,7 +439,7 @@ const AppContent: React.FC = () => {
                     .then(data => {
                       if (data.success && data.data) {
                         setAllSports(data.data);
-                        console.log('✅ allSports populated, now navigating');
+
                       }
                       setStatus(targetDashboard);
                     })
@@ -466,7 +466,7 @@ const AppContent: React.FC = () => {
                       if (adminMatch) {
                         const matchId = adminMatch.id;
                         const sport = adminMatch.sport || 'Cricket';
-                        console.log('✅ Found admin match:', matchId, 'Sport:', sport);
+
                         
                         setCurrentSport(sport);
                         sessionStorage.setItem('hypehammer_current_sport', sport);
@@ -479,7 +479,7 @@ const AppContent: React.FC = () => {
                           .then(data2 => {
                             if (data2.success && data2.data) {
                               setAllSports(data2.data);
-                              console.log('✅ allSports populated after match fetch');
+
                             }
                           })
                           .catch(err => console.error('❌ Error fetching sports after match:', err));
@@ -502,13 +502,13 @@ const AppContent: React.FC = () => {
               const existingSport = existingMatch ? allSports.find(s => s.matches.some(m => m.id === savedMatchId)) : null;
 
               if (existingMatch && existingSport) {
-                console.log('✅ Preserving existing match selection:', existingMatch.name);
+
                 setCurrentSport(existingSport.sportType || existingSport.customSportName || 'Cricket');
                 setCurrentMatchId(existingMatch.id);
               } else {
                 const firstSport = allSports[0];
                 const firstMatch = firstSport.matches[0];
-                console.log('✅ Selecting first match and navigating:', firstMatch.name);
+
                 setCurrentSport(firstSport.sportType || firstSport.customSportName || 'Cricket');
                 setCurrentMatchId(firstMatch.id);
               }
@@ -621,7 +621,7 @@ const AppContent: React.FC = () => {
       return;
     }
 
-    console.log('🔄 State changed, updating allSports...');
+
 
     // Update the ref with new state
     lastSyncedState.current = {
@@ -1071,7 +1071,7 @@ const AppContent: React.FC = () => {
       try {
         const users = JSON.parse(storedUsers);
         fullUserData = users.find((u: any) => u.email === user.email);
-        console.log('✅ Found user data:', fullUserData?.name, 'Role:', fullUserData?.role);
+
       } catch (err) {
         console.error('Error loading user data:', err);
       }
@@ -1129,7 +1129,7 @@ const AppContent: React.FC = () => {
         );
         if (foundMatch) {
           adminMatch = foundMatch;
-          console.log('✅ Found admin match in local cache:', foundMatch.id, 'Sport:', sport.sportType);
+
           setCurrentSport(sport.sportType);
           sessionStorage.setItem('hypehammer_current_sport', sport.sportType);
           setCurrentMatchId(foundMatch.id);
@@ -1145,7 +1145,7 @@ const AppContent: React.FC = () => {
           const response = await fetch(`https://us-central1-axilam.cloudfunctions.net/auction/matches`);
           const data = await response.json();
           
-          console.log('📊 API Response:', { success: data.success, dataType: typeof data.data, isArray: Array.isArray(data.data) });
+
           
           let matchesArray = [];
           
@@ -1161,7 +1161,7 @@ const AppContent: React.FC = () => {
           }
           
           if (matchesArray && matchesArray.length > 0) {
-            console.log('📊 Fetched matches count:', matchesArray.length);
+
             // Log all matches to see their structure
             matchesArray.forEach((m: any, idx: number) => {
               const orgEmail = m.adminEmail || m.organizerEmail || m.email;
@@ -1872,7 +1872,6 @@ const AppContent: React.FC = () => {
 
   if (status === AuctionStatus.ADMIN_DASHBOARD) {
     // Admin dashboard — role is validated at login, not during render
-    console.log('🎨 Rendering ADMIN_DASHBOARD | Role:', currentUser.role, '| Match:', currentMatch?.id || 'null');
     return <AdminDashboardPage 
       setStatus={setStatus}
       currentMatch={currentMatch}
@@ -1992,7 +1991,6 @@ const AppContent: React.FC = () => {
       );
     }
 
-    console.log('🎨 Rendering AUCTIONEER_DASHBOARD, currentMatch:', currentMatch?.id);
     // Always render dashboard - it will handle approval states and loading
     return <AuctioneerDashboardPage 
       setStatus={setStatus}
@@ -2114,7 +2112,6 @@ const AppContent: React.FC = () => {
         </div>
       );
     }
-    console.log('🎨 Rendering GUEST_DASHBOARD, currentMatch:', currentMatch?.id);
     return <GuestDashboardPage 
       setStatus={setStatus}
       currentMatch={currentMatch}
@@ -2143,7 +2140,6 @@ const AppContent: React.FC = () => {
   }
 
   // Fallback/default view - auction room for READY/LIVE/PAUSED/ENDED statuses
-  console.log('🎨 Rendering fallback auction room view, status:', status);
   
   // Determine confetti size based on user role
   const getConfettiSize = (): 'none' | 'small' | 'normal' => {
