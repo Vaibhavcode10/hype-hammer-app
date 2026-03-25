@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, HelpCircle, Trophy, LogIn, X, Mail, Loader2, AlertCircle, CheckCircle2, Activity, TrendingUp, Users } from 'lucide-react';
+import { Eye,Lock,EyeOff,Play, HelpCircle, Trophy, LogIn, X, Mail, Loader2, AlertCircle, CheckCircle2, Activity, TrendingUp, Users } from 'lucide-react';
 import { AuctionStatus, UserRole } from '../../types';
 import { NeonDesignStyles, GlassCard, NeonButton, GradientHeading, NeonPageWrapper, NeonInput, StatBlock } from '../ui/NeonDesignSystem';
 
@@ -9,6 +9,7 @@ interface HomePageProps {
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -484,134 +485,149 @@ export const HomePage: React.FC<HomePageProps> = ({ setStatus, onLogin }) => {
               <p className="text-sm text-pink-300/60 mt-1">Access your account</p>
             </div>
 
-            <form onSubmit={handleLogin} className="space-y-4">
-              <NeonInput
-                type="email"
-                label="Email Address"
-                icon={<Mail size={18} />}
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
-                placeholder="your.email@example.com"
-                required
-              />
-              
-              <NeonInput
-                type="password"
-                label="Password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                placeholder="Enter your password"
-                required
-              />
+          <form onSubmit={handleLogin} className="space-y-4">
+  <NeonInput
+    type="email"
+    label="Email Address"
+    icon={<Mail size={18} />}
+    value={loginEmail}
+    onChange={(e) => setLoginEmail(e.target.value)}
+    placeholder="your.email@example.com"
+    required
+  />
 
-              {/* Error Message */}
-              {loginError && (
-                <div className="p-4 rounded-xl flex items-center gap-3" style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
-                  <AlertCircle size={18} className="text-red-400" />
-                  <p className="text-sm text-red-300 font-bold">{loginError}</p>
-                </div>
-              )}
+  {/* Password with show/hide toggle */}
+  <div className="space-y-2">
+    <label className="text-xs font-black uppercase text-pink-400 tracking-wider">
+      Password
+    </label>
+    <div className="relative">
+      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-pink-400/60" size={18} />
+      <input
+        type={showLoginPassword ? 'text' : 'password'}
+        className="w-full rounded-lg pl-12 pr-12 py-3 text-pink-100 outline-none placeholder-pink-300/40 text-sm transition-all"
+        style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
+        onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(255, 0, 102, 0.6)'; e.currentTarget.style.boxShadow = '0 0 15px rgba(255, 0, 102, 0.2)'; }}
+        onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255, 0, 102, 0.3)'; e.currentTarget.style.boxShadow = 'none'; }}
+        placeholder="Enter your password"
+        value={loginPassword}
+        onChange={(e) => setLoginPassword(e.target.value)}
+        required
+      />
+      <button
+        type="button"
+        onClick={() => setShowLoginPassword(!showLoginPassword)}
+        className="absolute right-4 top-1/2 -translate-y-1/2 text-pink-400/60 hover:text-pink-400 transition-colors"
+      >
+        {showLoginPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+      </button>
+    </div>
+  </div>
 
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setForgotPasswordEmail(loginEmail);
-                    setShowForgotPassword(true);
-                  }}
-                  className="text-xs font-bold uppercase text-pink-400 hover:text-pink-300 transition-colors"
-                  disabled={loginLoading}
-                >
-                  Forgot Password?
-                </button>
-              </div>
+  {/* Error Message */}
+  {loginError && (
+    <div className="p-4 rounded-xl flex items-center gap-3" style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+      <AlertCircle size={18} className="text-red-400" />
+      <p className="text-sm text-red-300 font-bold">{loginError}</p>
+    </div>
+  )}
 
-              {/* Login Button with Premium Loading State */}
-              <button
-                type="submit"
-                disabled={loginLoading}
-                className="relative w-full overflow-hidden rounded-xl py-4 font-black text-sm uppercase tracking-wider transition-all duration-300 disabled:cursor-not-allowed"
-                style={{
-                  background: loginLoading 
-                    ? 'linear-gradient(135deg, rgba(75, 0, 50, 0.9), rgba(50, 0, 35, 0.9))'
-                    : 'linear-gradient(135deg, rgba(255, 0, 102, 0.8), rgba(249, 115, 22, 0.7))',
-                  border: '1px solid rgba(255, 0, 102, 0.5)',
-                  boxShadow: loginLoading 
-                    ? '0 0 20px rgba(255, 0, 102, 0.2)' 
-                    : '0 0 30px rgba(255, 0, 102, 0.4), inset 0 0 20px rgba(255, 0, 102, 0.1)',
-                  color: loginLoading ? 'rgba(255, 200, 220, 0.8)' : 'white'
-                }}
-              >
-                {/* Animated Gradient Sweep for Loading */}
-                {loginLoading && (
-                  <div 
-                    className="absolute inset-0 animate-pulse"
-                    style={{
-                      background: 'linear-gradient(90deg, transparent 0%, rgba(255, 0, 102, 0.3) 50%, transparent 100%)',
-                      animation: 'shimmer 1.5s ease-in-out infinite'
-                    }}
-                  />
-                )}
-                
-                {/* Neon Ring Pulse */}
-                {loginLoading && (
-                  <div 
-                    className="absolute inset-0 rounded-xl"
-                    style={{
-                      border: '2px solid rgba(255, 0, 102, 0.6)',
-                      animation: 'pulse 1.5s ease-in-out infinite'
-                    }}
-                  />
-                )}
+  <div className="flex justify-end">
+    <button
+      type="button"
+      onClick={() => {
+        setForgotPasswordEmail(loginEmail);
+        setShowForgotPassword(true);
+      }}
+      className="text-xs font-bold uppercase text-pink-400 hover:text-pink-300 transition-colors"
+      disabled={loginLoading}
+    >
+      Forgot Password?
+    </button>
+  </div>
 
-                <div className="relative flex items-center justify-center gap-3">
-                  {loginLoading ? (
-                    <>
-                      {/* Glowing Spinner */}
-                      <div className="relative">
-                        <Loader2 
-                          size={20} 
-                          className="animate-spin"
-                          style={{ 
-                            filter: 'drop-shadow(0 0 8px rgba(255, 0, 102, 1))',
-                            color: 'rgba(255, 150, 200, 1)'
-                          }} 
-                        />
-                        {/* Outer glow ring */}
-                        <div 
-                          className="absolute inset-0 rounded-full animate-ping"
-                          style={{
-                            border: '1px solid rgba(255, 0, 102, 0.5)',
-                            animationDuration: '1.5s'
-                          }}
-                        />
-                      </div>
-                      <span style={{ textShadow: '0 0 10px rgba(255, 0, 102, 0.8)' }}>
-                        Authenticating...
-                      </span>
-                    </>
-                  ) : (
-                    <span style={{ textShadow: '0 0 10px rgba(255, 255, 255, 0.3)' }}>
-                      Sign In
-                    </span>
-                  )}
-                </div>
-              </button>
+  {/* Login Button with Premium Loading State */}
+  <button
+    type="submit"
+    disabled={loginLoading}
+    className="relative w-full overflow-hidden rounded-xl py-4 font-black text-sm uppercase tracking-wider transition-all duration-300 disabled:cursor-not-allowed"
+    style={{
+      background: loginLoading 
+        ? 'linear-gradient(135deg, rgba(75, 0, 50, 0.9), rgba(50, 0, 35, 0.9))'
+        : 'linear-gradient(135deg, rgba(255, 0, 102, 0.8), rgba(249, 115, 22, 0.7))',
+      border: '1px solid rgba(255, 0, 102, 0.5)',
+      boxShadow: loginLoading 
+        ? '0 0 20px rgba(255, 0, 102, 0.2)' 
+        : '0 0 30px rgba(255, 0, 102, 0.4), inset 0 0 20px rgba(255, 0, 102, 0.1)',
+      color: loginLoading ? 'rgba(255, 200, 220, 0.8)' : 'white'
+    }}
+  >
+    {loginLoading && (
+      <div 
+        className="absolute inset-0 animate-pulse"
+        style={{
+          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 0, 102, 0.3) 50%, transparent 100%)',
+          animation: 'shimmer 1.5s ease-in-out infinite'
+        }}
+      />
+    )}
+    
+    {loginLoading && (
+      <div 
+        className="absolute inset-0 rounded-xl"
+        style={{
+          border: '2px solid rgba(255, 0, 102, 0.6)',
+          animation: 'pulse 1.5s ease-in-out infinite'
+        }}
+      />
+    )}
 
-              <div className="text-center text-sm text-pink-300/60 mt-4">
-                Don't have an account?{' '}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowLoginModal(false);
-                    setStatus(AuctionStatus.MARKETPLACE);
-                  }}
-                  className="text-pink-400 hover:text-pink-300 font-bold"
-                >
-                  Explore Auctions & Register
-                </button>
-              </div>
-            </form>
+    <div className="relative flex items-center justify-center gap-3">
+      {loginLoading ? (
+        <>
+          <div className="relative">
+            <Loader2 
+              size={20} 
+              className="animate-spin"
+              style={{ 
+                filter: 'drop-shadow(0 0 8px rgba(255, 0, 102, 1))',
+                color: 'rgba(255, 150, 200, 1)'
+              }} 
+            />
+            <div 
+              className="absolute inset-0 rounded-full animate-ping"
+              style={{
+                border: '1px solid rgba(255, 0, 102, 0.5)',
+                animationDuration: '1.5s'
+              }}
+            />
+          </div>
+          <span style={{ textShadow: '0 0 10px rgba(255, 0, 102, 0.8)' }}>
+            Authenticating...
+          </span>
+        </>
+      ) : (
+        <span style={{ textShadow: '0 0 10px rgba(255, 255, 255, 0.3)' }}>
+          Sign In
+        </span>
+      )}
+    </div>
+  </button>
+
+  <div className="text-center text-sm text-pink-300/60 mt-4">
+    Don't have an account?{' '}
+    <button
+      type="button"
+      onClick={() => {
+        setShowLoginModal(false);
+        setStatus(AuctionStatus.MARKETPLACE);
+      }}
+      className="text-pink-400 hover:text-pink-300 font-bold"
+    >
+      Explore Auctions & Register
+    </button>
+  </div>
+</form>
           </GlassCard>
         </div>
       )}

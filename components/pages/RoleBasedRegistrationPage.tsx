@@ -1090,7 +1090,17 @@ export const RoleBasedRegistrationPage: React.FC<RoleBasedRegistrationPageProps>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
                 <div>
                   <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Date of Birth <span className="text-red-400">*</span></label>
-                  <input type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} className="w-full px-3 py-2.5 rounded-lg text-pink-100 text-sm focus:outline-none" style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} required />
+                  <input 
+                    type="text" 
+                    value={dateOfBirth} 
+                    onChange={(e) => setDateOfBirth(e.target.value)} 
+                    placeholder="YYYY-MM-DD"
+                    pattern="\d{4}-\d{2}-\d{2}"
+                    title="Please enter date in YYYY-MM-DD format"
+                    className="w-full px-3 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none" 
+                    style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }} 
+                    required 
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-black uppercase text-pink-400 tracking-wider mb-2">Gender <span className="text-red-400">*</span></label>

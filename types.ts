@@ -143,6 +143,8 @@ export interface PlayerRole {
 }
 
 export interface AuctionConfig {
+  duration: number;
+  maxTeams: number;
   sport: SportType;
   customSportName?: string;
   type: AuctionType;

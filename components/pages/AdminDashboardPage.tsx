@@ -5566,6 +5566,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ setStatu
             userId={currentUser.email}
             userRole={UserRole.ADMIN}
             onClose={() => setActiveSection('overview')}
+            onAuctionEnd={() => {
+              setLiveAuctionStatus('ENDED');
+              setCurrentBiddingPlayer(null);
+              setCurrentBid(0);
+              setLeadingTeamName('');
+            }}
           />
         </div>
       )}

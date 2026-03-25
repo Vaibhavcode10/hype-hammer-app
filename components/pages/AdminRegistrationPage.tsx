@@ -694,16 +694,27 @@ export const AdminRegistrationPage: React.FC<AdminRegistrationPageProps> = ({ se
                     Auction Date <span className="text-red-400">*</span>
                   </label>
                   <div className="relative">
-                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-pink-400/60" size={18} />
-                    <input
-                      type="date"
-                      value={formData.auctionDateTime}
-                      onChange={(e) => handleInputChange('auctionDateTime', e.target.value)}
-                      className="w-full pl-11 pr-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
-                      style={{ background: 'rgba(255, 0, 102, 0.08)', border: '1px solid rgba(255, 0, 102, 0.3)' }}
-                      required
-                    />
-                  </div>
+  <Calendar 
+    className="absolute left-3 top-1/2 -translate-y-1/2 text-pink-400/60 pointer-events-none" 
+    size={18} 
+  />
+
+  <input
+    type="text"
+    placeholder="DD-MM-YYYY"
+    value={formData.auctionDateTime || ""}
+    onChange={(e) =>
+      handleInputChange("auctionDateTime", e.target.value)
+    }
+    onFocus={(e) => e.target.select()} // selects placeholder text
+    className="w-full pl-11 pr-4 py-2.5 rounded-lg text-pink-100 placeholder-pink-300/40 text-sm focus:outline-none"
+    style={{
+      background: "rgba(255, 0, 102, 0.08)",
+      border: "1px solid rgba(255, 0, 102, 0.3)",
+    }}
+    required
+  />
+</div>
                 </div>
 
                 <div>

@@ -28,6 +28,7 @@ interface LiveAuctionPageProps {
   userRole: UserRole;
   userTeamId?: string;
   onClose?: () => void;
+  onAuctionEnd?: () => void;
 }
 
 /**
@@ -45,7 +46,8 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
   userId,
   userRole,
   userTeamId,
-  onClose
+  onClose,
+  onAuctionEnd
 }) => {
   // State
   // CRITICAL: Do NOT accept props for player info - always discover from real-time listeners
@@ -724,6 +726,10 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
       const endedUnsubscribe = socketService.onAuctionEnded((data) => {
         console.log('🏁 Auction ended!');
         setAuctionState(prev => ({ ...(prev || {}), status: LiveAuctionStatus.ENDED }));
+        // Exit live room when auction ends (for admin/auctioneer)
+        if ((userRole === UserRole.ADMIN || userRole === UserRole.AUCTIONEER) && onClose) {
+          onClose();
+        }
       });
       unsubscribers.push(endedUnsubscribe);
 
@@ -1381,10 +1387,22 @@ export const LiveAuctionPage: React.FC<LiveAuctionPageProps> = ({
     try {
       await apiService.post('/api/auction/end', { seasonId });
       setShowCloseModal(false);
+      // Set status to ENDED immediately for UI
+      setAuctionState(prev => ({ ...(prev || {}), status: LiveAuctionStatus.ENDED }));
+      // Clear current player
+      setCurrentPlayer(null);
+      // Notify parent
+      if (onAuctionEnd) {
+        onAuctionEnd();
+      }
+      // Exit live room after ending auction
+      if (onClose) {
+        onClose();
+      }
     } catch (error) {
       console.error('Failed to end auction:', error);
     }
-  }, [seasonId]);
+  }, [seasonId, onClose, onAuctionEnd]);
 
   // Auctioneer: Start bidding for player (DIRECT FIREBASE WRITE - NO API LATENCY)
   const handleStartBidding = useCallback(async (playerId: string, basePrice: number) => {

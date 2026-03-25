@@ -481,7 +481,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ setStatus, onLogin }) => {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <NeonInput
                     type="email"
-                    label="Email Address *"
+                    label="Email Address  *"
                     icon={<Mail size={18} />}
                     placeholder="your@email.com"
                     value={email}
